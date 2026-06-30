@@ -250,7 +250,7 @@ function App() {
         model: geminiModel,
         apiKey: geminiKey,
         messages,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
       });
       if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
       if (provider === "groq") {
