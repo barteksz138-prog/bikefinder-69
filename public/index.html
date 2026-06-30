@@ -130,6 +130,9 @@ function App() {
   const [geminiModel,    setGeminiModel]    = useState(cfg.geminiModel || "llama-3.3-70b-versatile");
   const [geminiChatName, setGeminiChatName] = useState(cfg.geminiChatName || "");
   const [minProfit,      setMinProfit]      = useState(cfg.minProfit || 20);
+  const [priceKnowledge, setPriceKnowledge] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ddf_price_knowledge") || "[]"); } catch { return []; }
+  });
   const [discordWebhook, setDiscordWebhook] = useState(cfg.discordWebhook || "");
   const [discordThread,  setDiscordThread]  = useState(cfg.discordThread || "");
   const [selectedBikes,  setSelectedBikes]  = useState(() => {
@@ -156,12 +159,27 @@ function App() {
   });
   const [chatInput, setChatInput]   = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [showKnowledgePanel, setShowKnowledgePanel] = useState(false);
   const chatEndRef = useRef(null);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
 
   const saveChatHistory = (msgs) => {
     try { localStorage.setItem("ddf_chat", JSON.stringify(msgs.slice(-200))); } catch {}
+  };
+
+  const savePriceKnowledge = (entries) => {
+    try { localStorage.setItem("ddf_price_knowledge", JSON.stringify(entries)); } catch {}
+    setPriceKnowledge(entries);
+  };
+
+  const addKnowledgeFromMessage = (content) => {
+    const entry = { id: Date.now() + Math.random(), text: content.trim(), addedAt: new Date().toLocaleString("pl-PL") };
+    savePriceKnowledge([...priceKnowledge, entry]);
+  };
+
+  const removeKnowledgeEntry = (id) => {
+    savePriceKnowledge(priceKnowledge.filter(e => e.id !== id));
   };
 
   const runningRef   = useRef(false);
@@ -241,9 +259,20 @@ function App() {
 
     try {
       let responseText = "";
+
+      const knowledgeBlock = priceKnowledge.length > 0
+        ? `Oto Twoja baza wiedzy o cenach rowerów, zbudowana z realnych transakcji i notatek użytkownika. Korzystaj z niej zawsze gdy oceniasz wartość roweru lub odpowiadasz na pytania o ceny:\n\n${priceKnowledge.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}\n\n---\n\n`
+        : "";
+
+      const historyForApi = [...newMsgs];
+      if (knowledgeBlock) {
+        // Wstrzyknij bazę wiedzy jako kontekst do pierwszej wiadomości w wysyłce (nie zapisujemy tego w widocznej historii)
+        historyForApi[0] = { ...historyForApi[0], content: knowledgeBlock + historyForApi[0].content };
+      }
+
       const messages = provider === "groq"
-        ? newMsgs.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }))
-        : newMsgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+        ? historyForApi.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }))
+        : historyForApi.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
 
       const data = await callProxy({
         provider,
@@ -356,9 +385,18 @@ function App() {
       ? `\nKontekst: ${geminiChatName}.`
       : "";
 
+    const knowledgeSection = priceKnowledge.length > 0
+      ? `=== TWOJA BAZA WIEDZY O CENACH (REALNE TRANSAKCJE I NOTATKI — NAJWAŻNIEJSZE ŹRÓDŁO) ===
+${priceKnowledge.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}
+
+Ta baza pochodzi z realnych sprzedaży i rozmów z użytkownikiem — traktuj ją jako PRIORYTETOWE źródło prawdy o cenach, ważniejsze niż ogólny cennik referencyjny poniżej. Jeśli dane z bazy wiedzy są sprzeczne z cennikiem referencyjnym, ufaj bazie wiedzy.
+
+`
+      : "";
+
     const prompt = `Jesteś ekspertem od rowerów dirtowych i MTB full-suspension. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
 
-=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
+${knowledgeSection}=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
 • Canyon Stitched 360 Pro (2021-2024): cena zakupu max 500-600€ żeby zarobić. Wersja z upgradami (Bomber DJ, koła NOA, mostek Title) — warta do 700€ zakupu.
 • Rose The Bruce 2: max zakup 500-550€ żeby wyjść na swoje (sprzedaż ~880€ PL).
 • Trek Ticket DJ z amortyzatorem Pike DJ lub Bomber DJ: można zapłacić do 900€ bo sprzedaż 1400€ PL.
@@ -561,7 +599,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
     firstCycleRef.current = false;
     addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
-  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, selectedBikes]);
+  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, selectedBikes, priceKnowledge, minProfit]);
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
@@ -854,6 +892,11 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
               <div style={{ fontSize: 16, fontWeight: 700 }}>💬 Chat z {PROVIDERS[provider]?.label || "AI"}</div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button onClick={() => setShowKnowledgePanel(p => !p)} style={{
+                  padding: "6px 14px", borderRadius: 8, border: `1px solid ${showKnowledgePanel ? "#f59e0b88" : "#1e293b"}`,
+                  background: showKnowledgePanel ? "#f59e0b18" : "#0f172a",
+                  color: showKnowledgePanel ? "#f59e0b" : "#475569", fontSize: 12, fontWeight: 600,
+                }}>📌 Baza wiedzy ({priceKnowledge.length})</button>
                 {chatMessages.length > 0 && (
                   <button onClick={() => { setChatMessages([]); localStorage.removeItem("ddf_chat"); }} style={{
                     padding: "6px 14px", borderRadius: 8, border: "1px solid #ef444433",
@@ -865,6 +908,38 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                 </div>
               </div>
             </div>
+
+            {/* Knowledge panel */}
+            {showKnowledgePanel && (
+              <div style={{
+                background: "#0d1526", border: "1px solid #f59e0b33", borderRadius: 12,
+                padding: 16, marginBottom: 14, maxHeight: 240, overflowY: "auto",
+              }}>
+                <div style={{ fontSize: 12, color: "#f59e0b", fontWeight: 700, marginBottom: 10 }}>
+                  📌 Baza wiedzy o cenach — AI używa tego zarówno w czacie jak i przy ocenie ogłoszeń w skanerze
+                </div>
+                {priceKnowledge.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#334155" }}>
+                    Pusto — kliknij "📌 Zapisz jako wiedzę o cenach" pod dowolną wiadomością w czacie, żeby dodać wpis.
+                  </div>
+                ) : priceKnowledge.map(entry => (
+                  <div key={entry.id} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10,
+                    padding: "8px 10px", marginBottom: 6, background: "#070c17", borderRadius: 8,
+                    border: "1px solid #1a2d4a",
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, color: "#e2e8f0", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{entry.text}</div>
+                      <div style={{ fontSize: 10, color: "#334155", marginTop: 4 }}>{entry.addedAt}</div>
+                    </div>
+                    <button onClick={() => removeKnowledgeEntry(entry.id)} style={{
+                      padding: "3px 8px", borderRadius: 6, border: "1px solid #ef444433",
+                      background: "#ef444411", color: "#f87171", fontSize: 11, flexShrink: 0,
+                    }}>🗑</button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Messages window */}
             <div style={{
@@ -897,6 +972,13 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                   }}>
                     {msg.content}
                   </div>
+                  {!msg.isError && (
+                    <button onClick={() => addKnowledgeFromMessage(msg.content)} style={{
+                      marginTop: 4, padding: "3px 10px", borderRadius: 6,
+                      border: "1px solid #f59e0b33", background: "#f59e0b11",
+                      color: "#f59e0b", fontSize: 10, fontWeight: 600,
+                    }}>📌 Zapisz jako wiedzę o cenach</button>
+                  )}
                 </div>
               ))}
               {chatLoading && (
