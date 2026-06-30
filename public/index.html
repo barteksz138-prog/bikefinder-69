@@ -51,6 +51,7 @@ const BIKE_MODELS = [
 const TYPE_LABELS = {
   full: { label: "🟢 Full",  color: "#22c55e" },
   dirt: { label: "🟠 Dirt",  color: "#f59e0b" },
+  elektryk_gorski: { label: "⚡ Elektryk górski", color: "#38bdf8" },
   inny: { label: "⚫ Inny",  color: "#475569" },
 };
 
@@ -106,13 +107,18 @@ function App() {
   const [geminiModel,    setGeminiModel]    = useState(cfg.geminiModel || "llama-3.3-70b-versatile");
   const [geminiChatName, setGeminiChatName] = useState(cfg.geminiChatName || "");
   const [minProfit,      setMinProfit]      = useState(cfg.minProfit || 20);
+  // Klucz Groq używany WYŁĄCZNIE do szybkiej, lekkiej klasyfikacji typu roweru (etap 1) — niezależnie od
+  // tego jaki provider jest wybrany do właściwej analizy opłacalności (etap 2, zwykle Gemini).
+  const [groqClassifierKey, setGroqClassifierKey] = useState(cfg.groqClassifierKey || "");
+  // Ile rowerów maksymalnie wysyłamy do Gemini (etap 2, drogi/limitowany) w ramach JEDNEGO cyklu skanowania.
+  const [maxGeminiPerCycle, setMaxGeminiPerCycle] = useState(cfg.maxGeminiPerCycle ?? 25);
   const [priceKnowledge, setPriceKnowledge] = useState(() => {
     try { return JSON.parse(localStorage.getItem("ddf_price_knowledge") || "[]"); } catch { return []; }
   });
   const [discordWebhook, setDiscordWebhook] = useState(cfg.discordWebhook || "");
   const [discordThread,  setDiscordThread]  = useState(cfg.discordThread || "");
   const [uncertainWebhook, setUncertainWebhook] = useState(cfg.uncertainWebhook || "");
-  const DEFAULT_FILTER_KEYWORDS = "Rennrad, Gravel, Trekkingrad, Hollandrad, Cityrad, Stadtrad, Kinderfahrrad, Laufrad, Klapprad, Liegerad, Dreirad, E-Bike, Ebike, Pedelec, Elektrofahrrad, Rollator, Ersatzteile, Einzelteile, nur Rahmen, Rahmen only, Bastlerrad, Schrott, gesucht, Kinder, Jugend, 12 Zoll, 16 Zoll, 20 Zoll";
+  const DEFAULT_FILTER_KEYWORDS = "Rennrad, Gravel, Trekkingrad, Hollandrad, Cityrad, Stadtrad, Kinderfahrrad, Laufrad, Klapprad, Liegerad, Dreirad, E-Bike, Ebike, Pedelec, Elektrofahrrad, Rollator, Ersatzteile, Einzelteile, nur Rahmen, Rahmen only, Bastlerrad, Schrott, gesucht, Kinder, Jugend, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, Damenrad, Herrenrad, Tourenrad, Reiserad, Crossrad, Fitnessbike, Singlespeed, Fixie, BMX Freestyle, Faltrad, Lastenrad, Cargobike";
   const [filterKeywords, setFilterKeywords] = useState(cfg.filterKeywords ?? DEFAULT_FILTER_KEYWORDS);
   const [selectedBikes,  setSelectedBikes]  = useState(() => {
     const saved = cfg.selectedBikes;
@@ -163,6 +169,7 @@ function App() {
 
   const runningRef   = useRef(false);
   const firstCycleRef = useRef(true); // cykl #1 = tylko zbieramy ID, nie analizujemy
+  const geminiCallsRef = useRef(0); // licznik analiz Gemini w BIEŻĄCYM cyklu — reset na starcie każdego cyklu
   const logsEndRef  = useRef(null);
 
   // Zapamiętaj widziane ID między restartami
@@ -181,7 +188,7 @@ function App() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
   const saveSettings = () => {
-    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, selectedBikes, provider, minProfit };
+    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, selectedBikes, provider, minProfit };
     localStorage.setItem("ddf_cfg", JSON.stringify(data));
     addLog("💾 Ustawienia zapisane", "success");
   };
@@ -312,6 +319,58 @@ function App() {
     return null;
   };
 
+  // Biała lista — zwraca true jeśli ogłoszenie zawiera CHOĆ JEDNO wymagane słowo (sygnał full/dirt).
+  // Jeśli lista jest pusta, filtr jest wyłączony (przepuszcza wszystko, jak dotychczas).
+  const GROQ_CLASSIFIER_MODEL = "llama-3.1-8b-instant"; // lekki, szybki, hojny darmowy limit (14 400 zapytań/dzień)
+
+  // ── Etap 1: szybka, "głupia" klasyfikacja typu roweru przez Groq ──────────
+  // Cel: odrzucić ewidentnie nietrafione typy (szosówki, miejskie, dziecięce, części...) BEZ
+  // wysyłania ich do drogiej/limitowanej analizy Gemini. Lekki prompt = minimalne zużycie
+  // tokenów na zapytanie, więc nie zapycha limitu TPM Groqa tak jak zrobiłby to pełny prompt z cennikiem.
+  // Gdy Groq nie jest pewien typu (lub wystąpi błąd/limit) — NIE odrzucamy, tylko oznaczamy jako
+  // "niepewne" i przepuszczamy dalej z niższym priorytetem (patrz Faza 2 w runOneCycle).
+  const classifyWithGroq = async (listing) => {
+    if (!groqClassifierKey) return "niepewne"; // brak klucza = filtr wyłączony, przepuść wszystko
+
+    const prompt = `Jesteś klasyfikatorem ogłoszeń rowerowych. Na podstawie SAMEGO tytułu i opisu określ TYLKO typ roweru — bez analizy ceny czy opłacalności.
+
+Dozwolone typy:
+- full — rower z PEŁNYM zawieszeniem (amortyzator z tyłu + widelec z przodu): enduro, trail, all-mountain, downhill, freeride.
+- dirt — rower dirt jump / slopestyle / pumptrack / street, sztywna rama (hardtail), bez tylnego zawieszenia, geometria do skoków.
+- elektryk_gorski — elektryczny rower górski / e-MTB (silnik wspomagający + charakter trail/enduro/downhill). NIE miejski/touringowy e-bike.
+- inny — wszystko inne: szosówka, gravel, trekking, miejski, dziecięcy, klasyczny BMX, hardtail XC/trail BEZ dirtowej charakterystyki, części/rama, miejski lub touringowy e-bike, itp.
+
+Jeśli NIE masz wystarczająco informacji żeby jednoznacznie rozpoznać typ — odpowiedz dokładnie: niepewne
+
+Tytuł: ${listing.title}
+Opis: ${listing.desc}
+
+Odpowiedz WYŁĄCZNIE jednym słowem z listy (full / dirt / elektryk_gorski / inny / niepewne), bez żadnego innego tekstu.`;
+
+    try {
+      const data = await callProxy({
+        provider: "groq",
+        model: GROQ_CLASSIFIER_MODEL,
+        apiKey: groqClassifierKey,
+        messages: [{ role: "user", content: prompt }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: 10 },
+      });
+      if (data?.error) {
+        addLog(`⚠️ Groq klasyfikator: ${data.error?.message || "błąd"} — przepuszczam dalej jako niepewne`, "error");
+        return "niepewne";
+      }
+      const raw = (data?.choices?.[0]?.message?.content || "").toLowerCase().trim();
+      if (raw.includes("elektryk")) return "elektryk_gorski";
+      if (raw.includes("dirt"))     return "dirt";
+      if (raw.includes("full"))     return "full";
+      if (raw.includes("inny"))     return "inny";
+      return "niepewne";
+    } catch (e) {
+      addLog(`⚠️ Groq klasyfikator: ${e.message} — przepuszczam dalej jako niepewne`, "error");
+      return "niepewne"; // błąd/limit Groqa → nie odrzucaj, przepuść dalej
+    }
+  };
+
   const scrapeKleinanzeigen = async (bike) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
     // Modele konkretne używają wyszukiwania po frazie
@@ -382,7 +441,10 @@ function App() {
   };
 
   // ── Gemini analysis ────────────────────────────────────────────────────
-  const analyzeWithGemini = async (listing) => {
+  // groqType: "full" | "dirt" | "elektryk_gorski" | "niepewne" — wynik klasyfikacji z Etapu 1 (Groq).
+  // Gdy Groq był PEWNY typu, Gemini mu ufa i NIE klasyfikuje od nowa (oszczędność promptu/tokenów,
+  // zero duplikacji pracy). Tylko dla "niepewne" Gemini sam rozpoznaje typ jako siatka bezpieczeństwa.
+  const analyzeWithGemini = async (listing, groqType) => {
     const chatInfo = geminiChatName
       ? `\nKontekst: ${geminiChatName}.`
       : "";
@@ -396,7 +458,25 @@ Ta baza pochodzi z realnych sprzedaży i rozmów z użytkownikiem — traktuj j�
 `
       : "";
 
-    const prompt = `Jesteś ekspertem od rowerów dirtowych i MTB full-suspension. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
+    const typeIsTrusted = ["full", "dirt", "elektryk_gorski"].includes(groqType);
+
+    const typeSection = typeIsTrusted
+      ? `=== TYP ROWERU — JUŻ USTALONY, ZAUFAJ TEMU ===
+To ogłoszenie zostało już wstępnie sklasyfikowane (etap wcześniejszy) jako typ: "${groqType}" (full = pełne zawieszenie / enduro / trail / downhill, dirt = dirt jump / hardtail do skoków, elektryk_gorski = elektryczny rower górski / e-MTB). NIE klasyfikuj typu od nowa — przejdź od razu do oceny opłacalności poniżej i w polu "typ_roweru" w odpowiedzi wpisz dokładnie "${groqType}".
+
+`
+      : `=== KROK 1 — ROZPOZNAJ TYP ROWERU ===
+Wstępna klasyfikacja była niepewna — sam określ typ NA PODSTAWIE TYTUŁU I OPISU:
+• "dirt" — rower dirt jump / slopestyle / pumptrack / street. Sztywna rama (hardtail), brak tylnego zawieszenia, geometria do skoków. Przykłady: Canyon Stitched, Trek Ticket DJ, Dartmoor Two6player, Rose The Bruce, Specialized P.3, Radon Slush.
+• "full" — rower z PEŁNĄ amortyzacją (amortyzator z tyłu + widelec z przodu). Typy: enduro, trail, all-mountain, downhill. Przykłady: Canyon Torque, Canyon Spectral, Canyon Strive, Trek Slash, Santa Cruz, Commencal, YT Capra, Specialized Enduro/Stumpjumper FSR.
+• "elektryk_gorski" — elektryczny rower górski / e-MTB (silnik wspomagający + charakter trail/enduro/downhill). NIE miejski/touringowy e-bike.
+• "inny" — WSZYSTKO INNE: hardtail XC/trail bez tylnego zawieszenia i bez dirtowej geometrii, szosówka, gravel, trekking, miejski, miejski e-bike, dziecięcy, BMX klasyczny, parts/akcesoria. Gdy NIE MOŻESZ jednoznacznie rozpoznać — też "inny".
+
+Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
+
+`;
+
+    const prompt = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
 
 ${knowledgeSection}=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
 • Canyon Stitched 360 Pro (2021-2024): cena zakupu max 500-600€ żeby zarobić. Wersja z upgradami (Bomber DJ, koła NOA, mostek Title) — warta do 700€ zakupu.
@@ -406,24 +486,16 @@ ${knowledgeSection}=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
 • Canyon Spectral AL 6: trail/all-mountain full-suspension. Dobra cena zakupu do 1000€, sprzedaż ~1510€ PL.
 • Dartmoor Two6player, Specialized P.3, Radon Slush: popularne dirtowe — wyceniaj analogicznie do Stitched.
 
-=== KROK 1 — ROZPOZNAJ TYP ROWERU ===
-Określ typ NA PODSTAWIE TYTUŁU I OPISU ogłoszenia:
-• "dirt" — rower dirt jump / slopestyle / pumptrack / street. Sztywna rama (hardtail), brak tylnego zawieszenia, 26" lub 27.5" koła, geometria do skoków. Przykłady: Canyon Stitched, Trek Ticket DJ, Dartmoor Two6player, Rose The Bruce, Specialized P.3, Radon Slush.
-• "full" — rower z PEŁNĄ amortyzacją (amortyzator z tyłu + widelec z przodu). Typy: enduro, trail, all-mountain, downhill. Przykłady: Canyon Torque, Canyon Spectral, Canyon Strive, Trek Slash, Santa Cruz, Commencal, YT Capra, Specialized Enduro/Stumpjumper FSR.
-• "inny" — WSZYSTKO INNE: hardtail XC/trail bez tylnego zawieszenia ale NIE dirtowy, szosówka, gravel, trekking, miejski, elektryczny, dziecięcy, BMX klasyczny, parts/akcesoria, skuter. Gdy NIE MOŻESZ jednoznacznie rozpoznać — też "inny".
-
-UWAGA: Hardtail MTB (np. XC hardtail, trail hardtail) bez tylnego zawieszenia i bez dirtowej geometrii = "inny". Nie myl z dirt.
-
-=== KROK 2 — OCENA OPŁACALNOŚCI ===
+${typeSection}=== OCENA OPŁACALNOŚCI ===
 • Jeśli typ = "inny" → ZAWSZE decyzja: "nie". Nie analizuj dalej.
-• Jeśli typ = "dirt" lub "full":
+• Jeśli typ = "dirt", "full" lub "elektryk_gorski":
   - Sprawdź cenę ogłoszenia (w EUR).
   - Na podstawie modelu, roku produkcji, wyposażenia i stanu (opisanego w tytule/opisie) oszacuj realną cenę sprzedaży w Polsce (w PLN i EUR).
   - Oblicz przewidywany zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia.
   - decyzja: "tak" TYLKO jeśli zysk wynosi minimum ${minProfit}% ceny zakupu I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
-  - decyzja: "niepewne" gdy typ to dirt/full ale brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, niejasny model/rok, lub potencjał wydaje się być ale nie masz pewności co do zysku. NIE odrzucaj takich automatycznie jako "nie" — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
+  - decyzja: "niepewne" gdy brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, niejasny model/rok, lub potencjał wydaje się być ale nie masz pewności co do zysku. NIE odrzucaj takich automatycznie jako "nie" — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
   - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
-  - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji.
+  - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji. Dla e-MTB uwzględnij też stan baterii/silnika jeśli opisany.
   - Jeśli cena ogłoszenia nie jest podana (null/brak) → decyzja: "niepewne" (nie "nie" — może być warta sprawdzenia ręcznie).${chatInfo}
 
 === OGŁOSZENIE DO OCENY ===
@@ -435,7 +507,7 @@ Model/kategoria wyszukiwania: ${listing.bike}
 
 Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON):
 {
-  "typ_roweru": "full" | "dirt" | "inny",
+  "typ_roweru": "full" | "dirt" | "elektryk_gorski" | "inny",
   "decyzja": "tak" | "nie" | "niepewne",
   "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
@@ -476,8 +548,11 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         if (jsonMatch) clean = jsonMatch[0];
         const parsed = JSON.parse(clean);
 
-        // Normalizuj typ roweru — jeśli Gemini nie poda nic sensownego, traktuj jako "inny"
-        const typ = ["full", "dirt"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny";
+        // Jeśli typ był już PEWNY (z Groqa) — wymuszamy go, ignorując co zwróciło Gemini (mogło się pomylić/zignorować instrukcję).
+        // Jeśli był "niepewne" — ufamy klasyfikacji Gemini (to ona robiła KROK 1 w tym przypadku).
+        const typ = typeIsTrusted
+          ? groqType
+          : (["full", "dirt", "elektryk_gorski"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny");
         parsed.typ_roweru = typ;
 
         // Normalizuj decyzję — fallback na "nie" jeśli Gemini zwróci coś nieoczekiwanego
@@ -485,6 +560,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         parsed.decyzja = decyzja;
 
         // TWARDA REGUŁA: "inny" zawsze = nie opłaca się, niezależnie co zwróci Gemini
+        // (w praktyce trafia tu tylko z gałęzi "niepewne", bo typ zaufany nigdy nie jest "inny")
         if (typ === "inny") {
           parsed.decyzja = "nie";
         }
@@ -540,12 +616,16 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   // ── One full scan cycle ────────────────────────────────────────────────
+  // ── One full scan cycle ────────────────────────────────────────────────
   const runOneCycle = useCallback(async (cycleN) => {
     const activeBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
     addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} modeli`, "success");
 
-    const uncertainBatch = []; // zbiorcza lista "niepewnych" na ten cykl
+    geminiCallsRef.current = 0; // reset licznika analiz Gemini na nowy cykl
+    const uncertainBatch = [];   // zbiorcza lista "niepewnych" na ten cykl
+    const geminiCandidates = []; // { listing, groqType } — zebrane ze WSZYSTKICH modeli w tym cyklu, czekają na analizę Gemini
 
+    // ── FAZA 1: scraping + filtr słów + klasyfikacja Groq (etap 1, tani/szybki) ──
     for (const bike of activeBikes) {
       if (!runningRef.current) return;
       addLog(`🔍 ${bike.label}…`, "info");
@@ -584,13 +664,28 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         if (!runningRef.current) return;
         saveSeenId(listing.listingId);
 
-        // ── Filtr lokalny PRZED Gemini — zero kosztu, odrzuca ewidentne nie-trafienia ──
+        // ── Filtr lokalny PRZED Groq — zero kosztu, odrzuca ewidentne nie-trafienia ──
         const filterHit = matchesFilterKeyword(listing);
         if (filterHit) {
           addLog(`🚫 Filtr: odrzucono (słowo: "${filterHit}") — ${listing.title}`, "info");
           setResults(prev => [{
             id: Date.now() + Math.random(), listing,
             analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone filtrem słów kluczowych (${filterHit})` },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue; // nie idzie nawet do Groq
+        }
+
+        // ── Etap 1 — Groq: szybka klasyfikacja typu (tanio, byle jak, zero limitu Gemini) ──
+        const typ = await classifyWithGroq(listing);
+        await sleep(2000); // szanuj limit RPM darmowego Groqa
+
+        if (typ === "inny") {
+          addLog(`🚫 Groq: typ "inny" — odrzucono — ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: "Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski" },
             status: "skip",
             timestamp: new Date().toLocaleTimeString("pl-PL"),
           }, ...prev].slice(0, 400));
@@ -610,44 +705,78 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
           continue;
         }
 
-        const analysis = await analyzeWithGemini(listing);
-        let status = "skip";
-
-        if (!analysis) {
-          status = "error";
-        } else if (analysis.decyzja === "tak") {
-          // ✅ Gemini mówi TAK → wysyłaj webhook
-          addLog(`✅ OKAZJA! ${listing.title} | zysk: ~${analysis.przewidywany_zysk}€`, "success");
-          setStats(s => ({ ...s, deals: s.deals + 1 }));
-          const sent = await sendToDiscord(listing, analysis);
-          status = sent ? "sent" : "deal";
-          if (sent) {
-            setStats(s => ({ ...s, sent: s.sent + 1 }));
-            addLog(`📨 Wysłano na Discord: ${listing.href}`, "success");
-          } else {
-            addLog(`⚠️ Nie udało się wysłać na Discord`, "error");
-          }
-        } else if (analysis.decyzja === "niepewne") {
-          // ❓ Za mało danych żeby ocenić — zbierz do zbiorczej wiadomości
-          addLog(`❓ Niepewne — ${listing.title}`, "info");
-          uncertainBatch.push({ listing, reason: analysis.krotki_opis || "za mało informacji" });
-        } else {
-          // ❌ Gemini mówi NIE → nie wysyłaj
-          const reason = analysis.typ_roweru === "inny"
-            ? `typ: inny — odrzucone automatycznie`
-            : `zysk za mały`;
-          addLog(`⏭ Gemini: NIE opłaca się (${reason}) — ${listing.title}`, "info");
-        }
-
-        setResults(prev => [{
-          id: Date.now() + Math.random(), listing, analysis, status,
-          timestamp: new Date().toLocaleTimeString("pl-PL"),
-        }, ...prev].slice(0, 400));
-
-        await sleep(5000);
+        // typ === "full" | "dirt" | "elektryk_gorski" | "niepewne" → kandydat do Gemini (etap 2)
+        geminiCandidates.push({ listing, groqType: typ });
       }
 
       await sleep(3000);
+    }
+
+    if (firstCycleRef.current) {
+      firstCycleRef.current = false;
+      addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
+      return;
+    }
+
+    // ── FAZA 2 — Gemini: tylko jeśli jest jeszcze limit na ten cykl, pewne typy najpierw ──
+    // Sortowanie stabilne: kandydaci z pewną klasyfikacją (full/dirt/elektryk_gorski) idą PRZED
+    // "niepewnymi" — jeśli limit się skończy, to "niepewne" odpadają jako pierwsze.
+    const sorted = [...geminiCandidates].sort((a, b) =>
+      (b.groqType !== "niepewne" ? 1 : 0) - (a.groqType !== "niepewne" ? 1 : 0));
+    if (sorted.length > maxGeminiPerCycle) {
+      addLog(`⚖️ ${sorted.length} kandydatów do Gemini, limit cyklu = ${maxGeminiPerCycle} — część zostanie pominięta (priorytet: pewne typy)`, "info");
+    }
+
+    for (const { listing, groqType } of sorted) {
+      if (!runningRef.current) return;
+
+      if (geminiCallsRef.current >= maxGeminiPerCycle) {
+        addLog(`⏭ Pominięte — limit ${maxGeminiPerCycle} analiz Gemini na cykl osiągnięty: ${listing.title}`, "info");
+        setResults(prev => [{
+          id: Date.now() + Math.random(), listing,
+          analysis: { typ_roweru: "?", decyzja: "niepewne", oplaca_sie: false, krotki_opis: `Pominięte — limit ${maxGeminiPerCycle} analiz Gemini na ten cykl osiągnięty` },
+          status: "skip",
+          timestamp: new Date().toLocaleTimeString("pl-PL"),
+        }, ...prev].slice(0, 400));
+        continue;
+      }
+
+      geminiCallsRef.current += 1;
+      const analysis = await analyzeWithGemini(listing, groqType);
+      let status = "skip";
+
+      if (!analysis) {
+        status = "error";
+      } else if (analysis.decyzja === "tak") {
+        // ✅ Gemini mówi TAK → wysyłaj webhook
+        addLog(`✅ OKAZJA! ${listing.title} | zysk: ~${analysis.przewidywany_zysk}€`, "success");
+        setStats(s => ({ ...s, deals: s.deals + 1 }));
+        const sent = await sendToDiscord(listing, analysis);
+        status = sent ? "sent" : "deal";
+        if (sent) {
+          setStats(s => ({ ...s, sent: s.sent + 1 }));
+          addLog(`📨 Wysłano na Discord: ${listing.href}`, "success");
+        } else {
+          addLog(`⚠️ Nie udało się wysłać na Discord`, "error");
+        }
+      } else if (analysis.decyzja === "niepewne") {
+        // ❓ Za mało danych żeby ocenić — zbierz do zbiorczej wiadomości
+        addLog(`❓ Niepewne — ${listing.title}`, "info");
+        uncertainBatch.push({ listing, reason: analysis.krotki_opis || "za mało informacji" });
+      } else {
+        // ❌ Gemini mówi NIE → nie wysyłaj
+        const reason = analysis.typ_roweru === "inny"
+          ? `typ: inny — odrzucone automatycznie`
+          : `zysk za mały`;
+        addLog(`⏭ Gemini: NIE opłaca się (${reason}) — ${listing.title}`, "info");
+      }
+
+      setResults(prev => [{
+        id: Date.now() + Math.random(), listing, analysis, status,
+        timestamp: new Date().toLocaleTimeString("pl-PL"),
+      }, ...prev].slice(0, 400));
+
+      await sleep(5000);
     }
 
     // ── Wyślij zbiorczą listę "niepewnych" na koniec cyklu (jeśli są i webhook ustawiony) ──
@@ -666,7 +795,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
     firstCycleRef.current = false;
     addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
-  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, selectedBikes, priceKnowledge, minProfit]);
+  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, selectedBikes, priceKnowledge, minProfit]);
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
@@ -1229,6 +1358,41 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                 padding: "6px 14px", borderRadius: 8, border: "1px solid #1e293b",
                 background: "transparent", color: "#475569", fontSize: 11,
               }}>↩ Przywróć domyślne</button>
+            </div>
+
+            {/* Etap 1 — Groq jako klasyfikator typu (zamiast białej listy słów) */}
+            <div style={{ gridColumn: "span 2", background: "#0d1526", border: "1px solid #1a2d4a", borderRadius: 16, padding: 24 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+                <span>🤖</span> Etap 1 — Groq jako szybki klasyfikator (przed Gemini)
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Klucz API Groq (osobny od providera w czacie powyżej)
+                </label>
+                <input type="password" placeholder="gsk_..."
+                  value={groqClassifierKey} onChange={e => setGroqClassifierKey(e.target.value)} />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  console.groq.com/keys — model llama-3.1-8b-instant, 14 400 zapytań/dzień za darmo. Każde świeże ogłoszenie (po przejściu filtra słów) dostaje krótkie pytanie: full / dirt / elektryk górski / inny / niepewne. Tylko "inny" jest od razu odrzucane — nie idzie do Gemini. "Niepewne" (lub błąd Groqa) przechodzi dalej, ale z niższym priorytetem w Etapie 2. Puste pole = ten etap jest wyłączony, wszystko leci od razu do Gemini.
+                </div>
+              </div>
+
+              <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Maks. rowerów wysyłanych do Gemini na jeden cykl
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <input
+                    type="range" min="1" max="100" step="1"
+                    value={maxGeminiPerCycle}
+                    onChange={e => setMaxGeminiPerCycle(Number(e.target.value))}
+                    style={{ flex: 1, accentColor: "#f59e0b", padding: 0, border: "none", background: "transparent" }}
+                  />
+                  <div style={{ minWidth: 40, textAlign: "center", fontWeight: 800, fontSize: 22, color: "#f59e0b" }}>{maxGeminiPerCycle}</div>
+                </div>
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Jeśli po Etapie 1 zostanie więcej kandydatów niż ten limit — pierwsze idą rowery o PEWNEJ klasyfikacji (full/dirt/elektryk górski), reszta ("niepewne") jest pomijana w tym cyklu. Chroni Gemini przed przeciążeniem, gdy nagle pojawi się dużo nowych ogłoszeń.
+                </div>
+              </div>
             </div>
 
             {/* Strategia */}
