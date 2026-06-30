@@ -39,6 +39,8 @@ export default async function handler(req, res) {
         generationConfig: {
           temperature:       generationConfig?.temperature       ?? 0.7,
           maxOutputTokens:   generationConfig?.maxOutputTokens   ?? 2048,
+          // Wyłącz "thinking" żeby przyspieszyć odpowiedzi w czacie (Gemini 2.5/3.5 myśli domyślnie)
+          thinkingConfig: { thinkingBudget: 0 },
           ...(generationConfig?.responseMimeType
             ? { responseMimeType: generationConfig.responseMimeType }
             : {}),
