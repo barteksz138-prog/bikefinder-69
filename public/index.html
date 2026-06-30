@@ -111,6 +111,9 @@ function App() {
   });
   const [discordWebhook, setDiscordWebhook] = useState(cfg.discordWebhook || "");
   const [discordThread,  setDiscordThread]  = useState(cfg.discordThread || "");
+  const [uncertainWebhook, setUncertainWebhook] = useState(cfg.uncertainWebhook || "");
+  const DEFAULT_FILTER_KEYWORDS = "Rennrad, Gravel, Trekkingrad, Hollandrad, Cityrad, Stadtrad, Kinderfahrrad, Laufrad, Klapprad, Liegerad, Dreirad, E-Bike, Ebike, Pedelec, Elektrofahrrad, Rollator, Ersatzteile, Einzelteile, nur Rahmen, Rahmen only, Bastlerrad, Schrott, gesucht, Kinder, Jugend, 12 Zoll, 16 Zoll, 20 Zoll";
+  const [filterKeywords, setFilterKeywords] = useState(cfg.filterKeywords ?? DEFAULT_FILTER_KEYWORDS);
   const [selectedBikes,  setSelectedBikes]  = useState(() => {
     const saved = cfg.selectedBikes;
     if (!saved) return BIKE_MODELS.map(b => b.id);
@@ -178,7 +181,7 @@ function App() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
   const saveSettings = () => {
-    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, selectedBikes, provider, minProfit };
+    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, selectedBikes, provider, minProfit };
     localStorage.setItem("ddf_cfg", JSON.stringify(data));
     addLog("💾 Ustawienia zapisane", "success");
   };
@@ -286,6 +289,29 @@ function App() {
     return resp.json();
   };
 
+  const callUncertainDiscord = async (payload) => {
+    if (!uncertainWebhook) return { ok: false };
+    const resp = await fetch("/api/discord", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webhookUrl: uncertainWebhook, threadId: "", payload }),
+    });
+    return resp.json();
+  };
+
+  // Filtr słów kluczowych — odrzuca ogłoszenie ZANIM trafi do Gemini (zero kosztu)
+  const getFilterKeywordList = () =>
+    filterKeywords.split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+
+  const matchesFilterKeyword = (listing) => {
+    const haystack = `${listing.title} ${listing.desc}`.toLowerCase();
+    const keywords = getFilterKeywordList();
+    for (const kw of keywords) {
+      if (kw && haystack.includes(kw)) return kw;
+    }
+    return null;
+  };
+
   const scrapeKleinanzeigen = async (bike) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
     // Modele konkretne używają wyszukiwania po frazie
@@ -389,15 +415,16 @@ Określ typ NA PODSTAWIE TYTUŁU I OPISU ogłoszenia:
 UWAGA: Hardtail MTB (np. XC hardtail, trail hardtail) bez tylnego zawieszenia i bez dirtowej geometrii = "inny". Nie myl z dirt.
 
 === KROK 2 — OCENA OPŁACALNOŚCI ===
-• Jeśli typ = "inny" → ZAWSZE oplaca_sie: false. Nie analizuj dalej.
+• Jeśli typ = "inny" → ZAWSZE decyzja: "nie". Nie analizuj dalej.
 • Jeśli typ = "dirt" lub "full":
   - Sprawdź cenę ogłoszenia (w EUR).
   - Na podstawie modelu, roku produkcji, wyposażenia i stanu (opisanego w tytule/opisie) oszacuj realną cenę sprzedaży w Polsce (w PLN i EUR).
   - Oblicz przewidywany zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia.
-  - oplaca_sie: true TYLKO jeśli zysk wynosi minimum ${minProfit}% ceny zakupu.
+  - decyzja: "tak" TYLKO jeśli zysk wynosi minimum ${minProfit}% ceny zakupu I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
+  - decyzja: "niepewne" gdy typ to dirt/full ale brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, niejasny model/rok, lub potencjał wydaje się być ale nie masz pewności co do zysku. NIE odrzucaj takich automatycznie jako "nie" — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
+  - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
   - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji.
-  - BĄDŹ RESTRYKCYJNY: lepiej pominąć wątpliwą okazję niż przepłacić. Nie zatwierdzaj ogłoszeń gdzie nie jesteś pewny.
-  - Jeśli cena ogłoszenia nie jest podana (null/brak) → oplaca_sie: false.${chatInfo}
+  - Jeśli cena ogłoszenia nie jest podana (null/brak) → decyzja: "niepewne" (nie "nie" — może być warta sprawdzenia ręcznie).${chatInfo}
 
 === OGŁOSZENIE DO OCENY ===
 Tytuł: ${listing.title}
@@ -409,11 +436,11 @@ Model/kategoria wyszukiwania: ${listing.bike}
 Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON):
 {
   "typ_roweru": "full" | "dirt" | "inny",
-  "oplaca_sie": true | false,
+  "decyzja": "tak" | "nie" | "niepewne",
   "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
   "przewidywany_zysk": liczba w EUR lub 0,
-  "krotki_opis": "max 2 zdania — model, rok, stan roweru i dlaczego opłaca się lub nie"
+  "krotki_opis": "max 2 zdania — model, rok, stan roweru i dlaczego opłaca się, nie opłaca, lub czemu jest niepewne"
 }`;
 
         addLog(`🤖 Analizuję: ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""}`, "info");
@@ -453,10 +480,17 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         const typ = ["full", "dirt"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny";
         parsed.typ_roweru = typ;
 
+        // Normalizuj decyzję — fallback na "nie" jeśli Gemini zwróci coś nieoczekiwanego
+        const decyzja = ["tak", "nie", "niepewne"].includes(parsed.decyzja) ? parsed.decyzja : "nie";
+        parsed.decyzja = decyzja;
+
         // TWARDA REGUŁA: "inny" zawsze = nie opłaca się, niezależnie co zwróci Gemini
         if (typ === "inny") {
-          parsed.oplaca_sie = false;
+          parsed.decyzja = "nie";
         }
+
+        // Kompatybilność wsteczna — pole oplaca_sie używane w Discord embed / wynikach
+        parsed.oplaca_sie = parsed.decyzja === "tak";
 
         return parsed;
 
@@ -510,6 +544,8 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     const activeBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
     addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} modeli`, "success");
 
+    const uncertainBatch = []; // zbiorcza lista "niepewnych" na ten cykl
+
     for (const bike of activeBikes) {
       if (!runningRef.current) return;
       addLog(`🔍 ${bike.label}…`, "info");
@@ -548,12 +584,38 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         if (!runningRef.current) return;
         saveSeenId(listing.listingId);
 
+        // ── Filtr lokalny PRZED Gemini — zero kosztu, odrzuca ewidentne nie-trafienia ──
+        const filterHit = matchesFilterKeyword(listing);
+        if (filterHit) {
+          addLog(`🚫 Filtr: odrzucono (słowo: "${filterHit}") — ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone filtrem słów kluczowych (${filterHit})` },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue; // nie idzie do Gemini
+        }
+
+        // ── Brak ceny — od razu do "niepewne", bez Gemini ──
+        if (listing.price == null) {
+          addLog(`❓ Brak ceny — do listy niepewnych: ${listing.title}`, "info");
+          uncertainBatch.push({ listing, reason: "brak ceny w ogłoszeniu" });
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "?", decyzja: "niepewne", oplaca_sie: false, krotki_opis: "Brak ceny — wymaga ręcznego sprawdzenia" },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue;
+        }
+
         const analysis = await analyzeWithGemini(listing);
         let status = "skip";
 
         if (!analysis) {
           status = "error";
-        } else if (analysis.oplaca_sie === true) {
+        } else if (analysis.decyzja === "tak") {
           // ✅ Gemini mówi TAK → wysyłaj webhook
           addLog(`✅ OKAZJA! ${listing.title} | zysk: ~${analysis.przewidywany_zysk}€`, "success");
           setStats(s => ({ ...s, deals: s.deals + 1 }));
@@ -565,6 +627,10 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
           } else {
             addLog(`⚠️ Nie udało się wysłać na Discord`, "error");
           }
+        } else if (analysis.decyzja === "niepewne") {
+          // ❓ Za mało danych żeby ocenić — zbierz do zbiorczej wiadomości
+          addLog(`❓ Niepewne — ${listing.title}`, "info");
+          uncertainBatch.push({ listing, reason: analysis.krotki_opis || "za mało informacji" });
         } else {
           // ❌ Gemini mówi NIE → nie wysyłaj
           const reason = analysis.typ_roweru === "inny"
@@ -584,9 +650,23 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
       await sleep(3000);
     }
 
+    // ── Wyślij zbiorczą listę "niepewnych" na koniec cyklu (jeśli są i webhook ustawiony) ──
+    if (uncertainBatch.length > 0 && uncertainWebhook) {
+      const lines = uncertainBatch.map(u => `🔸 ${u.listing.title}${u.listing.price != null ? ` (${u.listing.price}€)` : ""} — ${u.reason}\n${u.listing.href}`).join("\n\n");
+      const content = `❓ **Niepewne rowery — cykl #${cycleN}** (${uncertainBatch.length})\n\n${lines}`.slice(0, 1900);
+      try {
+        await callUncertainDiscord({ content });
+        addLog(`📨 Wysłano listę ${uncertainBatch.length} niepewnych na Discord`, "success");
+      } catch (e) {
+        addLog(`⚠️ Błąd wysyłki listy niepewnych: ${e.message}`, "error");
+      }
+    } else if (uncertainBatch.length > 0 && !uncertainWebhook) {
+      addLog(`❓ ${uncertainBatch.length} niepewnych rowerów (brak webhooka — ustaw w Ustawieniach żeby dostawać listę)`, "info");
+    }
+
     firstCycleRef.current = false;
     addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
-  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, selectedBikes, priceKnowledge, minProfit]);
+  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, selectedBikes, priceKnowledge, minProfit]);
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
@@ -855,14 +935,14 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                   <div style={{ textAlign: "right", minWidth: 120 }}>
                     <div style={{ fontSize: 11, color: "#475569", marginBottom: 2 }}>Cena z ogłoszenia</div>
                     <div style={{ fontSize: 20, fontWeight: 800 }}>{r.listing.price}€</div>
-                    <div style={{ marginTop: 8, fontSize: 11, color: "#475569", marginBottom: 2 }}>Opłaca się</div>
+                    <div style={{ marginTop: 8, fontSize: 11, color: "#475569", marginBottom: 2 }}>Decyzja</div>
                     <div style={{ fontSize: 15, fontWeight: 800,
-                      color: r.analysis.oplaca_sie ? "#22c55e" : "#f87171" }}>
-                      {r.analysis.oplaca_sie ? "✅ TAK" : "❌ NIE"}
+                      color: r.analysis.decyzja === "tak" ? "#22c55e" : r.analysis.decyzja === "niepewne" ? "#f59e0b" : "#f87171" }}>
+                      {r.analysis.decyzja === "tak" ? "✅ TAK" : r.analysis.decyzja === "niepewne" ? "❓ NIEPEWNE" : "❌ NIE"}
                     </div>
                     <div style={{ marginTop: 8, fontSize: 11, color: "#475569", marginBottom: 2 }}>Przewidywany zysk</div>
                     <div style={{ fontSize: 16, fontWeight: 800,
-                      color: r.analysis.oplaca_sie ? "#22c55e" : "#475569" }}>
+                      color: r.analysis.decyzja === "tak" ? "#22c55e" : "#475569" }}>
                       ~{r.analysis.przewidywany_zysk}€
                     </div>
                   </div>
@@ -1113,6 +1193,42 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                 border: "1px solid #5865f255", background: "#5865f218",
                 color: "#7c8cf8", fontWeight: 700, fontSize: 13,
               }}>📡 Test webhook</button>
+
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ fontSize: 11, color: "#f59e0b", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  ❓ Webhook "Niepewne" (opcjonalne, osobny kanał)
+                </label>
+                <input type="password" placeholder="https://discord.com/api/webhooks/..."
+                  value={uncertainWebhook} onChange={e => setUncertainWebhook(e.target.value)} />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Rowery, które wyglądają na full/dirt ale Gemini ma za mało danych żeby ocenić opłacalność (np. brak ceny, zdawkowy opis) — wysyłane jako zbiorcza lista linków na koniec każdego cyklu, na osobny kanał.
+                </div>
+              </div>
+            </div>
+
+            {/* Filtr słów kluczowych */}
+            <div style={{ gridColumn: "span 2", background: "#0d1526", border: "1px solid #1a2d4a", borderRadius: 16, padding: 24 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
+                <span>🚫</span> Filtr słów kluczowych (przed Gemini, za darmo)
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Słowa do odrzucenia (przecinek lub nowa linia)
+                </label>
+                <textarea
+                  rows={4}
+                  value={filterKeywords}
+                  onChange={e => setFilterKeywords(e.target.value)}
+                  style={{ fontFamily: "monospace", fontSize: 12, lineHeight: 1.7, resize: "vertical" }}
+                />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Jeśli tytuł LUB opis ogłoszenia zawiera dowolne z tych słów (bez rozróżniania wielkości liter) — ogłoszenie jest odrzucane od razu, bez wysyłania do Gemini. Oszczędza koszty i czas na oczywistych nietrafieniach (szosówki, dziecięce, e-bike, części itd).
+                </div>
+              </div>
+              <button onClick={() => setFilterKeywords(DEFAULT_FILTER_KEYWORDS)} style={{
+                padding: "6px 14px", borderRadius: 8, border: "1px solid #1e293b",
+                background: "transparent", color: "#475569", fontSize: 11,
+              }}>↩ Przywróć domyślne</button>
             </div>
 
             {/* Strategia */}
