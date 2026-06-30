@@ -39,35 +39,11 @@ const { useState, useEffect, useRef, useCallback } = React;
 //   isCategory: true  → categoryUrl to pełny URL Kleinanzeigen z filtrem kategorii
 //   (brak)            → query to fraza wyszukiwana w /s-fahrraeder/{query}/k0c217
 const BIKE_MODELS = [
-  // ── Konkretne modele dirt (wyszukiwanie po frazie) ───────────────────
-  { id: "specialized_p3",      label: "Specialized P.3",     query: "Specialized P3 dirt" },
-  { id: "dartmoor_two6player", label: "Dartmoor Two6player", query: "Dartmoor Two6player" },
-  { id: "canyon_stitched_360", label: "Canyon Stitched 360", query: "Canyon Stitched 360" },
-  { id: "trek_ticket",         label: "Trek Ticket",          query: "Trek Ticket dirt" },
-  { id: "rose_the_bruce",      label: "Rose The Bruce",       query: "Rose The Bruce dirt" },
-  { id: "radon_slush",         label: "Radon Slush",          query: "Radon Slush" },
-  { id: "canyon_torque",       label: "Canyon Torque",        query: "Canyon Torque" },
-  { id: "canyon_spectral",     label: "Canyon Spectral",      query: "Canyon Spectral" },
-
-  // ── Kategorie Kleinanzeigen (URL z filtrem typu) ─────────────────────
-  // Skanujemy całą kategorię — Gemini decyduje co jest dirt/full, resztę odrzuca.
   {
     id: "cat_mountainbike",
-    label: "🏔️ MTB (cała kategoria)",
+    label: "🏔️ Mountain Bike",
     isCategory: true,
     categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:200:2000/c217+fahrraeder.type_s:mountainbike",
-  },
-  {
-    id: "cat_dirt_bmx",
-    label: "🚵 Dirt / BMX (kategoria)",
-    isCategory: true,
-    categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/c217+fahrraeder.type_s:bmx",
-  },
-  {
-    id: "cat_downhill",
-    label: "💥 Downhill (kategoria)",
-    isCategory: true,
-    categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/c217+fahrraeder.type_s:downhill",
   },
 ];
 
@@ -485,7 +461,14 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         return parsed;
 
       } catch (e) {
-        addLog(`⚠️ Błąd parsowania Gemini: ${e.message}`, "error");
+        const msg = e.message || "";
+        const isTransient = /high demand|overloaded|unavailable|503|temporarily/i.test(msg);
+        if (isTransient && attempt < 3) {
+          addLog(`⏳ Gemini chwilowo przeciążony — ponawiam za 8s (próba ${attempt}/3)`, "error");
+          await sleep(8000);
+          continue;
+        }
+        addLog(`⚠️ Błąd parsowania Gemini: ${msg}`, "error");
         return null;
       }
     }
@@ -536,6 +519,10 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         const html = await scrapeKleinanzeigen(bike);
         addLog(`📥 ${bike.label}: pobrano ${html.length} znaków HTML`, "info");
         listings = parseListings(html, bike.label);
+        // Usuń duplikaty WEWNĄTRZ tego samego skanu (Kleinanzeigen czasem pokazuje to samo ogłoszenie 2x, np. wyróżnione + zwykłe)
+        const uniqueMap = new Map();
+        listings.forEach(l => { if (!uniqueMap.has(l.listingId)) uniqueMap.set(l.listingId, l); });
+        listings = [...uniqueMap.values()];
         addLog(`📋 ${bike.label}: znaleziono ${listings.length} ogłoszeń`, listings.length > 0 ? "info" : "error");
       } catch (e) {
         addLog(`⚠️ ${bike.label}: błąd scraping — ${e.message}`, "error");
