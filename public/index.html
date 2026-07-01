@@ -347,28 +347,63 @@ Opis: ${listing.desc}
 
 Odpowiedz WYŁĄCZNIE jednym słowem z listy (full / dirt / elektryk_gorski / inny / niepewne), bez żadnego innego tekstu.`;
 
-    try {
-      const data = await callProxy({
-        provider: "groq",
-        model: GROQ_CLASSIFIER_MODEL,
-        apiKey: groqClassifierKey,
-        messages: [{ role: "user", content: prompt }],
-        generationConfig: { temperature: 0.1, maxOutputTokens: 10 },
-      });
-      if (data?.error) {
-        addLog(`⚠️ Groq klasyfikator: ${data.error?.message || "błąd"} — przepuszczam dalej jako niepewne`, "error");
-        return "niepewne";
+    addLog(`🔎 Groq: klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}`, "info");
+
+    // Retry z backoffem — Groq (free tier: 30 RPM) czasem rzuca 429 przy chwilowym skoku ruchu.
+    // Zamiast od razu poddawać się i lecieć dalej jako "niepewne", próbujemy ponownie 2 razy,
+    // czekając tyle ile Groq każe w komunikacie błędu ("try again in Xms/Xs").
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const startedAt = Date.now();
+      try {
+        const data = await callProxy({
+          provider: "groq",
+          model: GROQ_CLASSIFIER_MODEL,
+          apiKey: groqClassifierKey,
+          messages: [{ role: "user", content: prompt }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 20 },
+        });
+        const ms = Date.now() - startedAt;
+
+        if (data?.error) {
+          const msg = data.error?.message || "błąd";
+          const isRateLimit = /rate limit|429|too many requests/i.test(msg);
+          if (isRateLimit && attempt < 3) {
+            const m = msg.match(/try again in ([\d.]+)(ms|s)/i);
+            const waitMs = m ? (m[2].toLowerCase() === "ms" ? parseFloat(m[1]) : parseFloat(m[1]) * 1000) : 3000;
+            addLog(`⏳ Groq: limit RPM osiągnięty — czekam ${Math.ceil((waitMs + 300) / 1000)}s, próba ${attempt + 1}/3 — ${listing.title}`, "error");
+            await sleep(waitMs + 300);
+            continue; // ponów
+          }
+          addLog(`⚠️ Groq klasyfikator: ${msg} (${ms}ms) — przepuszczam dalej jako niepewne`, "error");
+          return "niepewne";
+        }
+
+        const raw = (data?.choices?.[0]?.message?.content || "").toLowerCase().trim();
+        let typ;
+        if (raw.includes("elektryk")) typ = "elektryk_gorski";
+        else if (raw.includes("dirt")) typ = "dirt";
+        else if (raw.includes("full")) typ = "full";
+        else if (raw.includes("inny")) typ = "inny";
+        else typ = "niepewne";
+
+        const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", inny: "⚫", niepewne: "❓" }[typ];
+        const rawNote = !["full", "dirt", "elektryk_gorski", "inny", "niepewne"].includes(raw) && raw && typ === "niepewne"
+          ? ` (Groq odpowiedział niejednoznacznie: "${raw.slice(0, 40)}")`
+          : "";
+        addLog(`${icon} Groq (${ms}ms): typ="${typ}"${rawNote} — ${listing.title}`, "info");
+        return typ;
+      } catch (e) {
+        const ms = Date.now() - startedAt;
+        if (attempt < 3) {
+          addLog(`⏳ Groq: błąd sieci (${e.message}, ${ms}ms) — ponawiam za 2s, próba ${attempt + 1}/3 — ${listing.title}`, "error");
+          await sleep(2000);
+          continue;
+        }
+        addLog(`⚠️ Groq klasyfikator: ${e.message} (${ms}ms) — przepuszczam dalej jako niepewne`, "error");
+        return "niepewne"; // błąd/limit Groqa po 3 próbach → nie odrzucaj, przepuść dalej
       }
-      const raw = (data?.choices?.[0]?.message?.content || "").toLowerCase().trim();
-      if (raw.includes("elektryk")) return "elektryk_gorski";
-      if (raw.includes("dirt"))     return "dirt";
-      if (raw.includes("full"))     return "full";
-      if (raw.includes("inny"))     return "inny";
-      return "niepewne";
-    } catch (e) {
-      addLog(`⚠️ Groq klasyfikator: ${e.message} — przepuszczam dalej jako niepewne`, "error");
-      return "niepewne"; // błąd/limit Groqa → nie odrzucaj, przepuść dalej
     }
+    return "niepewne"; // nie powinno tu dotrzeć, ale na wszelki wypadek
   };
 
   const scrapeKleinanzeigen = async (bike) => {
@@ -515,7 +550,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "krotki_opis": "max 2 zdania — model, rok, stan roweru i dlaczego opłaca się, nie opłaca, lub czemu jest niepewne"
 }`;
 
-        addLog(`🤖 Analizuję: ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""}`, "info");
+        addLog(`🤖 Gemini (etap 2): analizuję — ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""} | typ z etapu 1: ${groqType}`, "info");
 
     // Retry loop — czeka gdy quota wyczerpana
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -620,10 +655,17 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   const runOneCycle = useCallback(async (cycleN) => {
     const activeBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
     addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} modeli`, "success");
+    addLog(
+      groqClassifierKey
+        ? `🤖 Etap 1 (Groq) AKTYWNY — model ${GROQ_CLASSIFIER_MODEL}, limit Gemini/cykl = ${maxGeminiPerCycle}`
+        : `ℹ️ Etap 1 (Groq) WYŁĄCZONY — brak klucza w Ustawieniach, wszystko po czarnej liście leci prosto do Gemini`,
+      "info"
+    );
 
     geminiCallsRef.current = 0; // reset licznika analiz Gemini na nowy cykl
     const uncertainBatch = [];   // zbiorcza lista "niepewnych" na ten cykl
     const geminiCandidates = []; // { listing, groqType } — zebrane ze WSZYSTKICH modeli w tym cyklu, czekają na analizę Gemini
+    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, confident: 0, uncertain: 0 }; // statystyki fazy 1 do podsumowania
 
     // ── FAZA 1: scraping + filtr słów + klasyfikacja Groq (etap 1, tani/szybki) ──
     for (const bike of activeBikes) {
@@ -667,6 +709,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         // ── Filtr lokalny PRZED Groq — zero kosztu, odrzuca ewidentne nie-trafienia ──
         const filterHit = matchesFilterKeyword(listing);
         if (filterHit) {
+          phase1Stats.blacklist++;
           addLog(`🚫 Filtr: odrzucono (słowo: "${filterHit}") — ${listing.title}`, "info");
           setResults(prev => [{
             id: Date.now() + Math.random(), listing,
@@ -679,9 +722,10 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
         // ── Etap 1 — Groq: szybka klasyfikacja typu (tanio, byle jak, zero limitu Gemini) ──
         const typ = await classifyWithGroq(listing);
-        await sleep(2000); // szanuj limit RPM darmowego Groqa
+        await sleep(2500); // margines poniżej limitu 30 RPM darmowego Groqa (2000ms = dokładnie na granicy, bez zapasu)
 
         if (typ === "inny") {
+          phase1Stats.groqInny++;
           addLog(`🚫 Groq: typ "inny" — odrzucono — ${listing.title}`, "info");
           setResults(prev => [{
             id: Date.now() + Math.random(), listing,
@@ -694,6 +738,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
         // ── Brak ceny — od razu do "niepewne", bez Gemini ──
         if (listing.price == null) {
+          phase1Stats.noPrice++;
           addLog(`❓ Brak ceny — do listy niepewnych: ${listing.title}`, "info");
           uncertainBatch.push({ listing, reason: "brak ceny w ogłoszeniu" });
           setResults(prev => [{
@@ -706,6 +751,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         }
 
         // typ === "full" | "dirt" | "elektryk_gorski" | "niepewne" → kandydat do Gemini (etap 2)
+        if (typ === "niepewne") phase1Stats.uncertain++; else phase1Stats.confident++;
         geminiCandidates.push({ listing, groqType: typ });
       }
 
@@ -717,6 +763,11 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
       addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
       return;
     }
+
+    addLog(
+      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
+      "success"
+    );
 
     // ── FAZA 2 — Gemini: tylko jeśli jest jeszcze limit na ten cykl, pewne typy najpierw ──
     // Sortowanie stabilne: kandydaci z pewną klasyfikacją (full/dirt/elektryk_gorski) idą PRZED
@@ -749,7 +800,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         status = "error";
       } else if (analysis.decyzja === "tak") {
         // ✅ Gemini mówi TAK → wysyłaj webhook
-        addLog(`✅ OKAZJA! ${listing.title} | zysk: ~${analysis.przewidywany_zysk}€`, "success");
+        addLog(`✅ OKAZJA! [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€ | zysk: ~${analysis.przewidywany_zysk}€`, "success");
         setStats(s => ({ ...s, deals: s.deals + 1 }));
         const sent = await sendToDiscord(listing, analysis);
         status = sent ? "sent" : "deal";
@@ -761,14 +812,14 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         }
       } else if (analysis.decyzja === "niepewne") {
         // ❓ Za mało danych żeby ocenić — zbierz do zbiorczej wiadomości
-        addLog(`❓ Niepewne — ${listing.title}`, "info");
+        addLog(`❓ Niepewne [${analysis.typ_roweru}] — ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ — ${analysis.krotki_opis || "za mało informacji"}`, "info");
         uncertainBatch.push({ listing, reason: analysis.krotki_opis || "za mało informacji" });
       } else {
         // ❌ Gemini mówi NIE → nie wysyłaj
         const reason = analysis.typ_roweru === "inny"
           ? `typ: inny — odrzucone automatycznie`
           : `zysk za mały`;
-        addLog(`⏭ Gemini: NIE opłaca się (${reason}) — ${listing.title}`, "info");
+        addLog(`⏭ Gemini: NIE opłaca się (${reason}) — [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€`, "info");
       }
 
       setResults(prev => [{
