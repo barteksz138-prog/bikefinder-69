@@ -112,13 +112,21 @@ function App() {
   const [groqClassifierKey, setGroqClassifierKey] = useState(cfg.groqClassifierKey || "");
   // Ile rowerów maksymalnie wysyłamy do Gemini (etap 2, drogi/limitowany) w ramach JEDNEGO cyklu skanowania.
   const [maxGeminiPerCycle, setMaxGeminiPerCycle] = useState(cfg.maxGeminiPerCycle ?? 25);
+  // Ogłoszenia sklasyfikowane przez Groq jako "niepewne" (z ceną) idą do Gemini TYLKO jeśli cena >= ten próg.
+  // Cel: przy niepewnym typie i niskiej cenie prawdopodobieństwo że to coś wartego uwagi jest niskie —
+  // nie warto marnować wywołania Gemini. Ogłoszenia bez podanej ceny ZAWSZE trafiają do listy niepewnych
+  // (nie przechodzą przez ten próg, bo nie ma z czym porównać).
+  const [minUncertainPrice, setMinUncertainPrice] = useState(cfg.minUncertainPrice ?? 500);
   const [priceKnowledge, setPriceKnowledge] = useState(() => {
     try { return JSON.parse(localStorage.getItem("ddf_price_knowledge") || "[]"); } catch { return []; }
   });
   const [discordWebhook, setDiscordWebhook] = useState(cfg.discordWebhook || "");
   const [discordThread,  setDiscordThread]  = useState(cfg.discordThread || "");
   const [uncertainWebhook, setUncertainWebhook] = useState(cfg.uncertainWebhook || "");
-  const DEFAULT_FILTER_KEYWORDS = "Rennrad, Gravel, Trekkingrad, Hollandrad, Cityrad, Stadtrad, Kinderfahrrad, Laufrad, Klapprad, Liegerad, Dreirad, E-Bike, Ebike, Pedelec, Elektrofahrrad, Rollator, Ersatzteile, Einzelteile, nur Rahmen, Rahmen only, Bastlerrad, Schrott, gesucht, Kinder, Jugend, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, Damenrad, Herrenrad, Tourenrad, Reiserad, Crossrad, Fitnessbike, Singlespeed, Fixie, BMX Freestyle, Faltrad, Lastenrad, Cargobike";
+  // UWAGA: "E-Bike"/"Ebike"/"Pedelec"/"Elektrofahrrad" CELOWO NIE są tu wpisane — o tym czy elektryk jest
+  // górski (elektryk_gorski, chcemy) czy miejski/touringowy (inny, nie chcemy) decyduje Groq w Etapie 1
+  // na podstawie kontekstu. Blankietowe blokowanie tych słów odrzucałoby też wartościowe e-MTB.
+  const DEFAULT_FILTER_KEYWORDS = "Rennrad, Gravel, Trekkingrad, Hollandrad, Cityrad, Stadtrad, Kinderfahrrad, Laufrad, Klapprad, Liegerad, Dreirad, Rollator, Ersatzteile, Einzelteile, nur Rahmen, Rahmen only, Rahmenset, Bastlerrad, Schrott, gesucht, Kinder, Jugend, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, Damenrad, Herrenrad, Tourenrad, Reiserad, Crossrad, Fitnessbike, Singlespeed, Fixie, BMX Freestyle, Faltrad, Lastenrad, Cargobike, Seniorenrad, Elektroroller, E-Scooter, Escooter, Motorroller, Tretroller, Kickscooter, Balance Bike, Laufrädchen, Fahrradanhänger, Kinderanhänger, Kinderwagen, Fahrradträger, Rollstuhl, Vermietung, Verleih, Miete, Tausch gegen, Deko, Bastelobjekt, Spielzeugrad, Puky, Kettcar, Dreiradwagen";
   const [filterKeywords, setFilterKeywords] = useState(cfg.filterKeywords ?? DEFAULT_FILTER_KEYWORDS);
   const [selectedBikes,  setSelectedBikes]  = useState(() => {
     const saved = cfg.selectedBikes;
@@ -188,7 +196,7 @@ function App() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
   const saveSettings = () => {
-    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, selectedBikes, provider, minProfit };
+    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, provider, minProfit };
     localStorage.setItem("ddf_cfg", JSON.stringify(data));
     addLog("💾 Ustawienia zapisane", "success");
   };
@@ -332,20 +340,26 @@ function App() {
   const classifyWithGroq = async (listing) => {
     if (!groqClassifierKey) return "niepewne"; // brak klucza = filtr wyłączony, przepuść wszystko
 
-    const prompt = `Jesteś klasyfikatorem ogłoszeń rowerowych. Na podstawie SAMEGO tytułu i opisu określ TYLKO typ roweru — bez analizy ceny czy opłacalności.
+    const prompt = `Klasyfikator ogłoszeń rowerowych. Na podstawie tytułu i opisu określ TYLKO typ roweru.
 
-Dozwolone typy:
-- full — rower z PEŁNYM zawieszeniem (amortyzator z tyłu + widelec z przodu): enduro, trail, all-mountain, downhill, freeride.
-- dirt — rower dirt jump / slopestyle / pumptrack / street, sztywna rama (hardtail), bez tylnego zawieszenia, geometria do skoków.
-- elektryk_gorski — elektryczny rower górski / e-MTB (silnik wspomagający + charakter trail/enduro/downhill). NIE miejski/touringowy e-bike.
-- inny — wszystko inne: szosówka, gravel, trekking, miejski, dziecięcy, klasyczny BMX, hardtail XC/trail BEZ dirtowej charakterystyki, części/rama, miejski lub touringowy e-bike, itp.
+Typy:
+- full — PEŁNE zawieszenie (amortyzator z tyłu + widelec z przodu): enduro/trail/all-mountain/downhill.
+- dirt — dirt jump/slopestyle/pumptrack, sztywny hardtail do skoków.
+- elektryk_gorski — elektryczny rower górski/e-MTB (napęd + charakter trail/enduro). NIE miejski e-bike.
+- inny — reszta: szosówka, gravel, trekking, miejski, dziecięcy, hardtail XC bez cech dirtowych, części, miejski e-bike.
 
-Jeśli NIE masz wystarczająco informacji żeby jednoznacznie rozpoznać typ — odpowiedz dokładnie: niepewne
+ZASADA: samo słowo "Mountainbike"/"MTB" w tytule BEZ dowodu na pełne zawieszenie = zwykle TANI HARDTAIL, czyli "inny", NIE "full"! Klasyfikuj jako "full" TYLKO gdy jest konkretny dowód: "vollgefedert"/"Fully"/"full suspension", wzmianka o amortyzatorze/zawieszeniu z tyłu ("Dämpfer", "Federung hinten", "Hinterbau"), lub znany model full: Canyon Torque/Spectral/Strive/Neuron/Nerve, Trek Fuel/Slash/Remedy, Specialized Stumpjumper/Enduro/Camber, Cube Stereo/AMS, Santa Cruz, YT, Commencal, Radon Swoop/Slide, Ghost Riot/SL AMR, Focus Jam/Sam/Thron.
+
+ZNANE HARDTAILE (= "inny", nie "full"): Trek Marlin/Roscoe/X-Caliber, Cube Aim/Access/Acid/Analog/Attention/Reaction, BULLS Sharptail/Copperhead/Wildtail/Six50, Rockrider/Rockride (Decathlon, wszystkie ST-serie), Specialized Rockhopper/Pitch/Chisel/Hardrock, Scott Aspect/Scale, Merida Big Nine/Seven/Trail, Ghost Kato/Lanao, Giant Talon/ATX, KTM Chicago/Ultra, Focus Whistler/Raven.
+
+E-BIKE: sygnały napędu ("E-Bike","Akku","Motor",Bosch/Shimano Steps/Brose/Yamaha, przebieg w km, "E1.5"/"E-8"). Z charakterem górskim (zawieszenie/MTB/teren) → elektryk_gorski. Z charakterem miejskim/touring (koszyk, błotniki, "City"/"Trekking") → inny.
+
+Brak wystarczających informacji → odpowiedz: niepewne
 
 Tytuł: ${listing.title}
 Opis: ${listing.desc}
 
-Odpowiedz WYŁĄCZNIE jednym słowem z listy (full / dirt / elektryk_gorski / inny / niepewne), bez żadnego innego tekstu.`;
+Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/inny/niepewne), bez innego tekstu.`;
 
     addLog(`🔎 Groq: klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}`, "info");
 
@@ -665,7 +679,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     geminiCallsRef.current = 0; // reset licznika analiz Gemini na nowy cykl
     const uncertainBatch = [];   // zbiorcza lista "niepewnych" na ten cykl
     const geminiCandidates = []; // { listing, groqType } — zebrane ze WSZYSTKICH modeli w tym cyklu, czekają na analizę Gemini
-    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, confident: 0, uncertain: 0 }; // statystyki fazy 1 do podsumowania
+    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0 }; // statystyki fazy 1 do podsumowania
 
     // ── FAZA 1: scraping + filtr słów + klasyfikacja Groq (etap 1, tani/szybki) ──
     for (const bike of activeBikes) {
@@ -751,6 +765,21 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         }
 
         // typ === "full" | "dirt" | "elektryk_gorski" | "niepewne" → kandydat do Gemini (etap 2)
+        // Wyjątek: "niepewne" + cena poniżej progu → od razu odrzuć, nie marnuj wywołania Gemini
+        // (ma cenę — więc nie kwalifikuje się do listy "brak ceny" — a Groq nie umiał rozpoznać typu,
+        // więc przy niskiej cenie zakładamy że to niewart uwagi hardtail/miejski i pomijamy).
+        if (typ === "niepewne" && listing.price < minUncertainPrice) {
+          phase1Stats.priceThreshold++;
+          addLog(`🚫 Groq: niepewny typ + cena ${listing.price}€ < ${minUncertainPrice}€ próg — odrzucono — ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "?", decyzja: "nie", oplaca_sie: false, krotki_opis: `Niepewny typ, cena ${listing.price}€ poniżej progu ${minUncertainPrice}€ — odrzucone bez Gemini` },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue;
+        }
+
         if (typ === "niepewne") phase1Stats.uncertain++; else phase1Stats.confident++;
         geminiCandidates.push({ listing, groqType: typ });
       }
@@ -765,7 +794,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     }
 
     addLog(
-      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
+      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
       "success"
     );
 
@@ -846,7 +875,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
     firstCycleRef.current = false;
     addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
-  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, selectedBikes, priceKnowledge, minProfit]);
+  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, priceKnowledge, minProfit]);
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
@@ -1442,6 +1471,24 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
                   Jeśli po Etapie 1 zostanie więcej kandydatów niż ten limit — pierwsze idą rowery o PEWNEJ klasyfikacji (full/dirt/elektryk górski), reszta ("niepewne") jest pomijana w tym cyklu. Chroni Gemini przed przeciążeniem, gdy nagle pojawi się dużo nowych ogłoszeń.
+                </div>
+              </div>
+
+              <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Min. cena dla ogłoszeń o niepewnym typie (€)
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <input
+                    type="range" min="0" max="2000" step="50"
+                    value={minUncertainPrice}
+                    onChange={e => setMinUncertainPrice(Number(e.target.value))}
+                    style={{ flex: 1, accentColor: "#f59e0b", padding: 0, border: "none", background: "transparent" }}
+                  />
+                  <div style={{ minWidth: 55, textAlign: "center", fontWeight: 800, fontSize: 22, color: "#f59e0b" }}>{minUncertainPrice}€</div>
+                </div>
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Gdy Groq nie umie rozpoznać typu ("niepewne") ale ogłoszenie MA podaną cenę — idzie do Gemini tylko jeśli ta cena wynosi co najmniej tyle. Poniżej progu ogłoszenie jest odrzucane bez Gemini (zbyt tanie żeby ryzykować, skoro i tak nie wiadomo co to za rower). Ogłoszenia BEZ ceny zawsze trafiają do listy niepewnych na Discord, niezależnie od tego ustawienia — nie mają z czym porównać progu.
                 </div>
               </div>
             </div>
