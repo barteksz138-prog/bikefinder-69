@@ -13,6 +13,23 @@ export default async function handler(req, res) {
   if (!model)    return res.status(400).json({ error: "Brak model" });
   if (!messages) return res.status(400).json({ error: "Brak messages" });
 
+  // Gemini 2.5 i starsze używają thinkingBudget (liczba tokenów, 0 = wyłączone).
+  // Gemini 3.x (w tym alias "gemini-flash-latest", który obecnie wskazuje na 3.5 Flash) używa
+  // INNEGO parametru: thinkingLevel ("minimal"/"low"/"medium"/"high"). Wysłanie thinkingBudget
+  // do modelu 3.x jest po cichu ignorowane (Google: "may result in unexpected performance") —
+  // model wtedy myśli na domyślnym poziomie przy KAŻDYM zapytaniu, co dokłada drogie tokeny
+  // "myślenia" (liczone jak output) i spowalnia odpowiedzi.
+  const buildThinkingConfig = (m) => {
+    const name = (m || "").toLowerCase();
+    const isGen3 = /gemini-3|flash-latest|pro-latest/.test(name);
+    if (isGen3) {
+      const isPro = /pro/.test(name);
+      // Pro nie wspiera "minimal" (najniższy poziom to "low"); Flash/Flash-Lite wspierają "minimal".
+      return { thinkingLevel: isPro ? "low" : "minimal" };
+    }
+    return { thinkingBudget: 0 };
+  };
+
   try {
     if (provider === "groq") {
       const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -39,8 +56,8 @@ export default async function handler(req, res) {
         generationConfig: {
           temperature:       generationConfig?.temperature       ?? 0.7,
           maxOutputTokens:   generationConfig?.maxOutputTokens   ?? 2048,
-          // Wyłącz "thinking" żeby przyspieszyć odpowiedzi w czacie (Gemini 2.5/3.5 myśli domyślnie)
-          thinkingConfig: { thinkingBudget: 0 },
+          // Poprawny parametr thinking dobrany do generacji modelu (patrz buildThinkingConfig wyżej)
+          thinkingConfig: buildThinkingConfig(model),
           ...(generationConfig?.responseMimeType
             ? { responseMimeType: generationConfig.responseMimeType }
             : {}),
