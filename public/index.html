@@ -231,8 +231,8 @@ function App() {
         ? [{ role: "user", content: prompt }]
         : [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: provider === "groq"
-        ? { temperature: 0.3, maxOutputTokens: 1024 }
-        : { temperature: 0.3, maxOutputTokens: 1024, responseMimeType: "application/json" },
+        ? { temperature: 0.3, maxOutputTokens: 200 }
+        : { temperature: 0.3, maxOutputTokens: 200, responseMimeType: "application/json" },
     });
     if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
     if (provider === "groq") {
@@ -554,14 +554,13 @@ Lokalizacja: ${listing.location}
 Opis: ${listing.desc}
 Model/kategoria wyszukiwania: ${listing.bike}
 
-Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON):
+Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON, TYLKO liczby i słowa kluczowe — bez opisów słownych, oszczędzaj tokeny):
 {
   "typ_roweru": "full" | "dirt" | "elektryk_gorski" | "inny",
   "decyzja": "tak" | "nie" | "niepewne",
   "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
-  "przewidywany_zysk": liczba w EUR lub 0,
-  "krotki_opis": "max 2 zdania — model, rok, stan roweru i dlaczego opłaca się, nie opłaca, lub czemu jest niepewne"
+  "przewidywany_zysk": liczba w EUR lub 0
 }`;
 
         addLog(`🤖 Gemini (etap 2): analizuję — ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""} | typ z etapu 1: ${groqType}`, "info");
@@ -616,6 +615,24 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
         // Kompatybilność wsteczna — pole oplaca_sie używane w Discord embed / wynikach
         parsed.oplaca_sie = parsed.decyzja === "tak";
+
+        // ── Opis budujemy TUTAJ, z liczb — Gemini już nie generuje prozy (oszczędność tokenów/czasu) ──
+        const cena = parsed.cena_zakupu_eur;
+        const sprzedaz = parsed.szacowana_sprzedaz_eur;
+        const zysk = parsed.przewidywany_zysk;
+        if (parsed.decyzja === "tak") {
+          parsed.krotki_opis = `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ → zysk ~${zysk}€.`;
+        } else if (parsed.decyzja === "niepewne") {
+          parsed.krotki_opis = cena != null
+            ? `Zakup ${cena}€ — za mało danych w ogłoszeniu żeby rzetelnie oszacować sprzedaż/zysk. Wymaga ręcznego sprawdzenia.`
+            : `Brak ceny w ogłoszeniu — wymaga ręcznego sprawdzenia.`;
+        } else if (typ === "inny") {
+          parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
+        } else {
+          parsed.krotki_opis = sprzedaz != null
+            ? `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€, próg ${minProfit}%).`
+            : `Zakup ${cena ?? "?"}€ — zysk za mały lub transakcja się nie opłaca.`;
+        }
 
         return parsed;
 
