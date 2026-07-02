@@ -232,8 +232,8 @@ function App() {
         ? [{ role: "user", content: prompt }]
         : [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: provider === "groq"
-        ? { temperature: 0.3, maxOutputTokens: 200 }
-        : { temperature: 0.3, maxOutputTokens: 200, responseMimeType: "application/json" },
+        ? { temperature: 0.3, maxOutputTokens: 600 }
+        : { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json" },
     });
     if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
     if (provider === "groq") {
@@ -328,6 +328,69 @@ function App() {
     return null;
   };
 
+  // ── Filtr roku — odrzuca stare rowery (< MIN_BIKE_YEAR) ZANIM trafią choćby do Groqa ─────────
+  // Działa w 2 krokach (patrz użycie w pętli fazy 1):
+  //  1) checkListingYearBlock(listing) — lokalny regex na TYTULE, zero kosztu, zero API.
+  //     Jeśli w tytule jest jawny rok < MIN_BIKE_YEAR albo słowo "retro"/"vintage"/itp. → odrzuć od razu,
+  //     ogłoszenie nawet nie dotrze do Groqa.
+  //  2) Jeśli tytuł NIE ma roku ani słowa retro — puszczamy dalej do Groqa, który w Etapie 1 SAM
+  //     dodatkowo spróbuje oszacować rok na podstawie modelu/wersji (patrz prompt w classifyWithGroq).
+  //     Jeśli Groq oszacuje rok < MIN_BIKE_YEAR → odpowiada "stary" i też nie idzie do Gemini.
+  //     Jeśli Groq nie da rady oszacować → normalna klasyfikacja typu, idzie dalej do Gemini,
+  //     gdzie rok produkcji jest ostatnią linią obrony (patrz prompt Etapu 2 w analyzeWithGemini).
+  const MIN_BIKE_YEAR = 2017;
+
+  const RETRO_KEYWORDS = [
+    "retro", "vintage", "oldschool", "old school", "klassiker", "youngtimer",
+    "70er", "80er", "90er", "oldtimer", "classic bike", "classic mtb"
+  ];
+
+  // Wyciąga rok z tytułu — najpierw próbuje jawnych wzorców roku produkcji (Bj., Baujahr, MY, Modelljahr),
+  // dopiero potem "gołego" 4-cyfrowego tokenu w zakresie 1970-2035 (odfiltrowując ceny typu "1800€").
+  const extractYearFromTitle = (title) => {
+    if (!title) return null;
+    const t = title;
+
+    const explicitPatterns = [
+      /\bB(?:au)?j(?:ahr)?\.?\s*(\d{4})\b/i,   // Bj. 2016 / Baujahr 2016
+      /\bMY\s*'?(\d{2,4})\b/i,                  // MY19 / MY 2019
+      /\bModelljahr\s*(\d{4})\b/i,
+    ];
+    for (const re of explicitPatterns) {
+      const m = t.match(re);
+      if (m) {
+        let y = parseInt(m[1], 10);
+        if (y < 100) y += y < 50 ? 2000 : 1900; // MY19 -> 2019, MY99 -> 1999
+        if (y >= 1970 && y <= 2035) return y;
+      }
+    }
+
+    // Gołe 4 cyfry, ale NIE gdy bezpośrednio sąsiadują z € / ceną (żeby nie złapać "1800€" jako roku)
+    const bareMatches = [...t.matchAll(/\b(19[7-9]\d|20[0-3]\d)\b/g)];
+    for (const m of bareMatches) {
+      const idx = m.index ?? 0;
+      const after = t.slice(idx + m[0].length, idx + m[0].length + 3);
+      const before = t.slice(Math.max(0, idx - 3), idx);
+      if (/^\s*[€$]/.test(after) || /[€$]\s*$/.test(before)) continue; // to raczej cena, nie rok
+      return parseInt(m[1], 10);
+    }
+    return null;
+  };
+
+  const checkListingYearBlock = (listing) => {
+    const title = listing.title || "";
+    const titleLower = title.toLowerCase();
+
+    const retroHit = RETRO_KEYWORDS.find(kw => titleLower.includes(kw));
+    if (retroHit) return { blocked: true, reason: `słowo "${retroHit}" w tytule` };
+
+    const year = extractYearFromTitle(title);
+    if (year != null && year < MIN_BIKE_YEAR) {
+      return { blocked: true, reason: `rok ${year} < ${MIN_BIKE_YEAR}` };
+    }
+    return { blocked: false };
+  };
+
   // Biała lista — zwraca true jeśli ogłoszenie zawiera CHOĆ JEDNO wymagane słowo (sygnał full/dirt).
   // Jeśli lista jest pusta, filtr jest wyłączony (przepuszcza wszystko, jak dotychczas).
   const GROQ_CLASSIFIER_MODEL = "llama-3.1-8b-instant"; // lekki, szybki, hojny darmowy limit (14 400 zapytań/dzień)
@@ -355,12 +418,16 @@ ZNANE HARDTAILE (= "inny", nie "full"): Trek Marlin/Roscoe/X-Caliber, Cube Aim/A
 
 E-BIKE: sygnały napędu ("E-Bike","Akku","Motor",Bosch/Shimano Steps/Brose/Yamaha, przebieg w km, "E1.5"/"E-8"). Z charakterem górskim (zawieszenie/MTB/teren) → elektryk_gorski. Z charakterem miejskim/touring (koszyk, błotniki, "City"/"Trekking") → inny.
 
+CZĘŚCI vs CAŁY ROWER — WAŻNE: samo wymienienie konkretnych komponentów w opisie CAŁEGO roweru na sprzedaż (np. "z widelcem RockShox Pike, kołami Mavic, hamulcami Code") to NORMALNY opis wyposażenia — dalej klasyfikuj normalnie po typie zawieszenia. Odpowiedz "inny" TYLKO gdy z tytułu/opisu WPROST wynika, że przedmiotem ogłoszenia jest SAMA CZĘŚĆ, nie cały rower — np. "verkaufe nur Rahmen", "biete Gabel/Dämpfer/Laufradsatz an", "Ersatzteil", "Teile vom [model]", "nur Rahmenset", "Einzelteile", tytuł zaczynający się od nazwy komponentu bez wzmianki że to kompletny rower. W razie wątpliwości (nie jest jasne czy to część czy cały rower) → niepewne, NIE inny.
+
+ROK PRODUKCJI: Jeśli w tytule/opisie NIE MA podanego roku, ale rozpoznajesz model na tyle dokładnie (nazwa, wersja, charakterystyczne komponenty/kolorystyka danego rocznika), że potrafisz oszacować rok produkcji — i szacowany rok jest WCZEŚNIEJSZY niż 2017 — odpowiedz dokładnie jednym słowem: stary (zamiast normalnej klasyfikacji typu). Jeśli nie potrafisz wiarygodnie oszacować roku, zignoruj tę zasadę i klasyfikuj normalnie.
+
 Brak wystarczających informacji → odpowiedz: niepewne
 
 Tytuł: ${listing.title}
 Opis: ${listing.desc}
 
-Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/inny/niepewne), bez innego tekstu.`;
+Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/inny/niepewne/stary), bez innego tekstu.`;
 
     addLog(`🔎 Groq: klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}`, "info");
 
@@ -395,14 +462,15 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/inny/niepewne), 
 
         const raw = (data?.choices?.[0]?.message?.content || "").toLowerCase().trim();
         let typ;
-        if (raw.includes("elektryk")) typ = "elektryk_gorski";
+        if (raw.includes("stary")) typ = "stary";
+        else if (raw.includes("elektryk")) typ = "elektryk_gorski";
         else if (raw.includes("dirt")) typ = "dirt";
         else if (raw.includes("full")) typ = "full";
         else if (raw.includes("inny")) typ = "inny";
         else typ = "niepewne";
 
-        const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", inny: "⚫", niepewne: "❓" }[typ];
-        const rawNote = !["full", "dirt", "elektryk_gorski", "inny", "niepewne"].includes(raw) && raw && typ === "niepewne"
+        const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", inny: "⚫", niepewne: "❓", stary: "🕰️" }[typ];
+        const rawNote = !["full", "dirt", "elektryk_gorski", "inny", "niepewne", "stary"].includes(raw) && raw && typ === "niepewne"
           ? ` (Groq odpowiedział niejednoznacznie: "${raw.slice(0, 40)}")`
           : "";
         addLog(`${icon} Groq (${ms}ms): typ="${typ}"${rawNote} — ${listing.title}`, "info");
@@ -505,6 +573,8 @@ ${priceKnowledge.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}
 
 Ta baza pochodzi z realnych sprzedaży i rozmów z użytkownikiem — traktuj ją jako PRIORYTETOWE źródło prawdy o cenach, ważniejsze niż ogólny cennik referencyjny poniżej. Jeśli dane z bazy wiedzy są sprzeczne z cennikiem referencyjnym, ufaj bazie wiedzy.
 
+ZANIM oszacujesz cenę sprzedaży samodzielnie: sprawdź NAJPIERW, czy w bazie wiedzy powyżej jest wpis o TYM SAMYM modelu (nazwa + ewentualnie rocznik/wersja). Jeśli jest — MUSISZ użyć ceny/zysku z tego wpisu jako podstawy, nie wolno Ci obok niego oszacować własnej, niższej wartości. Dopiero gdy modelu nie ma w bazie wiedzy, szacuj na podstawie cennika referencyjnego lub własnej wiedzy rynkowej.
+
 `
       : "";
 
@@ -546,6 +616,7 @@ ${typeSection}=== OCENA OPŁACALNOŚCI ===
   - decyzja: "niepewne" gdy brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, niejasny model/rok, lub potencjał wydaje się być ale nie masz pewności co do zysku. NIE odrzucaj takich automatycznie jako "nie" — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
   - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
   - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji. Dla e-MTB uwzględnij też stan baterii/silnika jeśli opisany.
+  - TWARDA REGUŁA ROKU: jeśli na podstawie modelu/wersji/komponentów rozpoznajesz, że rower pochodzi sprzed 2017 roku → decyzja: "nie", niezależnie od ceny i pozornej opłacalności. To ogłoszenie powinno zostać odrzucone WCZEŚNIEJ, ale gdybyś i tak zobaczył wyraźnie stary rocznik — nie licz go jako okazję.
   - Jeśli cena ogłoszenia nie jest podana (null/brak) → decyzja: "niepewne" (nie "nie" — może być warta sprawdzenia ręcznie).${chatInfo}
 
 === OGŁOSZENIE DO OCENY ===
@@ -697,7 +768,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     geminiCallsRef.current = 0; // reset licznika analiz Gemini na nowy cykl
     const uncertainBatch = [];   // zbiorcza lista "niepewnych" na ten cykl
     const geminiCandidates = []; // { listing, groqType } — zebrane ze WSZYSTKICH modeli w tym cyklu, czekają na analizę Gemini
-    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0 }; // statystyki fazy 1 do podsumowania
+    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, oldBike: 0 }; // statystyki fazy 1 do podsumowania
 
     // ── FAZA 1: scraping + filtr słów + klasyfikacja Groq (etap 1, tani/szybki) ──
     for (const bike of activeBikes) {
@@ -752,9 +823,35 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
           continue; // nie idzie nawet do Groq
         }
 
+        // ── Filtr roku PRZED Groq — zero kosztu, odrzuca ewidentnie stare rowery po samym tytule ──
+        const yearBlock = checkListingYearBlock(listing);
+        if (yearBlock.blocked) {
+          phase1Stats.oldBike++;
+          addLog(`🚫 Filtr roku: odrzucono (${yearBlock.reason}) — ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone filtrem roku (${yearBlock.reason})` },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue; // nie idzie nawet do Groq
+        }
+
         // ── Etap 1 — Groq: szybka klasyfikacja typu (tanio, byle jak, zero limitu Gemini) ──
         const typ = await classifyWithGroq(listing);
         await sleep(2500); // margines poniżej limitu 30 RPM darmowego Groqa (2000ms = dokładnie na granicy, bez zapasu)
+
+        if (typ === "stary") {
+          phase1Stats.oldBike++;
+          addLog(`🚫 Groq: rower oszacowany jako sprzed ${MIN_BIKE_YEAR} — odrzucono — ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Groq oszacował rok produkcji jako sprzed ${MIN_BIKE_YEAR} — odrzucone` },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue; // nie idzie do Gemini
+        }
 
         if (typ === "inny") {
           phase1Stats.groqInny++;
@@ -812,7 +909,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     }
 
     addLog(
-      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
+      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🕰️ ${phase1Stats.oldBike} odrzuconych (za stary, < ${MIN_BIKE_YEAR}) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
       "success"
     );
 
