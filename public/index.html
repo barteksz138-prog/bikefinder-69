@@ -656,12 +656,14 @@ Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
     const prompt = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
 
 ${knowledgeSection}=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
+To są PRZYKŁADY modeli, które dobrze znasz z wcześniejszych transakcji — TO NIE JEST wyczerpująca lista wszystkich modeli które możesz wycenić! Dla modeli SPOZA tej listy (w tym rowerów DH: YT Tues, Specialized Demo, Santa Cruz V10, Trek Session, Canyon Sender, GT Fury, Commencal Supreme, Trek Slash/Session) użyj swojej OGÓLNEJ, szerokiej wiedzy o rynku wtórnym rowerów w Niemczech/Polsce — dokładnie tak jak zrobiłby to doświadczony handlarz, który zna markę i model nawet bez ściągawki. NIE oznaczaj automatycznie jako "niepewne" tylko dlatego, że modelu nie ma na poniższej liście — "niepewne" jest wtedy, gdy NAPRAWDĘ nie rozpoznajesz modelu/marki albo opis nie mówi nic o stanie/wyposażeniu, NIE gdy model jest znany, ale akurat nie ma go w tym konkretnym przykładowym cenniku.
 • Canyon Stitched 360 Pro (2021-2024): cena zakupu max 500-600€ żeby zarobić. Wersja z upgradami (Bomber DJ, koła NOA, mostek Title) — warta do 700€ zakupu.
 • Rose The Bruce 2: max zakup 500-550€ żeby wyjść na swoje (sprzedaż ~880€ PL).
 • Trek Ticket DJ z amortyzatorem Pike DJ lub Bomber DJ: można zapłacić do 900€ bo sprzedaż 1400€ PL.
 • Canyon Torque AL 5 (2018): rower enduro full-suspension. Dobra cena zakupu do 700€, sprzedaż ~1160€ PL.
 • Canyon Spectral AL 6: trail/all-mountain full-suspension. Dobra cena zakupu do 1000€, sprzedaż ~1510€ PL.
 • Dartmoor Two6player, Specialized P.3, Radon Slush: popularne dirtowe — wyceniaj analogicznie do Stitched.
+• Rowery DH (Downhill) — YT Tues, Trek Session, Specialized Demo, Santa Cruz V10, Canyon Sender, Commencal Supreme DH, GT Fury: sprzęt niszowy z węższą grupą kupujących (dłuższy czas sprzedaży niż enduro), ALE entuzjaści płacą dobrze za kompletne rowery z topowymi komponentami (widelec dwukoronowy Fox 40/RockShox Boxxer, hamulce Saint/Zee/Code, rama karbonowa) — pod względem WYCENY traktuj podobnie jak topowe enduro/trail tej samej klasy komponentów, nie zaniżaj tylko dlatego że to nisza.
 
 ${typeSection}=== OCENA OPŁACALNOŚCI ===
 • Jeśli typ = "inny" → ZAWSZE decyzja: "nie". Nie analizuj dalej.
@@ -670,7 +672,7 @@ ${typeSection}=== OCENA OPŁACALNOŚCI ===
   - Na podstawie modelu, roku produkcji, wyposażenia i stanu (opisanego w tytule/opisie) oszacuj realną cenę sprzedaży w Polsce (w PLN i EUR).
   - Oblicz przewidywany zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia.
   - decyzja: "tak" TYLKO jeśli zysk wynosi minimum ${minProfit}% ceny zakupu I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
-  - decyzja: "niepewne" gdy brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, niejasny model/rok, lub potencjał wydaje się być ale nie masz pewności co do zysku. NIE odrzucaj takich automatycznie jako "nie" — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
+  - decyzja: "niepewne" gdy brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, NAPRAWDĘ nierozpoznawalny model/marka, lub niejasny rok. NIE oznaczaj jako "niepewne" tylko dlatego, że modelu nie ma w przykładowym cenniku referencyjnym powyżej — jeśli model jest Ci znany (nawet jeśli to nisza jak DH), użyj własnej wiedzy rynkowej. NIE odrzucaj automatycznie jako "nie" gdy czegoś brakuje — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
   - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
   - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji. Dla e-MTB uwzględnij też stan baterii/silnika jeśli opisany.
   - TWARDA REGUŁA ROKU: jeśli na podstawie modelu/wersji/komponentów rozpoznajesz, że rower pochodzi sprzed 2017 roku → decyzja: "nie", niezależnie od ceny i pozornej opłacalności. To ogłoszenie powinno zostać odrzucone WCZEŚNIEJ, ale gdybyś i tak zobaczył wyraźnie stary rocznik — nie licz go jako okazję.
@@ -690,7 +692,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
   "przewidywany_zysk": liczba w EUR lub 0,
-  "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — co przeważyło o decyzji: dokładny wpis w bazie wiedzy / cennik referencyjny / własna ocena rynkowa / brak danych o czym"
+  "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'brak ceny w ogłoszeniu' / 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": dokładny wpis w bazie wiedzy / cennik referencyjny / własna wiedza rynkowa o tym modelu."
 }`;
 
         addLog(`🤖 Gemini (etap 2): analizuję — ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""} | typ z etapu 1: ${groqType}`, "info");
