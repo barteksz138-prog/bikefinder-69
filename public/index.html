@@ -697,11 +697,16 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 
     // ── Pojedyncza próba wywołania Gemini + parsowanie odpowiedzi ─────────────────────────
     // overrides — nadpisania generationConfig (patrz callGemini) — używane do eskalacji z myśleniem.
-    // Ma własny retry loop (3 próby) na błędy przejściowe/quota, tak jak dotychczas.
+    // Ma własny retry loop (3 próby) na błędy przejściowe/quota, tak jak dotychczas — DODATKOWO
+    // wykrywa ucięcie odpowiedzi (finishReason "MAX_TOKENS", zwykle przy włączonym myśleniu —
+    // model zużywa limit tokenów na samo myślenie i nie starcza mu miejsca na dokończenie JSON,
+    // co objawia się jako "Unterminated string in JSON") i automatycznie ponawia z WIĘKSZYM
+    // limitem tokenów zamiast poddawać się za pierwszym razem.
     const attemptAnalysis = async (overrides) => {
+      let effectiveOverrides = { ...overrides };
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const data = await callGemini(prompt, overrides);
+          const data = await callGemini(prompt, effectiveOverrides);
 
           if (data?.error) {
             const msg = data.error.message || "";
@@ -717,11 +722,21 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
             return null;
           }
 
+          const finishReason = data?.candidates?.[0]?.finishReason;
           const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
           if (!raw) {
-            const reason = data?.candidates?.[0]?.finishReason || "brak odpowiedzi";
-            addLog(`⚠️ Gemini pusta odpowiedź (${reason})`, "error");
+            addLog(`⚠️ Gemini pusta odpowiedź (${finishReason || "brak odpowiedzi"})`, "error");
             return null;
+          }
+
+          // Ucięta odpowiedź (zwykle myślenie zjadło cały limit tokenów) — nie próbuj nawet
+          // parsować, tylko od razu ponów z wyraźnie większym limitem, jeśli zostały próby.
+          if (finishReason === "MAX_TOKENS" && attempt < 3) {
+            const bumped = (effectiveOverrides.maxOutputTokens || 600) + 2000;
+            addLog(`⏳ Gemini: odpowiedź ucięta (zabrakło tokenów, myślenie zjadło limit) — ponawiam z limitem ${bumped}, próba ${attempt + 1}/3 — ${listing.title}`, "error");
+            effectiveOverrides = { ...effectiveOverrides, maxOutputTokens: bumped };
+            continue;
           }
 
           let clean = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
@@ -785,6 +800,16 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
             await sleep(8000);
             continue;
           }
+          // Zabezpieczenie na wypadek gdyby Google NIE zgłosił finishReason="MAX_TOKENS" wprost,
+          // a JSON i tak wygląda na ucięty w połowie — te komunikaty błędu JSON.parse to typowy
+          // odcisk palca truncation, nie faktycznie zepsutego JSON-a od modelu.
+          const looksTruncated = /unterminated string|unexpected end of json/i.test(msg);
+          if (looksTruncated && attempt < 3) {
+            const bumped = (effectiveOverrides.maxOutputTokens || 600) + 2000;
+            addLog(`⏳ Gemini: JSON wygląda na ucięty (${msg}) — ponawiam z limitem ${bumped}, próba ${attempt + 1}/3 — ${listing.title}`, "error");
+            effectiveOverrides = { ...effectiveOverrides, maxOutputTokens: bumped };
+            continue;
+          }
           addLog(`⚠️ Błąd parsowania Gemini: ${msg}`, "error");
           return null;
         }
@@ -792,32 +817,57 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
       return null;
     };
 
-    // ── Próba #1 — bez myślenia, tanio (jak dotychczas) ──────────────────────────────────
-    const firstPass = await attemptAnalysis(undefined);
+    // ── Budżet myślenia — 2 niezależne "gałki", obie kosztują z tego samego budżetu Gemini ──
+    // OPCJA A: stałe, niewielkie myślenie przy KAŻDEJ pierwszej próbie (nie tylko niepewnych) —
+    //   podnosi jakość wszystkich analiz, kosztem małego, ale STAŁEGO narzutu na 100% wywołań.
+    // OPCJA B: szerszy próg eskalacji do PEŁNEGO myślenia — nie tylko gdy Gemini samo napisze
+    //   "niepewne", ale też gdy policzony przez nas % zysku wypadnie BLISKO progu minProfit
+    //   (w tę lub w tę stronę) — bo tak/nie tuż przy granicy jest z natury bardziej podatne na
+    //   pomyłkę przy płytkiej analizie, nawet jeśli model "czuł się pewny".
+    // Obie gałki razem celują w ok. 3-4x dzisiejszego kosztu Gemini — dostrajaj wg realnych
+    // wydatków (Google AI Studio → Billing) zamiast zgadywać z góry; token-per-call zależy od
+    // długości opisów i bazy wiedzy, więc realny mnożnik może się różnić.
+    const FIRST_PASS_THINKING_BUDGET = 500;   // OPCJA A — stały budżet myślenia (tokeny) dla 2.5/starszych; zwiększ/zmniejsz by dostroić koszt
+    const BORDERLINE_PROFIT_MARGIN_PCT = 8;   // OPCJA B — jak blisko progu minProfit (w punktach %) uznajemy wynik za "graniczny"
+
+    const isGen3Model = /gemini-3|flash-latest|pro-latest/i.test(geminiModel);
+
+    // ── Próba #1 — teraz z NIEWIELKIM, stałym myśleniem zamiast całkowicie wyłączonego (Opcja A) ──
+    const firstPassOverrides = {
+      ...(isGen3Model ? { thinkingLevel: "low" } : { thinkingBudget: FIRST_PASS_THINKING_BUDGET }),
+      maxOutputTokens: 1200, // nawet małe myślenie potrzebuje więcej zapasu niż płaskie 600
+    };
+    const firstPass = await attemptAnalysis(firstPassOverrides);
     if (!firstPass) return null; // twardy błąd (quota/parsing) — już zalogowany wyżej
 
-    // ── Eskalacja — TYLKO gdy pierwsza, tania próba sama nie potrafiła podjąć decyzji ────
-    // ("niepewne" = model nie miał czasu/przestrzeni żeby porównać ogłoszenie z bazą wiedzy /
-    // cennikiem — więc dajemy mu DRUGĄ szansę z włączonym myśleniem, zamiast od razu poddawać
-    // ogłoszenie człowiekowi). To ogranicza droższe wywołania z myśleniem TYLKO do faktycznie
-    // trudnych przypadków, zamiast płacić za myślenie przy każdym ogłoszeniu.
-    if (firstPass.decyzja !== "niepewne") return firstPass;
+    // ── Kiedy eskalować do PEŁNEGO myślenia (Opcja B rozszerza to o wyniki graniczne) ────────
+    const cena = firstPass.cena_zakupu_eur;
+    const zysk = firstPass.przewidywany_zysk;
+    const profitPct = (cena != null && cena > 0 && zysk != null) ? (zysk / cena) * 100 : null;
+    const isBorderline = firstPass.decyzja !== "niepewne"
+      && firstPass.typ_roweru !== "inny" // "inny" to twarde odrzucenie, nie osąd wart eskalacji
+      && profitPct != null
+      && Math.abs(profitPct - minProfit) <= BORDERLINE_PROFIT_MARGIN_PCT;
 
-    addLog(`🧠 Gemini: pierwsza próba niepewna — eskaluję z myśleniem — ${listing.title}`, "info");
-    const isGen3Model = /gemini-3|flash-latest|pro-latest/i.test(geminiModel);
-    const thinkingOverrides = {
-      ...(isGen3Model ? { thinkingLevel: "low" } : { thinkingBudget: -1 }), // -1 = dynamiczny budżet, model sam decyduje ile "pomyśleć"
-      maxOutputTokens: 2000, // myślenie zużywa tokeny output — potrzebny większy zapas niż zwykłe 600
+    if (firstPass.decyzja !== "niepewne" && !isBorderline) return firstPass;
+
+    const escalationReason = firstPass.decyzja === "niepewne"
+      ? "pierwsza próba niepewna"
+      : `wynik graniczny (zysk ~${profitPct.toFixed(1)}% vs próg ${minProfit}%, decyzja "${firstPass.decyzja}")`;
+    addLog(`🧠 Gemini: ${escalationReason} — eskaluję z pełnym myśleniem — ${listing.title}`, "info");
+    const escalationOverrides = {
+      ...(isGen3Model ? { thinkingLevel: "medium" } : { thinkingBudget: -1 }), // -1 = dynamiczny budżet, model sam decyduje ile "pomyśleć"
+      maxOutputTokens: 4000, // myślenie (thinkingBudget: -1) bywa nieprzewidywalne co do zużycia — spory zapas, żeby rzadziej trzeba było ponawiać przez ucięcie (patrz attemptAnalysis)
     };
-    const escalatedPass = await attemptAnalysis(thinkingOverrides);
+    const escalatedPass = await attemptAnalysis(escalationOverrides);
 
     if (!escalatedPass) {
-      addLog(`⚠️ Gemini: eskalacja z myśleniem nie powiodła się — zostaje wynik "niepewne" z pierwszej próby — ${listing.title}`, "error");
+      addLog(`⚠️ Gemini: eskalacja z myśleniem nie powiodła się — zostaje wynik z pierwszej próby — ${listing.title}`, "error");
       return firstPass;
     }
 
     escalatedPass._escalated = true;
-    addLog(`🧠 Gemini (z myśleniem): decyzja="${escalatedPass.decyzja}" (było: niepewne) — ${listing.title}`, "info");
+    addLog(`🧠 Gemini (z myśleniem): decyzja="${escalatedPass.decyzja}" (było: "${firstPass.decyzja}") — ${listing.title}`, "info");
     return escalatedPass;
   };
 
