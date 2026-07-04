@@ -765,6 +765,43 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
             parsed.decyzja = "nie";
           }
 
+          // TWARDA REGUŁA: wykluczenie e-MTB — dotyczy TEŻ przypadku gdy to Gemini (nie Groq) określiło
+          // typ_roweru jako "elektryk_gorski" (dzieje się gdy groqType === "niepewne" albo Groq jest
+          // w cooldownie po limicie — wtedy klasyfikację przejmuje Gemini i filtr z Etapu 1 go nie łapie).
+          if (typ === "elektryk_gorski" && excludeElektryk) {
+            parsed.decyzja = "nie";
+          }
+
+          // ── TWARDA WALIDACJA MATEMATYCZNA ZYSKU — NIE UFAMY polu "przewidywany_zysk" od Gemini ──
+          // Modele językowe potrafią podać trzy liczby (cena/sprzedaż/zysk), które OSOBNO brzmią
+          // sensownie, ale nie są ze sobą spójne arytmetycznie (np. zakup 1950€ → sprzedaż 1800€,
+          // a mimo to "zysk: +280€" — to POWINNO wyjść -150€). To nie da się naprawić samym
+          // promptem — LICZYMY zysk SAMI z podanych cena/sprzedaż i to jest jedyne źródło prawdy.
+          const cenaNum = typeof parsed.cena_zakupu_eur === "number" ? parsed.cena_zakupu_eur : null;
+          const sprzedazNum = typeof parsed.szacowana_sprzedaz_eur === "number" ? parsed.szacowana_sprzedaz_eur : null;
+          const zyskLiczony = (cenaNum != null && sprzedazNum != null) ? Math.round((sprzedazNum - cenaNum) * 100) / 100 : null;
+
+          if (zyskLiczony != null && parsed.przewidywany_zysk != null && Math.abs(zyskLiczony - parsed.przewidywany_zysk) > 1) {
+            addLog(`⚠️ Gemini: niespójna matematyka — podał zysk ${parsed.przewidywany_zysk}€ przy zakupie ${cenaNum}€/sprzedaży ${sprzedazNum}€ (powinno być ${zyskLiczony}€) — POPRAWIAM na policzone — ${listing.title}`, "error");
+          }
+          parsed.przewidywany_zysk = zyskLiczony; // zawsze nadpisujemy policzoną wartością, nigdy nie ufamy surowej odpowiedzi modelu
+
+          // TWARDA REGUŁA: decyzja "tak" MUSI być poparta policzonym zyskiem >= progu minProfit%.
+          // Jeśli Gemini powiedziało "tak", ale liczby tego nie potwierdzają (albo brakuje liczb) —
+          // nadpisujemy na "nie" (strata/zbyt mały zysk) lub "niepewne" (brak danych do policzenia).
+          if (parsed.decyzja === "tak") {
+            if (cenaNum == null || sprzedazNum == null || cenaNum <= 0) {
+              parsed.decyzja = "niepewne";
+              addLog(`⚠️ Gemini: decyzja "tak" bez kompletnych liczb (zakup/sprzedaż) — zmieniam na "niepewne" — ${listing.title}`, "error");
+            } else {
+              const zyskProcent = (zyskLiczony / cenaNum) * 100;
+              if (zyskProcent < minProfit) {
+                addLog(`⚠️ Gemini: decyzja "tak" ale policzony zysk to tylko ${zyskProcent.toFixed(1)}% (próg ${minProfit}%) — zmieniam na "nie" — ${listing.title}`, "error");
+                parsed.decyzja = "nie";
+              }
+            }
+          }
+
           // Kompatybilność wsteczna — pole oplaca_sie używane w Discord embed / wynikach
           parsed.oplaca_sie = parsed.decyzja === "tak";
 
@@ -785,6 +822,8 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
               : `Brak ceny w ogłoszeniu — wymaga ręcznego sprawdzenia.`;
           } else if (typ === "inny") {
             parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
+          } else if (typ === "elektryk_gorski" && excludeElektryk) {
+            parsed.krotki_opis = `Odrzucone — e-MTB wykluczone w Ustawieniach (rozpoznane przez Gemini, nie Groq).`;
           } else {
             parsed.krotki_opis = sprzedaz != null
               ? `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€, próg ${minProfit}%).`
