@@ -38,13 +38,59 @@ const { useState, useEffect, useRef, useCallback } = React;
 // Typy wpisów:
 //   isCategory: true  → categoryUrl to pełny URL Kleinanzeigen z filtrem kategorii
 //   (brak)            → query to fraza wyszukiwana w /s-fahrraeder/{query}/k0c217
+//
+// Lista modeli ZAMIAST całej kategorii "Mountain Bike" — celowo węższe wyszukiwanie po
+// konkretnych, znanych modelach (z cennika referencyjnego i wiedzy Groqa o pełnych zawieszeniach)
+// zamiast łapania WSZYSTKIEGO z zakresu cenowego. To bezpośrednio zmniejsza wolumen ogłoszeń
+// lecących przez Groq/Gemini (mniej = taniej i mniej przeciążeń), kosztem tego że model spoza
+// tej listy nie zostanie znaleziony. Możesz dowolnie włączać/wyłączać pojedyncze modele checkboxem
+// w Ustawieniach — bez zmian w kodzie. Dopisuj tu modele, które Gemini rozpoznaje z własnej wiedzy
+// rynkowej (patrz "powod_decyzji" w logach), żeby lista rosła wraz z tym co faktycznie się trafia.
 const BIKE_MODELS = [
-  {
-    id: "cat_mountainbike",
-    label: "🏔️ Mountain Bike",
-    isCategory: true,
-    categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:200:2000/c217+fahrraeder.type_s:mountainbike",
-  },
+  { id: "canyon_torque",     label: "Canyon Torque",       query: "Canyon Torque" },
+  { id: "canyon_spectral",   label: "Canyon Spectral",     query: "Canyon Spectral" },
+  { id: "canyon_strive",     label: "Canyon Strive",       query: "Canyon Strive" },
+  { id: "canyon_neuron",     label: "Canyon Neuron",       query: "Canyon Neuron" },
+  { id: "canyon_stitched",   label: "Canyon Stitched",     query: "Canyon Stitched" },
+  { id: "trek_remedy",       label: "Trek Remedy",         query: "Trek Remedy" },
+  { id: "trek_slash",        label: "Trek Slash",          query: "Trek Slash" },
+  { id: "trek_fuel_ex",      label: "Trek Fuel EX",        query: "Trek Fuel EX" },
+  { id: "trek_session",      label: "Trek Session",        query: "Trek Session" },
+  { id: "trek_ticket",       label: "Trek Ticket",         query: "Trek Ticket" },
+  { id: "specialized_stumpjumper", label: "Specialized Stumpjumper", query: "Specialized Stumpjumper" },
+  { id: "specialized_enduro",      label: "Specialized Enduro",      query: "Specialized Enduro" },
+  { id: "specialized_camber",      label: "Specialized Camber",      query: "Specialized Camber" },
+  { id: "specialized_demo",        label: "Specialized Demo",        query: "Specialized Demo" },
+  { id: "specialized_p3",          label: "Specialized P.3",         query: "Specialized P.3" },
+  { id: "cube_stereo",       label: "Cube Stereo",         query: "Cube Stereo" },
+  { id: "cube_ams",          label: "Cube AMS",            query: "Cube AMS" },
+  { id: "santa_cruz",  label: "Santa Cruz (cała marka)",  query: "Santa Cruz" },
+  { id: "yt",          label: "YT (cała marka)",          query: "YT" },
+  { id: "commencal",   label: "Commencal (cała marka)",   query: "Commencal" },
+  { id: "radon_swoop",  label: "Radon Swoop",  query: "Radon Swoop" },
+  { id: "radon_slide",  label: "Radon Slide",  query: "Radon Slide" },
+  { id: "radon_slush",  label: "Radon Slush",  query: "Radon Slush" },
+  { id: "ghost_riot",   label: "Ghost Riot",   query: "Ghost Riot" },
+  { id: "focus_jam",    label: "Focus Jam",    query: "Focus Jam" },
+  { id: "focus_sam",    label: "Focus Sam",    query: "Focus Sam" },
+  { id: "focus_thron",  label: "Focus Thron",  query: "Focus Thron" },
+  { id: "gt_force",     label: "GT Force",     query: "GT Force" },
+  { id: "gt_fury",      label: "GT Fury",      query: "GT Fury" },
+  { id: "rose_bruce",   label: "Rose The Bruce", query: "Rose The Bruce" },
+  { id: "dartmoor",     label: "Dartmoor (cała marka)", query: "Dartmoor" },
+  // ── Nowe marki (całe, bez rozbicia na modele) ──
+  { id: "propain",        label: "Propain (cała marka)",        query: "Propain" },
+  { id: "norco",          label: "Norco (cała marka)",          query: "Norco" },
+  { id: "ns_bikes",       label: "NS Bikes (cała marka)",       query: "NS Bikes" },
+  { id: "nukeproof",      label: "Nukeproof (cała marka)",      query: "Nukeproof" },
+  { id: "rocky_mountain", label: "Rocky Mountain (cała marka)", query: "Rocky Mountain" },
+  { id: "marin",          label: "Marin (cała marka)",          query: "Marin" },
+  { id: "transition",     label: "Transition (cała marka)",     query: "Transition" },
+  { id: "evil",           label: "Evil (cała marka)",           query: "Evil" },
+  { id: "intense",        label: "Intense (cała marka)",        query: "Intense" },
+  { id: "raaw",           label: "Raaw (cała marka)",           query: "Raaw" },
+  { id: "beddo",          label: "Beddo (dirt)",                query: "Beddo" },
+  { id: "giant",          label: "Giant (cała marka)",          query: "Giant" },
 ];
 
 // Etykiety typu roweru zwracanego przez Gemini
@@ -132,14 +178,12 @@ function App() {
   const [filterKeywords, setFilterKeywords] = useState(cfg.filterKeywords ?? DEFAULT_FILTER_KEYWORDS);
   const [selectedBikes,  setSelectedBikes]  = useState(() => {
     const saved = cfg.selectedBikes;
-    if (!saved) return BIKE_MODELS.map(b => b.id);
-    // Migracja: stary id mtb_full_category -> nowy cat_mountainbike
-    const migrated = saved.map(id => id === 'mtb_full_category' ? 'cat_mountainbike' : id);
-    // Dodaj nowe kategorie jeśli ich nie ma
-    ['cat_mountainbike','cat_dirt_bmx','cat_downhill'].forEach(id => {
-      if (!migrated.includes(id)) migrated.push(id);
-    });
-    return migrated.filter(id => BIKE_MODELS.some(b => b.id === id));
+    if (!saved || saved.length === 0) return BIKE_MODELS.map(b => b.id);
+    // Stara konfiguracja mogła mieć zaznaczoną kategorię "cat_mountainbike", której już nie ma
+    // (zastąpiona listą konkretnych modeli) — po odfiltrowaniu nieistniejących id, jeśli nic nie
+    // zostało, wybierz WSZYSTKIE nowe modele zamiast zostawić pustą, milczącą listę.
+    const filtered = saved.filter(id => BIKE_MODELS.some(b => b.id === id));
+    return filtered.length > 0 ? filtered : BIKE_MODELS.map(b => b.id);
   });
 
   const [logs,     setLogs]     = useState([]);
@@ -549,10 +593,14 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
 
   const scrapeKleinanzeigen = async (bike) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
-    // Modele konkretne używają wyszukiwania po frazie
+    // Modele/marki konkretne używają wyszukiwania po frazie + DOPIĘTEGO filtra
+    // "fahrraeder.type_s:mountainbike" — to ogranicza wyniki TYLKO do ogłoszeń otagowanych
+    // przez sprzedającego jako rower górski, więc np. "Giant"/"Marin"/"Norco" (marki które
+    // robią też szosówki/miejskie) nie zaśmiecają wyników niezwiązanymi typami rowerów.
+    // Format zweryfikowany na realnych URL-ach Kleinanzeigen: /s-fahrraeder/{fraza}/k0c217+fahrraeder.type_s:mountainbike
     const url = bike.isCategory
       ? bike.categoryUrl
-      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217`;
+      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:mountainbike`;
     const resp = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`);
     if (!resp.ok) throw new Error(`Scrape HTTP ${resp.status}`);
     return resp.text();
@@ -962,8 +1010,15 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, oldBike: 0 }; // statystyki fazy 1 do podsumowania
 
     // ── FAZA 1: scraping + filtr słów + klasyfikacja Groq (etap 1, tani/szybki) ──
-    for (const bike of activeBikes) {
+    for (let bikeIdx = 0; bikeIdx < activeBikes.length; bikeIdx++) {
+      const bike = activeBikes[bikeIdx];
       if (!runningRef.current) return;
+
+      // Odstęp między kolejnymi requestami scrapowania — przy liście wielu konkretnych modeli
+      // (zamiast jednego requestu na całą kategorię) brak przerwy między nimi wygląda dla
+      // Kleinanzeigen jak bot i grozi captchą (patrz wykrywanie "captcha"/"robot"/"blocked" w parseListings).
+      if (bikeIdx > 0) await sleep(3000);
+
       addLog(`🔍 ${bike.label}…`, "info");
 
       let listings = [];
