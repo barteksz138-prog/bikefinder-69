@@ -226,6 +226,22 @@ function App() {
   const geminiCallsRef = useRef(0); // licznik analiz Gemini w BIEŻĄCYM cyklu — reset na starcie każdego cyklu
   const groqKeyIndexRef = useRef(0); // wskaźnik round-robin do rotacji kluczy Groq między wywołaniami
   const groqKeyCooldownsRef = useRef({}); // { [apiKey]: timestampMs } — cooldown PER KLUCZ po dziennym limicie (TPD)
+
+  // ── Gemini explicit context caching ─────────────────────────────────────────────────────
+  // Duży statyczny blok promptu (cennik/reguły osprzętu, patrz analyzeWithGemini) jest identyczny
+  // w wielu wywołaniach pod rząd — zamiast wysyłać go za każdym razem, cache'ujemy go RAZ po stronie
+  // Google i tylko odwołujemy się do niego nazwą (odczyt z cache ~10% ceny bazowej input).
+  // Klucz w mapie = `${model}|${wariant}|${hash statycznego tekstu}` — osobny cache dla:
+  //  - każdego modelu Gemini (cache jest przypisany do konkretnego modelu, nie da się dzielić),
+  //  - wariantu typeSection (typ już zaufany z Groqa vs. Gemini musi sam rozpoznać typ),
+  //  - treści cennika/bazy wiedzy (gdy zmienisz cennik w Ustawieniach, hash się zmieni i zrobimy nowy cache).
+  // cacheMapRef: { [key]: { name, expiresAt } }
+  // cacheFailCooldownRef: { [key]: timestampMs } — jeśli tworzenie cache zawiedzie (np. prompt za
+  // krótki wg progu Google — dokumentacja jest w tej kwestii niespójna, 2048 vs 32768 tokenów),
+  // NIE próbujemy ponownie przy każdym kolejnym ogłoszeniu — czekamy chwilę i po prostu wysyłamy
+  // pełny prompt bez cache (dokładnie tak jak działało to wcześniej, zero regresji).
+  const cacheMapRef = useRef({});
+  const cacheFailCooldownRef = useRef({});
   const logsEndRef  = useRef(null);
 
   // Zapamiętaj widziane ID między restartami
@@ -271,7 +287,9 @@ function App() {
 
   // Wywołanie AI — obsługuje Gemini i Groq przez backend proxy /api/gemini
   // overrides: opcjonalne nadpisania generationConfig (używane przy eskalacji do "myślenia" — patrz analyzeWithGemini)
-  const callGemini = async (prompt, overrides = {}) => {
+  // cachedContent (opcjonalnie) — nazwa explicit cache (patrz analyzeWithGemini/getCachedContentName).
+  // Gdy podana, "prompt" powinien zawierać TYLKO dynamiczną część (bez powtarzania cache'owanej treści).
+  const callGemini = async (prompt, overrides = {}, cachedContent = null) => {
     const data = await callProxy({
       provider,
       model: geminiModel,
@@ -279,6 +297,7 @@ function App() {
       messages: provider === "groq"
         ? [{ role: "user", content: prompt }]
         : [{ role: "user", parts: [{ text: prompt }] }],
+      ...(cachedContent ? { cachedContent } : {}),
       generationConfig: provider === "groq"
         ? { temperature: 0.3, maxOutputTokens: 600, ...overrides }
         : { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json", ...overrides },
@@ -686,13 +705,17 @@ ZANIM oszacujesz cenę sprzedaży samodzielnie: sprawdź NAJPIERW, czy w bazie w
 
     const typeIsTrusted = ["full", "dirt", "elektryk_gorski"].includes(groqType);
 
-    const typeSection = typeIsTrusted
-      ? `=== TYP ROWERU — JUŻ USTALONY, ZAUFAJ TEMU ===
-To ogłoszenie zostało już wstępnie sklasyfikowane (etap wcześniejszy) jako typ: "${groqType}" (full = pełne zawieszenie / enduro / trail / downhill, dirt = dirt jump / hardtail do skoków, elektryk_gorski = elektryczny rower górski / e-MTB). NIE klasyfikuj typu od nowa — przejdź od razu do oceny opłacalności poniżej i w polu "typ_roweru" w odpowiedzi wpisz dokładnie "${groqType}".
-
-`
-      : `=== KROK 1 — ROZPOZNAJ TYP ROWERU ===
-Wstępna klasyfikacja była niepewna — sam określ typ NA PODSTAWIE TYTUŁU I OPISU:
+    // ── CACHING: instrukcje rozpoznawania typu są TERAZ ZAWSZE identyczne (ta sama, pełna wersja),
+    // niezależnie od tego czy Etap 1 (Groq) był pewny czy nie. Wcześniej ta sekcja miała dwa różne
+    // warianty tekstu wstawiane PRZED "OCENA OPŁACALNOŚCI" — to psuło wspólny, powtarzalny początek
+    // promptu między wywołaniami. Teraz cały ten fragment (razem z cennikiem i moimi uwagami wyżej)
+    // jest bajt-w-bajt taki sam za każdym razem → Gemini 2.5+ automatycznie wykrywa powtarzający się
+    // prefiks promptu i płaci za niego wg mocno obniżonej stawki ("implicit caching", ~90% taniej,
+    // działa automatycznie od ok. 1-2 tys. tokenów wspólnego początku, bez żadnych zmian w gemini.js).
+    // Informację "ten konkretny rower ma już ustalony typ z Etapu 1" przenosimy do KOŃCA promptu
+    // (patrz typeHint niżej, tuż przy samym ogłoszeniu) — to jedyna część, która ma prawo się zmieniać.
+    const typeInstructions = `=== ROZPOZNAWANIE TYPU ROWERU ===
+Określ typ NA PODSTAWIE TYTUŁU I OPISU (chyba że w sekcji ogłoszenia niżej podano, że typ jest już ustalony — wtedy tylko go potwierdź):
 • "dirt" — rower dirt jump / slopestyle / pumptrack / street. Sztywna rama (hardtail), brak tylnego zawieszenia, geometria do skoków. Przykłady: Canyon Stitched, Trek Ticket DJ, Dartmoor Two6player, Rose The Bruce, Specialized P.3, Radon Slush.
 • "full" — rower z PEŁNĄ amortyzacją (amortyzator z tyłu + widelec z przodu). Typy: enduro, trail, all-mountain, downhill. Przykłady: Canyon Torque, Canyon Spectral, Canyon Strive, Trek Slash, Santa Cruz, Commencal, YT Capra, Specialized Enduro/Stumpjumper FSR.
 • "elektryk_gorski" — elektryczny rower górski / e-MTB (silnik wspomagający + charakter trail/enduro/downhill). NIE miejski/touringowy e-bike.
@@ -702,7 +725,13 @@ Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
 
 `;
 
-    const prompt = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
+    // Krótka, DYNAMICZNA notka o wyniku Etapu 1 — wstawiana dopiero przy ogłoszeniu (na końcu promptu),
+    // żeby nie psuć wspólnego, cache'owalnego prefiksu powyżej.
+    const typeHint = typeIsTrusted
+      ? `To ogłoszenie zostało już wstępnie sklasyfikowane (Etap 1) jako typ: "${groqType}". NIE klasyfikuj typu od nowa — w polu "typ_roweru" wpisz dokładnie "${groqType}" i przejdź od razu do oceny opłacalności.\n`
+      : `Wstępna klasyfikacja typu (Etap 1) była niepewna — sam określ typ wg zasad z sekcji "ROZPOZNAWANIE TYPU ROWERU" wyżej.\n`;
+
+    const staticPrefix = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
 
 ${knowledgeSection}=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
 To są PRZYKŁADY modeli, które dobrze znasz z wcześniejszych transakcji — TO NIE JEST wyczerpująca lista wszystkich modeli które możesz wycenić! Dla WSZYSTKICH modeli SPOZA tej listy (nie tylko DH — dotyczy to też mainstreamowych marek jak Canyon, Trek, Specialized, Cube, Rose, Radon, Ghost, Merida, Scott, Focus, GT, Commencal) MUSISZ użyć swojej OGÓLNEJ, szerokiej wiedzy o niemieckim/polskim rynku wtórnym rowerów — dokładnie tak jak zrobiłby to doświadczony handlarz, który zna markę i segment nawet bez ściągawki. Znasz mniej więcej ceny nowych rowerów tych marek i typowy spadek wartości na rynku wtórnym (zwykle 40-60% wartości nowej po 2-4 latach, zależnie od stanu i wyposażenia) — użyj tego do oszacowania, zamiast czekać na dokładny wpis w cenniku.
@@ -715,7 +744,16 @@ PRZYBLIŻONY szacunek z rozsądnym marginesem błędu (np. "prawdopodobnie 1400-
 • Dartmoor Two6player, Specialized P.3, Radon Slush: popularne dirtowe — wyceniaj analogicznie do Stitched.
 • Rowery DH (Downhill) — YT Tues, Trek Session, Specialized Demo, Santa Cruz V10, Canyon Sender, Commencal Supreme DH, GT Fury: sprzęt niszowy z węższą grupą kupujących (dłuższy czas sprzedaży niż enduro), ALE entuzjaści płacą dobrze za kompletne rowery z topowymi komponentami (widelec dwukoronowy Fox 40/RockShox Boxxer, hamulce Saint/Zee/Code, rama karbonowa) — pod względem WYCENY traktuj podobnie jak topowe enduro/trail tej samej klasy komponentów, nie zaniżaj tylko dlatego że to nisza.
 
-${typeSection}=== OCENA OPŁACALNOŚCI ===
+=== UWAGA — CENA "NOWEGO" ROWERU W OPISIE TO NIE SZACOWANA CENA SPRZEDAŻY ===
+Sprzedający bardzo często podają w opisie oryginalną cenę zakupu roweru gdy był nowy (np. "oryginalny cena zakupu 2.999€", "kosztował nowy X€", niemieckie "Neupreis"/"UVP"). To WYŁĄCZNIE informacja pomocnicza o poziomie wyposażenia/segmencie modelu — NIGDY nie wolno Ci ustawić "szacowana_sprzedaz_eur" na poziomie równym lub zbliżonym do tej ceny. Nawet rower "jak nowy" z minimalnym przebiegiem (np. 200-300 km) sprzedaje się na rynku wtórnym z dyskontem rzędu 15-30% względem ceny nowego, a rower używany "normalnie" — z dyskontem 40-60% (patrz sekcja cennika wyżej). Zamiana ceny nowego na cenę sprzedaży to POWAŻNY błąd wyceny, który prowadzi do fałszywej okazji — zawsze traktuj cenę nowego z opisu jako GÓRNY sufit, od którego odejmujesz odpowiedni % w zależności od przebiegu/stanu/wieku, i wpisz do "powod_decyzji" że była to cena nowego, nie sprzedaży.
+
+=== UWAGA — WYCENIAJ PO REALNYM OSPRZĘCIE, NIE TYLKO PO MARCE RAMY ===
+Renomowana marka/model ramy (Santa Cruz, Canyon, YT, Specialized, Commencal) NIE oznacza automatycznie wysokiej wyceny — o cenie decyduje przede wszystkim POZIOM ZAMONTOWANEGO OSPRZĘTU, konkretnie wymieniony w opisie. Podstawowe/wejściowe komponenty w danej rodzinie (np. SRAM NX Eagle zamiast GX/X01, RockShox Pike BASE/Recon/Yari zamiast Ultimate/Factory, FOX Float Performance/Rhythm zamiast Factory/Kashima, Shimano Deore/SLX zamiast XT/XTR, felgi aluminiowe zamiast karbonowych) oznaczają że to PODSTAWOWA wersja danego modelu — wyceniaj ją bliżej dolnej granicy przedziału dla tego modelu/segmentu, NIE ceny topowej wersji tej samej rodziny, nawet jeśli sama rama jest topowa (np. Carbon C/CC). Zawsze przejrzyj listę komponentów z opisu, zanim podasz "szacowana_sprzedaz_eur" — jeśli osprzęt jest w większości podstawowy, obniż szacunek odpowiednio, niezależnie od prestiżu marki.
+
+=== UWAGA — SPRAWDŹ OPIS PRZED OZNACZENIEM "niepewne" Z POWODU BRAKU OSPRZĘTU ===
+Wiele ogłoszeń (szczególnie rowerów budowanych indywidualnie/na zamówienie) podaje pełną listę komponentów w formie wypunktowania (np. "Sattel: X, Bremsen: Y, Gabel: Z, Dämpfer: W, Kurbeln: ..."). PRZED napisaniem w "powod_decyzji" że "opis nie mówi nic o stanie/wyposażeniu" lub "nierozpoznawalny model/marka" — przeskanuj opis pod kątem SŁÓW-KLUCZY (w dowolnym języku): widelec/Gabel/fork, amortyzator/Dämpfer/shock, hamulce/Bremsen/brakes, napęd/Schaltung/Antrieb/drivetrain/Kurbel/crank, koła/Laufräder/Felgen/wheels/hub, sztyca/Sattelstütze/dropper. Jeśli choć kilka z nich występuje — osprzęt JEST opisany i musisz oszacować cenę na tej podstawie (nawet z szerszym marginesem błędu), a nie oznaczać jako "niepewne".
+
+${typeInstructions}=== OCENA OPŁACALNOŚCI ===
 • Jeśli typ = "inny" → ZAWSZE decyzja: "nie". Nie analizuj dalej.
 • Jeśli typ = "dirt", "full" lub "elektryk_gorski":
   - Sprawdź cenę ogłoszenia (w EUR).
@@ -728,13 +766,6 @@ ${typeSection}=== OCENA OPŁACALNOŚCI ===
   - TWARDA REGUŁA ROKU: jeśli na podstawie modelu/wersji/komponentów rozpoznajesz, że rower pochodzi sprzed 2017 roku → decyzja: "nie", niezależnie od ceny i pozornej opłacalności. To ogłoszenie powinno zostać odrzucone WCZEŚNIEJ, ale gdybyś i tak zobaczył wyraźnie stary rocznik — nie licz go jako okazję.
   - Jeśli cena ogłoszenia nie jest podana (null/brak) → decyzja: "niepewne" (nie "nie" — może być warta sprawdzenia ręcznie).${chatInfo}
 
-=== OGŁOSZENIE DO OCENY ===
-Tytuł: ${listing.title}
-Cena z ogłoszenia: ${listing.price != null ? listing.price + "€" : "BRAK CENY"}
-Lokalizacja: ${listing.location}
-Opis: ${listing.desc}
-Model/kategoria wyszukiwania: ${listing.bike}
-
 Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON, TYLKO liczby i słowa kluczowe — bez opisów słownych, oszczędzaj tokeny — WYJĄTEK: pole "powod_decyzji" poniżej):
 {
   "typ_roweru": "full" | "dirt" | "elektryk_gorski" | "inny",
@@ -743,9 +774,72 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
   "przewidywany_zysk": liczba w EUR lub 0,
   "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'brak ceny w ogłoszeniu' / 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": dokładny wpis w bazie wiedzy / cennik referencyjny / własna wiedza rynkowa o tym modelu."
-}`;
+}
+
+=== KONIEC CZĘŚCI STAŁEJ === (wszystko powyżej tej linii to staticPrefix — kandydat do explicit cache; patrz getCachedContentName)`;
+
+    // ── Dynamiczna część promptu — TYLKO to zmienia się między wywołaniami. Gdy mamy aktywny
+    // explicit cache dla staticPrefix (patrz niżej), wysyłamy do Gemini WYŁĄCZNIE ten fragment
+    // jako "contents", a cache pokrywa całą resztę (persona/cennik/reguły/schemat JSON powyżej).
+    const dynamicSuffix = `${typeHint}
+=== OGŁOSZENIE DO OCENY ===
+Tytuł: ${listing.title}
+Cena z ogłoszenia: ${listing.price != null ? listing.price + "€" : "BRAK CENY"}
+Lokalizacja: ${listing.location}
+Opis: ${listing.desc}
+Model/kategoria wyszukiwania: ${listing.bike}
+
+Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu podanego wyżej (nic poza JSON).`;
+
+    // Pełny prompt "po staremu" — używany jako fallback gdy nie mamy (jeszcze/wcale) działającego cache.
+    const prompt = `${staticPrefix}\n\n${dynamicSuffix}`;
 
         addLog(`🤖 Gemini (etap 2): analizuję — ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""} | typ z etapu 1: ${groqType}`, "info");
+
+    // ── Explicit context cache — spróbuj dostać nazwę cache dla tego modelu+wariantu staticPrefix.
+    // Zwraca null gdy: cache się nie udało utworzyć (np. za mało tokenów wg progu Google — patrz
+    // komentarz w api/gemini.js), jesteśmy w cooldownie po ostatniej nieudanej próbie, albo trwa
+    // właśnie tworzenie. W KAŻDYM z tych przypadków po prostu wysyłamy PEŁNY prompt jak dotychczas —
+    // zero regresji funkcjonalnej, cache to czysta optymalizacja kosztu.
+    const cacheKey = `${geminiModel}|${hashStr(staticPrefix)}`;
+    const getCachedContentName = async () => {
+      if (provider === "groq") return null; // cache dotyczy tylko Gemini
+      const now = Date.now();
+      const existing = cacheMapRef.current[cacheKey];
+      if (existing && existing.expiresAt > now) return existing.name;
+
+      const cooldownUntil = cacheFailCooldownRef.current[cacheKey];
+      if (cooldownUntil && cooldownUntil > now) return null;
+
+      try {
+        const ttlSeconds = 3300; // 55 min
+        const data = await callProxy({
+          action: "createCache",
+          provider: "gemini",
+          model: geminiModel,
+          apiKey: geminiKey,
+          messages: [{ role: "user", parts: [{ text: staticPrefix }] }],
+          ttlSeconds,
+        });
+        if (data?.error || !data?.name) {
+          // Najczęstsza przyczyna: staticPrefix poniżej minimalnego progu tokenów dla explicit
+          // cache (Google: dokumentacja niespójna, 2048 vs 32768 w zależności od modelu/API).
+          addLog(`ℹ️ Gemini: nie udało się utworzyć explicit cache (${data?.error?.message || "brak name w odpowiedzi"}) — wysyłam pełny prompt bez cache (10 min cooldown przed kolejną próbą)`, "info");
+          cacheFailCooldownRef.current[cacheKey] = now + 10 * 60 * 1000;
+          return null;
+        }
+        cacheMapRef.current[cacheKey] = {
+          name: data.name,
+          expiresAt: now + (ttlSeconds - 120) * 1000, // margines bezpieczeństwa 2 min przed realnym wygaśnięciem
+        };
+        addLog(`💾 Gemini: utworzono explicit cache dla statycznej części promptu (${geminiModel}) — kolejne wywołania tańsze o ~90% na tej części`, "success");
+        return data.name;
+      } catch (e) {
+        addLog(`ℹ️ Gemini: błąd tworzenia cache (${e.message}) — wysyłam pełny prompt bez cache`, "info");
+        cacheFailCooldownRef.current[cacheKey] = now + 10 * 60 * 1000;
+        return null;
+      }
+    };
 
     // ── Pojedyncza próba wywołania Gemini + parsowanie odpowiedzi ─────────────────────────
     // overrides — nadpisania generationConfig (patrz callGemini) — używane do eskalacji z myśleniem.
@@ -756,9 +850,14 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     // limitem tokenów zamiast poddawać się za pierwszym razem.
     const attemptAnalysis = async (overrides) => {
       let effectiveOverrides = { ...overrides };
+      // Sprawdź RAZ przed pętlą retry czy mamy działający cache — nie warto próbować go tworzyć
+      // ponownie przy każdej z 3 prób w razie błędu przejściowego (patrz cooldown w getCachedContentName).
+      const cachedContentName = await getCachedContentName();
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const data = await callGemini(prompt, effectiveOverrides);
+          const data = cachedContentName
+            ? await callGemini(dynamicSuffix, effectiveOverrides, cachedContentName)
+            : await callGemini(prompt, effectiveOverrides);
 
           if (data?.error) {
             const msg = data.error.message || "";
@@ -833,6 +932,50 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
             addLog(`⚠️ Gemini: niespójna matematyka — podał zysk ${parsed.przewidywany_zysk}€ przy zakupie ${cenaNum}€/sprzedaży ${sprzedazNum}€ (powinno być ${zyskLiczony}€) — POPRAWIAM na policzone — ${listing.title}`, "error");
           }
           parsed.przewidywany_zysk = zyskLiczony; // zawsze nadpisujemy policzoną wartością, nigdy nie ufamy surowej odpowiedzi modelu
+
+          // ── TWARDA REGUŁA: WYKRYWANIE POMYLENIA "CENY NOWEGO" Z CENĄ SPRZEDAŻY ────────────────
+          // To NIE jest coś, na co można liczyć że prompt zawsze wystarczy — model potrafi
+          // zignorować instrukcję i tak czy inaczej zakotwiczyć się na liczbie z opisu.
+          // Zamiast ufać że Gemini się zastosuje, WYCIĄGAMY samodzielnie (regex) ewentualną
+          // "cenę nowego"/"oryginalną cenę zakupu" wprost z opisu ogłoszenia i porównujemy
+          // z tym, co Gemini podało jako "szacowana_sprzedaz_eur". Jeśli oszacowanie jest
+          // podejrzanie blisko (albo wyżej) tej ceny nowego — to niemal na pewno pomyłka
+          // (Gemini przepisało cenę nowego zamiast realnie oszacować rynek wtórny) — nadpisujemy
+          // na "niepewne", niezależnie od tego co model zwrócił.
+          const extractNewPriceFromDesc = (text) => {
+            if (!text) return null;
+            const patterns = [
+              /neupreis\D{0,15}?(\d[\d.,]*)\s*€/i,
+              /\buvp\D{0,15}?(\d[\d.,]*)\s*€/i,
+              /listenpreis\D{0,15}?(\d[\d.,]*)\s*€/i,
+              /original\w*\s*(?:verkaufs|kauf)?preis\w*\D{0,15}?(\d[\d.,]*)\s*€/i,
+              /verkaufspreis\s+betrug\D{0,15}?(\d[\d.,]*)\s*€/i,
+              /kostete\s+neu\D{0,15}?(\d[\d.,]*)\s*€/i,
+              /neu\s+f[üu]r\D{0,10}?(\d[\d.,]*)\s*€/i,
+              /cena\s+nowego\D{0,15}?(\d[\d.,]*)\s*(?:€|eur)/i,
+              /nowy\D{0,10}?(\d[\d.,]*)\s*(?:€|eur)/i,
+            ];
+            for (const re of patterns) {
+              const m = text.match(re);
+              if (m) {
+                const num = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
+                if (Number.isFinite(num) && num > 200) return num; // odfiltruj przypadkowe małe liczby
+              }
+            }
+            return null;
+          };
+
+          const newPriceInDesc = extractNewPriceFromDesc(listing.desc || listing.title || "");
+          if (
+            parsed.decyzja !== "niepewne" &&
+            newPriceInDesc != null &&
+            sprzedazNum != null &&
+            sprzedazNum >= newPriceInDesc * 0.9
+          ) {
+            addLog(`🚫 Gemini: szacowana sprzedaż ${sprzedazNum}€ jest podejrzanie blisko/wyżej ceny nowego z opisu (${newPriceInDesc}€) — najpewniej pomylił cenę nowego z ceną sprzedaży — zmieniam na "niepewne" — ${listing.title}`, "error");
+            parsed.decyzja = "niepewne";
+            parsed.powod_decyzji = `Gemini oszacował sprzedaż (${sprzedazNum}€) blisko/powyżej ceny nowego z opisu (${newPriceInDesc}€) — wymaga ręcznej weryfikacji.`;
+          }
 
           // TWARDA REGUŁA: decyzja "tak" MUSI być poparta policzonym zyskiem >= progu minProfit%.
           // Jeśli Gemini powiedziało "tak", ale liczby tego nie potwierdzają (albo brakuje liczb) —
@@ -991,6 +1134,14 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   };
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // Prosty, deterministyczny hash (djb2) — używany TYLKO do rozpoznania "czy statyczny blok promptu
+  // się zmienił" (np. edytowałeś cennik w Ustawieniach), nie do żadnych celów bezpieczeństwa.
+  const hashStr = (str) => {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  };
 
   // ── One full scan cycle ────────────────────────────────────────────────
   // ── One full scan cycle ────────────────────────────────────────────────
