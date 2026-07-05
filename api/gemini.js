@@ -8,9 +8,61 @@ export default async function handler(req, res) {
   let body;
   try { body = req.body; } catch { return res.status(400).json({ error: "Niepoprawny JSON" }); }
 
-  const { provider, model, apiKey, messages, generationConfig } = body || {};
+  const { provider, model, apiKey, messages, generationConfig, action, cachedContent, ttlSeconds, systemInstruction, cacheName } = body || {};
   if (!apiKey)   return res.status(400).json({ error: "Brak apiKey" });
   if (!model)    return res.status(400).json({ error: "Brak model" });
+
+  // ── CACHE ACTIONS (Gemini explicit context caching) ────────────────────────────────────
+  // Cel: duży, statyczny blok promptu (cennik/reguły osprzętu) potrafi urosnąć do kilku-kilkunastu
+  // tysięcy tokenów. Zamiast wysyłać go w KAŻDYM wywołaniu (płacąc pełną stawkę input za każdym
+  // razem), tworzymy go RAZ jako cachedContent po stronie Google, a potem tylko odwołujemy się do
+  // niego po nazwie — odczyt z cache kosztuje ~10% ceny bazowej. Frontend (index.html) decyduje
+  // KIEDY tworzyć/odświeżać cache (np. gdy zmieni się cennik) i trzyma nazwę cache po swojej stronie.
+  //
+  // UWAGA: Google w dokumentacji podaje NIESPÓJNE progi minimalnego rozmiaru dla cache jawnego
+  // (explicit) — różne źródła mówią 2048 albo 32768 tokenów w zależności od modelu/wersji API.
+  // Dlatego tworzenie cache może się nie udać dla mniejszych promptów — to NIE jest błąd aplikacji,
+  // frontend musi to obsłużyć jako "brak cache" i po prostu wysłać pełny prompt jak dotychczas
+  // (patrz fallback w index.html). Niezależnie od tego, "implicit caching" (automatyczne, 90%
+  // zniżki przy trafieniu) działa OD RAZU na modelach 2.5+/3.x bez żadnego kodu — więc nawet gdy
+  // jawny cache się nie uda, i tak część oszczędności przychodzi sama, o ile identyczny prefiks
+  // promptu ląduje na początku kolejnych zapytań blisko siebie w czasie.
+  if (action === "createCache") {
+    if (!cacheName && !Array.isArray(messages) && !systemInstruction) {
+      return res.status(400).json({ error: "Brak treści do zcache'owania (messages/systemInstruction)" });
+    }
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${apiKey}`;
+      const createBody = {
+        model: `models/${model}`,
+        ttl: `${ttlSeconds || 3300}s`, // domyślnie 55 min — trochę mniej niż typowe 1h wygaśnięcia, żeby zdążyć odświeżyć
+        ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
+        ...(Array.isArray(messages) ? { contents: messages } : {}),
+      };
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createBody),
+      });
+      const data = await resp.json();
+      return res.status(resp.status).json(data);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
+  if (action === "deleteCache") {
+    try {
+      if (!cacheName) return res.status(400).json({ error: "Brak cacheName" });
+      const url = `https://generativelanguage.googleapis.com/v1beta/${cacheName}?key=${apiKey}`;
+      const resp = await fetch(url, { method: "DELETE" });
+      const data = resp.status === 204 ? {} : await resp.json().catch(() => ({}));
+      return res.status(resp.status).json(data);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
+
   if (!messages) return res.status(400).json({ error: "Brak messages" });
 
   // Gemini 2.5 i starsze używają thinkingBudget (liczba tokenów, 0 = wyłączone, -1 = dynamiczne/auto).
@@ -61,6 +113,10 @@ export default async function handler(req, res) {
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const geminiBody = {
         contents: messages,
+        // Gdy frontend ma aktywny explicit cache dla tego modelu/wariantu promptu — dołącz referencję.
+        // Google wtedy TRAKTUJE cachedContent jako poprzedzający kontekst, a "contents" tutaj to
+        // tylko nowa, dynamiczna część (samo ogłoszenie) — nie trzeba powtarzać statycznego cennika.
+        ...(cachedContent ? { cachedContent } : {}),
         generationConfig: {
           temperature:       generationConfig?.temperature       ?? 0.7,
           maxOutputTokens:   generationConfig?.maxOutputTokens   ?? 2048,
