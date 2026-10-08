@@ -72,14 +72,25 @@ const PROVIDERS = {
   groq: {
     label: "Groq (darmowy, bez karty)",
     models: [
-      { id: "openai/gpt-oss-120b",      label: "GPT-OSS 120B (zalecany — tani, z reasoningiem)" },
-      { id: "llama-3.3-70b-versatile",  label: "Llama 3.3 70B" },
-      { id: "llama-3.1-8b-instant",     label: "Llama 3.1 8B (szybki)" },
+      { id: "openai/gpt-oss-120b",      label: "GPT-OSS 120B (zalecany — tani, z rozumowaniem)" },
+      { id: "openai/gpt-oss-20b",       label: "GPT-OSS 20B (tańszy, szybszy)" },
     ],
     keyPlaceholder: "gsk_...",
     keyHint: "console.groq.com/keys",
   },
 };
+
+// Groq wyłączył modele Llama 16.08.2026 (zapytania zwracają "model does not exist").
+// Zapisane w ustawieniach stare ID zamieniamy na oficjalne zamienniki Groqa — inaczej dropdown
+// POKAZYWAŁBY nowy model, a aplikacja dalej po cichu wysyłałaby martwy.
+const DEAD_GROQ_MODELS = {
+  "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+  "llama-3.1-8b-instant":    "openai/gpt-oss-20b",
+  "mixtral-8x7b-32768":      "openai/gpt-oss-120b",
+};
+
+// Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
+const APP_VERSION = "2026-10-08 · v3 pełne opisy";
 
 const SC = {
   analyzing: { bg: "#8b5cf622", color: "#a78bfa", border: "#8b5cf655", label: "AI analizuje…" },
@@ -107,7 +118,14 @@ function App() {
   });
   const [geminiKey,      setGeminiKey]      = useState(cfg.geminiKey || "");
   const [provider,       setProvider]       = useState(cfg.provider || "groq");
-  const [geminiModel,    setGeminiModel]    = useState(cfg.geminiModel || "openai/gpt-oss-120b");
+  const [geminiModel,    setGeminiModel]    = useState(() => {
+    // Migracja: martwe ID → zamiennik; model spoza listy providera → pierwszy z listy
+    // (dropdown i tak pokazałby pierwszą opcję — stan musi się z tym zgadzać).
+    const p = PROVIDERS[cfg.provider || "groq"] || PROVIDERS.groq;
+    let m = cfg.geminiModel || p.models[0].id;
+    m = DEAD_GROQ_MODELS[m] || m;
+    return p.models.some(x => x.id === m) ? m : p.models[0].id;
+  });
   const [geminiChatName, setGeminiChatName] = useState(cfg.geminiChatName || "");
   const [minProfit,      setMinProfit]      = useState(cfg.minProfit || 20);
   // Klucz Groq używany WYŁĄCZNIE do szybkiej, lekkiej klasyfikacji typu roweru (etap 1) — niezależnie od
@@ -179,6 +197,9 @@ function App() {
   };
 
   const runningRef   = useRef(false);
+  const priceDiagLoggedRef = useRef(false); // szczegółowa diagnostyka parsera cen — tylko raz na sesję
+  const descDiagLoggedRef  = useRef(false); // diagnostyka parsera pełnego opisu — tylko raz na sesję
+  const detailBlockedUntilRef = useRef(0);  // bezpiecznik: do kiedy NIE pobieramy stron ogłoszeń (po blokadzie)
   const firstCycleRef = useRef(true); // cykl #1 = tylko zbieramy ID, nie analizujemy
   const geminiCallsRef = useRef(0); // licznik analiz Gemini w BIEŻĄCYM cyklu — reset na starcie każdego cyklu
   const logsEndRef  = useRef(null);
@@ -265,14 +286,19 @@ function App() {
       messages: provider === "groq"
         ? [{ role: "user", content: prompt }]
         : [{ role: "user", parts: [{ text: prompt }] }],
+      // Groq/GPT-OSS: tokeny rozumowania liczą się do limitu — 4096 daje zapas na myślenie + JSON
+      // (płaci się tylko za faktycznie użyte tokeny, sam limit nic nie kosztuje).
       generationConfig: provider === "groq"
-        ? { temperature: 0.3, maxOutputTokens: 2048 }
+        ? { temperature: 0.3, maxOutputTokens: 4096, reasoningEffort: "medium" }
         : { temperature: 0.3, maxOutputTokens: 2048, responseMimeType: "application/json" },
     });
     if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
     if (provider === "groq") {
-      const text = data?.choices?.[0]?.message?.content || "";
-      return { candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP" }] };
+      const choice = data?.choices?.[0];
+      const text = choice?.message?.content || "";
+      // Ucięta odpowiedź ("length") zgłaszana jak u Gemini, zamiast udawać kompletną.
+      const finishReason = choice?.finish_reason === "length" ? "MAX_TOKENS" : "STOP";
+      return { candidates: [{ content: { parts: [{ text }] }, finishReason }] };
     }
     return data;
   };
@@ -379,7 +405,9 @@ function App() {
     let m = text.match(/\bB(?:au)?j(?:ahr)?\.?:?\s*(\d{4})\b/i);
     if (m) return parseInt(m[1], 10);
 
-    m = text.match(/\bMY\.?\s*'?(\d{2,4})\b/i) || text.match(/\bModell?jahr\.?:?\s*(\d{4})\b/i);
+    // "MY" celowo BEZ flagi i (tylko wielkie litery) i tylko 2 lub 4 cyfry — inaczej np.
+    // angielskie "my 160mm fork" dawało "rok 160" i odrzucenie dobrego roweru.
+    m = text.match(/\bMY\.?\s*'?(\d{2}|\d{4})\b/) || text.match(/\bModell?jahr\.?:?\s*(\d{4})\b/i);
     if (m) {
       let y = parseInt(m[1], 10);
       if (y < 100) y += 2000;
@@ -400,10 +428,24 @@ function App() {
     return null;
   };
 
+  // Ścisła wersja dla PEŁNEGO opisu: tylko JAWNIE oznaczony rocznik (Baujahr / Bj. / Jahrgang /
+  // Modelljahr / MY). Bez "gołych" lat i słów typu "Klassiker" — w długim opisie dają za dużo
+  // fałszywych trafień ("Gabel von 2015 nachgerüstet" w rowerze z 2020, "ein Klassiker unter den Enduros").
+  const extractMarkedYear = (text) => {
+    if (!text) return null;
+    let m = text.match(/\b(?:Baujahr|Bj|Jahrgang)\.?:?\s*(?:ca\.?\s*|etwa\s*)?(\d{4})\b/i)
+         || text.match(/\bModell?jahr\.?:?\s*(?:ca\.?\s*|etwa\s*)?(\d{4})\b/i);
+    if (m) return parseInt(m[1], 10);
+    m = text.match(/\bMY\.?\s*'?(\d{2}|\d{4})\b/); // tylko wielkie "MY"
+    if (m) { let y = parseInt(m[1], 10); if (y < 100) y += 2000; return y; }
+    return null;
+  };
+
   // Biała lista — zwraca true jeśli ogłoszenie zawiera CHOĆ JEDNO wymagane słowo (sygnał full/dirt).
   // Jeśli lista jest pusta, filtr jest wyłączony (przepuszcza wszystko, jak dotychczas).
-  const GROQ_CLASSIFIER_MODEL = "llama-3.1-8b-instant"; // lekki, szybki, hojny darmowy limit (14 400 zapytań/dzień)
-  const GROQ_ESCALATION_MODEL = "openai/gpt-oss-120b"; // mocniejszy, tani, z reasoningiem — tylko dla "niepewne" z etapu 1a
+  // llama-3.1-8b-instant wyłączony przez Groq 16.08.2026 — gpt-oss-20b to oficjalny zamiennik.
+  const GROQ_CLASSIFIER_MODEL = "openai/gpt-oss-20b";  // szybki, tani, z rozumowaniem (wysiłek "low")
+  const GROQ_ESCALATION_MODEL = "openai/gpt-oss-120b"; // mocniejszy — tylko dla "niepewne" z etapu 1a
 
   // ── Etap 1: szybka, "głupia" klasyfikacja typu roweru przez Groq ──────────
   // Cel: odrzucić ewidentnie nietrafione typy (szosówki, miejskie, dziecięce, części...) BEZ
@@ -435,7 +477,7 @@ ROK PRODUKCJI: jeśli tytuł/opis PODAJE rok wprost — użyj go. Jeśli NIE pod
 Brak wystarczających informacji żeby ocenić typ → odpowiedz: niepewne
 
 Tytuł: ${listing.title}
-Opis: ${listing.desc}
+Opis: ${listing.fullDesc || listing.desc}
 
 Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny/niepewne), bez innego tekstu.`;
 
@@ -445,7 +487,7 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
     // Pojedynczy strzał klasyfikacji na wskazanym modelu, z retry/backoffem na 429.
     // Używane zarówno dla taniego pierwszego przebiegu (8B) jak i droższej eskalacji
     // (GPT-OSS-120B) dla przypadków które 8B zostawił jako "niepewne".
-    const runClassification = async (model, maxTokens) => {
+    const runClassification = async (model, maxTokens, effort) => {
       const prompt = buildClassifierPrompt();
       addLog(`🔎 Groq (${model}): klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}`, "info");
 
@@ -457,7 +499,7 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
             model,
             apiKey: groqClassifierKey,
             messages: [{ role: "user", content: prompt }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: maxTokens },
+            generationConfig: { temperature: 0.1, maxOutputTokens: maxTokens, reasoningEffort: effort },
           });
           const ms = Date.now() - startedAt;
 
@@ -475,19 +517,35 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
             return "niepewne";
           }
 
-          const raw = (data?.choices?.[0]?.message?.content || "").toLowerCase().trim();
+          const choice = data?.choices?.[0];
+          const raw = (choice?.message?.content || "").toLowerCase().trim();
+          // 1) Dokładnie jedno słowo (po usunięciu interpunkcji/formatowania) → bierzemy je wprost.
+          // 2) Odpowiedź zawiera "niepewne" → niepewne (model sam zgłosił wątpliwość).
+          // 3) Zdanie: typ uznajemy TYLKO gdy pada dokładnie jeden. Kilka typów naraz
+          //    (np. "full, nie część") = niejednoznaczne → niepewne → eskalacja do mocniejszego
+          //    modelu, zamiast pochopnie odrzucić dobry rower jako "część".
+          const word = raw.replace(/[^a-ząćęłńóśźż_]/g, "").replace("część", "czesc");
+          const TYPE_MATCHERS = {
+            elektryk_gorski: r => r.includes("elektryk"),
+            dirt:  r => r.includes("dirt"),
+            czesc: r => r.includes("czesc") || r.includes("część"),
+            stary: r => r.includes("stary"),
+            full:  r => r.includes("full"),
+            inny:  r => r.includes("inny"),
+          };
           let typ;
-          if (raw.includes("elektryk")) typ = "elektryk_gorski";
-          else if (raw.includes("dirt")) typ = "dirt";
-          else if (raw.includes("czesc") || raw.includes("część")) typ = "czesc";
-          else if (raw.includes("stary")) typ = "stary";
-          else if (raw.includes("full")) typ = "full";
-          else if (raw.includes("inny")) typ = "inny";
-          else typ = "niepewne";
+          if (KNOWN_TYPES.includes(word)) typ = word;
+          else if (raw.includes("niepewn")) typ = "niepewne";
+          else {
+            const hits = Object.keys(TYPE_MATCHERS).filter(k => TYPE_MATCHERS[k](raw));
+            typ = hits.length === 1 ? hits[0] : "niepewne";
+          }
 
-          const rawNote = !KNOWN_TYPES.includes(raw) && raw && typ === "niepewne"
-            ? ` (Groq odpowiedział niejednoznacznie: "${raw.slice(0, 40)}")`
-            : "";
+          const rawNote = !raw && choice?.finish_reason === "length"
+            ? " (odpowiedź ucięta — limit tokenów)"
+            : (!KNOWN_TYPES.includes(word) && raw && typ === "niepewne"
+              ? ` (Groq odpowiedział niejednoznacznie: "${raw.slice(0, 40)}")`
+              : "");
           addLog(`${TYPE_ICON[typ]} Groq ${model} (${ms}ms): typ="${typ}"${rawNote} — ${listing.title}`, "info");
           return typ;
         } catch (e) {
@@ -504,13 +562,14 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
       return "niepewne"; // nie powinno tu dotrzeć, ale na wszelki wypadek
     };
 
-    // Etap 1a: tani, szybki 8B.
-    let typ = await runClassification(GROQ_CLASSIFIER_MODEL, 20);
+    // Etap 1a: szybki, tani 20B. Limit 1024 a nie 20 — GPT-OSS najpierw "myśli", a tokeny
+    // myślenia liczą się do limitu; przy 20 tokenach odpowiedź byłaby zawsze pusta.
+    let typ = await runClassification(GROQ_CLASSIFIER_MODEL, 1024, "low");
 
-    // Etap 1b: jeśli 8B się nie zdecydował, eskaluj do mocniejszego (ale wciąż bardzo taniego)
-    // modelu z reasoningiem — zanim poddamy się i wyślemy do drogiego Etapu 2 (Gemini).
+    // Etap 1b: jeśli 20B się nie zdecydował, eskaluj do mocniejszego (ale wciąż bardzo taniego)
+    // modelu — zanim poddamy się i wyślemy do drogiego Etapu 2 (Gemini).
     if (typ === "niepewne") {
-      typ = await runClassification(GROQ_ESCALATION_MODEL, 500);
+      typ = await runClassification(GROQ_ESCALATION_MODEL, 2048, "medium");
     }
 
     return typ;
@@ -525,6 +584,88 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
     const resp = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`);
     if (!resp.ok) throw new Error(`Scrape HTTP ${resp.status}`);
     return resp.text();
+  };
+
+  // Kwota z tekstu. requireEuro=true wymaga znaku "€" za liczbą — chroni przed złapaniem
+  // przypadkowej liczby (np. "27,5 Zoll", "-20%") gdy szukamy poza właściwym elementem ceny.
+  const toPrice = (txt, requireEuro) => {
+    if (!txt) return null;
+    const re = requireEuro
+      ? /(\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?\s*€/
+      : /(\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?/;
+    const m = txt.match(re);
+    if (!m) return null;
+    const val = parseInt(m[1].replace(/\./g, ""), 10);
+    return Number.isFinite(val) && val > 0 ? val : null;
+  };
+
+  // ── Pełny opis ze strony ogłoszenia ────────────────────────────────────
+  // Lista wyników ma tylko ucięty fragment opisu — pełny tekst jest wyłącznie na stronie ogłoszenia.
+  // Pobieramy go TYLKO dla rowerów, które przeszły wszystkie tanie filtry i idą do analizy AI,
+  // z odstępem między zapytaniami, limitem na cykl i bezpiecznikiem na wypadek blokady.
+  const DETAIL_FETCH_DELAY_MS = 4000;            // min. odstęp między stronami ogłoszeń (+ losowo do 2 s)
+  const MAX_DETAIL_FETCHES_PER_CYCLE = 10;       // twardy limit pobrań na cykl
+  const DESC_MAX_CHARS = 3000;                   // dłuższe opisy przycinamy (koszt tokenów)
+  const DETAIL_BLOCK_PAUSE_MS = 30 * 60 * 1000;  // po wykryciu blokady: 30 min przerwy w pobieraniu
+
+  const fetchListingDetails = async (listing) => {
+    if (!/^https:\/\/(www\.)?kleinanzeigen\.de\//.test(listing.href || "")) {
+      return { ok: false, reason: "link spoza Kleinanzeigen" };
+    }
+    let resp;
+    try {
+      resp = await fetch(`/api/scrape?url=${encodeURIComponent(listing.href)}`);
+    } catch (e) {
+      return { ok: false, reason: `błąd sieci: ${e.message}` };
+    }
+    if (resp.status === 403 || resp.status === 429) return { ok: false, blocked: true, reason: `HTTP ${resp.status}` };
+    if (resp.status === 404 || resp.status === 410) return { ok: false, gone: true, reason: "ogłoszenie usunięte" };
+    if (!resp.ok) return { ok: false, reason: `HTTP ${resp.status}` };
+
+    const html = await resp.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    // Opis — warstwowo. Osobne zapytania zamiast jednej listy selektorów: querySelector z listą
+    // zwraca PIERWSZY w kolejności dokumentu, a pusty <meta itemprop="description"> w <head>
+    // wygrałby z właściwym opisem w treści strony.
+    let desc = "";
+    const descEl = doc.querySelector("#viewad-description-text") || doc.querySelector("[itemprop=description]:not(meta)");
+    if (descEl) {
+      descEl.querySelectorAll("br").forEach(br => br.replaceWith("\n")); // zachowaj podział linii
+      desc = descEl.textContent || "";
+    }
+    if (!desc.trim()) {
+      for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const j = JSON.parse(s.textContent);
+          for (const it of (Array.isArray(j) ? j : [j])) {
+            if (typeof it?.description === "string" && it.description.length > desc.length) desc = it.description;
+          }
+        } catch {}
+      }
+    }
+    if (!desc.trim()) desc = doc.querySelector('meta[itemprop="description"]')?.getAttribute("content") || "";
+    desc = desc.replace(/[ \t]+/g, " ").replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
+
+    if (!desc) {
+      // Sygnały blokady/usunięcia sprawdzamy TYLKO gdy nie ma opisu — inaczej słowo "robot"
+      // albo "gelöscht" w treści zwykłego ogłoszenia dałoby fałszywy alarm.
+      const bodyText = (doc.body?.textContent || "").toLowerCase();
+      if (/captcha|robot|zugriff verweigert|access denied/.test(bodyText)) {
+        return { ok: false, blocked: true, reason: "strona blokady/captcha" };
+      }
+      if (/nicht mehr verfügbar|wurde gelöscht|anzeige ist abgelaufen/.test(bodyText)) {
+        return { ok: false, gone: true, reason: "ogłoszenie usunięte" };
+      }
+      return { ok: false, reason: "nie znaleziono opisu na stronie", doc };
+    }
+
+    return {
+      ok: true,
+      desc: desc.length > DESC_MAX_CHARS ? desc.slice(0, DESC_MAX_CHARS) + "…" : desc,
+      fullLength: desc.length,
+      price: toPrice(doc.querySelector("#viewad-price")?.textContent, false),
+    };
   };
 
   // ── HTML parser ────────────────────────────────────────────────────────
@@ -543,6 +684,8 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
     // Próbuj różne selektory — Kleinanzeigen zmienia strukturę
     const articles = doc.querySelectorAll("article.aditem, li.aditem, [data-adid], .ad-listitem");
 
+    let firstNoPriceArticle = null; // do diagnostyki, gdy parser przestaje znajdować ceny
+
     articles.forEach(article => {
       // Link i ID — najważniejsze
       const linkEl = article.querySelector("a[href*='/s-anzeige/'], a[href*='/anzeige/']");
@@ -559,16 +702,23 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
       const title = titleEl?.textContent?.trim() || linkEl.textContent.trim();
       if (!title) return;
 
-      // Cena
-      const priceEl = article.querySelector("[class*=price], .aditem-main--middle--price-shipping--price");
-      const priceText = priceEl?.textContent?.trim() || "";
-      const priceMatch = priceText.match(/([\d.]+),([\d]+)|(\d[\d.]*)/);
-      let price = null;
-      if (priceMatch) {
-        const raw = priceMatch[0].replace(/\./g, "").replace(",", ".");
-        price = parseFloat(raw);
-        if (isNaN(price)) price = null;
+      // Cena — trzy warstwy, od najpewniejszej:
+      // 1) znana klasa elementu ceny Kleinanzeigen
+      let price = toPrice(article.querySelector(".aditem-main--middle--price-shipping--price")?.textContent, false);
+      // 2) dowolny element z "price" w klasie, zawierający kwotę z "€" (gdy zmienili nazwę klasy)
+      if (price == null) {
+        for (const el of article.querySelectorAll("[class*=price]")) {
+          price = toPrice(el.textContent, true);
+          if (price != null) break;
+        }
       }
+      // 3) kwota z "€" w tekście karty ogłoszenia, BEZ tytułu i opisu (żeby nie złapać np. "NP 3000€")
+      if (price == null) {
+        const clone = article.cloneNode(true);
+        clone.querySelectorAll("h2, h3, [class*=description], [class*=headline], [class*=title]").forEach(n => n.remove());
+        price = toPrice(clone.textContent, true);
+      }
+      if (price == null && !firstNoPriceArticle) firstNoPriceArticle = article;
 
       // Opis i lokalizacja
       const descEl = article.querySelector("[class*=description], .aditem-main--middle--description");
@@ -581,6 +731,20 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
         bike:     bikeLabel,
       });
     });
+
+    // Diagnostyka: wyszukiwanie ma filtr ceny w URL, więc prawie każde ogłoszenie POWINNO mieć cenę.
+    // Jeśli połowa+ nie ma — parser najpewniej nie pasuje do aktualnego HTML-a Kleinanzeigen.
+    const noPriceCount = items.filter(i => i.price == null).length;
+    if (items.length >= 3 && noPriceCount / items.length >= 0.5) {
+      addLog(`⚠️ Parser: ${noPriceCount}/${items.length} ogłoszeń bez odczytanej ceny — możliwa zmiana HTML Kleinanzeigen`, "error");
+      if (firstNoPriceArticle && !priceDiagLoggedRef.current) {
+        priceDiagLoggedRef.current = true;
+        const priceClasses = [...new Set([...firstNoPriceArticle.querySelectorAll("*")]
+          .flatMap(el => [...el.classList]).filter(c => /price|preis/i.test(c)))];
+        const cardText = (firstNoPriceArticle.textContent || "").replace(/\s+/g, " ").trim().slice(0, 300);
+        addLog(`🔍 Diagnostyka ceny (skopiuj to do czatu): klasy=[${priceClasses.join(", ") || "brak"}] · tekst="${cardText}"`, "error");
+      }
+    }
 
     return items;
   };
@@ -600,7 +764,7 @@ Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny
 
   const filterKnowledgeForListing = (listing) => {
     if (priceKnowledge.length === 0) return [];
-    const listingWords = new Set(extractSignificantWords(`${listing.title} ${listing.desc}`));
+    const listingWords = new Set(extractSignificantWords(`${listing.title} ${listing.fullDesc || listing.desc}`));
     if (listingWords.size === 0) return priceKnowledge;
     const matched = priceKnowledge.filter(e =>
       extractSignificantWords(e.text).some(w => listingWords.has(w))
@@ -628,6 +792,7 @@ Ta baza pochodzi z realnych sprzedaży i rozmów z użytkownikiem — traktuj j�
     const typeSection = typeIsTrusted
       ? `=== TYP ROWERU — JUŻ USTALONY, ZAUFAJ TEMU ===
 To ogłoszenie zostało już wstępnie sklasyfikowane (etap wcześniejszy) jako typ: "${groqType}" (full = pełne zawieszenie / enduro / trail / downhill, dirt = dirt jump / hardtail do skoków, elektryk_gorski = elektryczny rower górski / e-MTB). NIE klasyfikuj typu od nowa — przejdź od razu do oceny opłacalności poniżej i w polu "typ_roweru" w odpowiedzi wpisz dokładnie "${groqType}".
+JEDYNY WYJĄTEK: jeśli z opisu JEDNOZNACZNIE wynika, że sprzedawana jest sama część (np. sama rama, sam widelec, same koła), a nie kompletny rower — ustaw "odrzucenie": "czesc" i decyzja: "nie". Jeśli opis jednoznacznie podaje rocznik sprzed ${MIN_YEAR} — ustaw "odrzucenie": "stary" i decyzja: "nie". Samo wymienienie części w opisie kompletnego roweru (np. "z widelcem Fox 36") to NIE jest powód do odrzucenia.
 
 `
       : `=== KROK 1 — ROZPOZNAJ TYP ROWERU ===
@@ -667,7 +832,9 @@ ${typeSection}=== OCENA OPŁACALNOŚCI ===
 Tytuł: ${listing.title}
 Cena z ogłoszenia: ${listing.price != null ? listing.price + "€" : "BRAK CENY"}
 Lokalizacja: ${listing.location}
-Opis: ${listing.desc}
+${listing.fullDesc
+  ? `Opis (PEŁNY, ze strony ogłoszenia — przeczytaj go uważnie, to główne źródło informacji o stanie, wyposażeniu i roczniku):\n${listing.fullDesc}`
+  : `Opis (tylko krótki fragment z listy wyników — pełny opis był niedostępny): ${listing.desc}`}
 Model/kategoria wyszukiwania: ${listing.bike}
 
 Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON, TYLKO liczby i słowa kluczowe — bez opisów słownych, oszczędzaj tokeny):
@@ -676,7 +843,8 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "decyzja": "tak" | "nie" | "niepewne",
   "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
-  "przewidywany_zysk": liczba w EUR lub 0
+  "przewidywany_zysk": liczba w EUR lub 0,
+  "odrzucenie": "czesc" (sprzedawana sama część/rama, nie kompletny rower) | "stary" (rocznik sprzed ${MIN_YEAR}) | null
 }`;
 
         addLog(`🤖 Gemini (etap 2): analizuję — ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""} | typ z etapu 1: ${groqType}`, "info");
@@ -729,6 +897,11 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
           parsed.decyzja = "nie";
         }
 
+        // TWARDA REGUŁA: sama część albo rocznik sprzed MIN_YEAR (wykryte w pełnym opisie) = nigdy okazja,
+        // nawet jeśli model jednocześnie wpisał "tak" (sprzeczna odpowiedź → wygrywa odrzucenie).
+        if (!["czesc", "stary"].includes(parsed.odrzucenie)) parsed.odrzucenie = null;
+        if (parsed.odrzucenie) parsed.decyzja = "nie";
+
         // Kompatybilność wsteczna — pole oplaca_sie używane w Discord embed / wynikach
         parsed.oplaca_sie = parsed.decyzja === "tak";
 
@@ -742,6 +915,10 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
           parsed.krotki_opis = cena != null
             ? `Zakup ${cena}€ — za mało danych w ogłoszeniu żeby rzetelnie oszacować sprzedaż/zysk. Wymaga ręcznego sprawdzenia.`
             : `Brak ceny w ogłoszeniu — wymaga ręcznego sprawdzenia.`;
+        } else if (parsed.odrzucenie === "czesc") {
+          parsed.krotki_opis = `Z opisu wynika, że sprzedawana jest sama część, nie kompletny rower — odrzucone.`;
+        } else if (parsed.odrzucenie === "stary") {
+          parsed.krotki_opis = `Z opisu wynika rocznik sprzed ${MIN_YEAR} — odrzucone.`;
         } else if (typ === "inny") {
           parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
         } else {
@@ -1022,7 +1199,10 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
       addLog(`⚖️ ${sorted.length} kandydatów do Gemini, limit cyklu = ${maxGeminiPerCycle} — część zostanie pominięta (priorytet: pewne typy)`, "info");
     }
 
-    for (const { listing, groqType } of sorted) {
+    let lastDetailFetchAt = 0; // do odstępu między pobraniami stron ogłoszeń
+    let detailFetches = 0;     // ile stron ogłoszeń pobrano w tym cyklu
+
+    for (let { listing, groqType } of sorted) {
       if (!runningRef.current) return;
 
       if (geminiCallsRef.current >= maxGeminiPerCycle) {
@@ -1034,6 +1214,77 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
           timestamp: new Date().toLocaleTimeString("pl-PL"),
         }, ...prev].slice(0, 400));
         continue;
+      }
+
+      // ── Pełny opis ze strony ogłoszenia — TYLKO dla rowerów, które naprawdę idą do analizy ──
+      if (detailFetches < MAX_DETAIL_FETCHES_PER_CYCLE && Date.now() >= detailBlockedUntilRef.current) {
+        const wait = DETAIL_FETCH_DELAY_MS + Math.random() * 2000 - (Date.now() - lastDetailFetchAt);
+        if (wait > 0) await sleep(wait);
+        if (!runningRef.current) return;
+        lastDetailFetchAt = Date.now();
+        detailFetches++;
+        const det = await fetchListingDetails(listing);
+        if (det.ok) {
+          listing.fullDesc = det.desc;
+          addLog(`📄 Pełny opis (${det.fullLength} znaków${det.fullLength > DESC_MAX_CHARS ? `, przycięty do ${DESC_MAX_CHARS}` : ""}) — ${listing.title}`, "info");
+          if (det.price != null && det.price !== listing.price) {
+            addLog(`💶 Cena na stronie ogłoszenia (${det.price}€) różni się od listy (${listing.price ?? "?"}€) — używam ceny ze strony`, "info");
+            listing.price = det.price;
+          }
+        } else if (det.gone) {
+          addLog(`🗑 Ogłoszenie już usunięte — pomijam: ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: groqType, decyzja: "nie", oplaca_sie: false, krotki_opis: "Ogłoszenie usunięte przed analizą" },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue;
+        } else if (det.blocked) {
+          detailBlockedUntilRef.current = Date.now() + DETAIL_BLOCK_PAUSE_MS;
+          addLog(`⛔ Kleinanzeigen blokuje strony ogłoszeń (${det.reason}) — wstrzymuję pobieranie pełnych opisów na 30 min, AI dostaje krótkie fragmenty`, "error");
+        } else {
+          addLog(`⚠️ Brak pełnego opisu (${det.reason}) — AI dostaje krótki fragment: ${listing.title}`, "error");
+          if (det.doc && !descDiagLoggedRef.current) {
+            descDiagLoggedRef.current = true;
+            const ids = [...det.doc.querySelectorAll("[id]")].map(e => e.id).filter(id => /desc|beschreib/i.test(id)).slice(0, 10);
+            const cls = [...new Set([...det.doc.querySelectorAll("*")].flatMap(el => [...el.classList]).filter(c => /desc|beschreib/i.test(c)))].slice(0, 10);
+            addLog(`🔍 Diagnostyka opisu (skopiuj to do czatu): id=[${ids.join(", ") || "brak"}] · klasy=[${cls.join(", ") || "brak"}]`, "error");
+          }
+        }
+      }
+
+      // ── Ścisły filtr roku na PEŁNYM opisie — zero kosztu, przed Gemini ──
+      const markedYear = extractMarkedYear(listing.fullDesc);
+      if (markedYear != null && markedYear < MIN_YEAR) {
+        addLog(`🕰️ Pełny opis: rocznik ${markedYear} < ${MIN_YEAR} — odrzucono bez Gemini: ${listing.title}`, "info");
+        setResults(prev => [{
+          id: Date.now() + Math.random(), listing,
+          analysis: { typ_roweru: "stary", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone — w pełnym opisie rocznik ${markedYear}` },
+          status: "skip",
+          timestamp: new Date().toLocaleTimeString("pl-PL"),
+        }, ...prev].slice(0, 400));
+        continue;
+      }
+
+      // ── "Niepewne" z etapu 1: druga, tania próba Groqa — tym razem z pełnym opisem ──
+      // Rozstrzygnięte tu części / stare / "inne" w ogóle nie trafiają do (droższego) Gemini.
+      if (groqType === "niepewne" && listing.fullDesc && groqClassifierKey) {
+        const typ2 = await classifyWithGroq(listing);
+        if (["inny", "czesc", "stary"].includes(typ2)) {
+          addLog(`🚫 Groq (pełny opis): typ "${typ2}" — odrzucono bez Gemini: ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: typ2, decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone przez Groq po przeczytaniu pełnego opisu (${typ2})` },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue;
+        }
+        if (["full", "dirt", "elektryk_gorski"].includes(typ2)) {
+          groqType = typ2;
+          updateSeenType(listing.listingId, typ2);
+        }
       }
 
       geminiCallsRef.current += 1;
@@ -1060,8 +1311,9 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
         uncertainBatch.push({ listing, reason: analysis.krotki_opis || "za mało informacji" });
       } else {
         // ❌ Gemini mówi NIE → nie wysyłaj
-        const reason = analysis.typ_roweru === "inny"
-          ? `typ: inny — odrzucone automatycznie`
+        const reason = analysis.odrzucenie === "czesc" ? `z opisu: sama część, nie kompletny rower`
+          : analysis.odrzucenie === "stary" ? `z opisu: rocznik sprzed ${MIN_YEAR}`
+          : analysis.typ_roweru === "inny" ? `typ: inny — odrzucone automatycznie`
           : `zysk za mały`;
         addLog(`⏭ Gemini: NIE opłaca się (${reason}) — [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€`, "info");
       }
@@ -1101,6 +1353,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     firstCycleRef.current = true;
     setRunning(true);
     setStats({ scanned: 0, deals: 0, sent: 0 });
+    addLog(`🏷️ Wersja aplikacji: ${APP_VERSION}`, "info");
     addLog("🚀 Uruchamiam skanowanie — zbieram istniejące ogłoszenia (cykl #1), od cyklu #2 analizuję tylko nowe", "success");
 
     let n = 1;
@@ -1143,7 +1396,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
               DirtDeal<span style={{ color: "#f59e0b" }}>Finder</span>
             </div>
             <div style={{ fontSize: 10, color: "#334155", letterSpacing: 0.8, textTransform: "uppercase" }}>
-              Kleinanzeigen × Gemini AI × Discord
+              Kleinanzeigen × Gemini AI × Discord · v{APP_VERSION}
             </div>
           </div>
         </div>
@@ -1667,7 +1920,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
                 <input type="password" placeholder="gsk_..."
                   value={groqClassifierKey} onChange={e => setGroqClassifierKey(e.target.value)} />
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  console.groq.com/keys — model llama-3.1-8b-instant, 14 400 zapytań/dzień za darmo. Każde świeże ogłoszenie (po przejściu filtra słów) dostaje krótkie pytanie: full / dirt / elektryk górski / inny / niepewne. Tylko "inny" jest od razu odrzucane — nie idzie do Gemini. "Niepewne" (lub błąd Groqa) przechodzi dalej, ale z niższym priorytetem w Etapie 2. Puste pole = ten etap jest wyłączony, wszystko leci od razu do Gemini.
+                  console.groq.com/keys — model openai/gpt-oss-20b (przy "niepewne" druga próba na gpt-oss-120b). Darmowy plan Groqa ma limit ok. 1000 zapytań i 200 tys. tokenów dziennie na model — przy dużym ruchu warto podpiąć kartę (koszt rzędu groszy). Każde świeże ogłoszenie (po filtrze słów i roku) dostaje pytanie: full / dirt / elektryk górski / część / stary / inny / niepewne. "Inny", "część" i "stary" są od razu odrzucane — nie idą do Gemini. "Niepewne" (lub błąd Groqa) przechodzi dalej, ale z niższym priorytetem w Etapie 2. Puste pole = ten etap jest wyłączony, wszystko leci od razu do Gemini.
                 </div>
               </div>
 
