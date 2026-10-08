@@ -24,7 +24,19 @@ export default async function handler(req, res) {
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
     });
-    const html = await resp.text();
+    let html = await resp.text();
+    // Strony WYNIKÓW wyszukiwania (/s-..., ale nie /s-anzeige/) ważą ~650 tys. znaków, a aplikacji
+    // potrzebne są tylko karty ogłoszeń. Wycinamy fragment od pierwszego <article do ostatniego
+    // </article> — mniej transferu z Vercela i szybsze parsowanie. Strony ogłoszeń oraz strony
+    // bez kart (np. captcha — wtedy aplikacja musi zobaczyć całość) zwracamy bez zmian.
+    const isSearchPage = target.pathname.startsWith("/s-") && !target.pathname.startsWith("/s-anzeige/");
+    if (isSearchPage && resp.ok) {
+      const start = html.indexOf("<article");
+      const end = html.lastIndexOf("</article>");
+      if (start !== -1 && end > start) {
+        html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${html.slice(start, end + "</article>".length)}</body></html>`;
+      }
+    }
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     // Prawdziwy status z Kleinanzeigen (np. 403/429 przy blokadzie, 404/410 dla usuniętego
     // ogłoszenia) — wcześniej zawsze było 200, więc aplikacja nie mogła wykryć blokady.
