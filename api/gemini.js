@@ -37,6 +37,10 @@ export default async function handler(req, res) {
 
   try {
     if (provider === "groq") {
+      // GPT-OSS to modele z rozumowaniem — tokeny "myślenia" liczą się do max_tokens.
+      // reasoning_effort ("low"/"medium"/"high") wysyłamy TYLKO do GPT-OSS: inne modele Groqa
+      // akceptują inne wartości tego parametru (albo wcale) i zwróciłyby błąd.
+      const isGptOss = /^openai\/gpt-oss/i.test(model || "");
       const resp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -48,6 +52,9 @@ export default async function handler(req, res) {
           messages,
           temperature: generationConfig?.temperature ?? 0.7,
           max_tokens:  generationConfig?.maxOutputTokens ?? 2048,
+          ...(isGptOss && generationConfig?.reasoningEffort
+            ? { reasoning_effort: generationConfig.reasoningEffort }
+            : {}),
         }),
       });
       const data = await resp.json();

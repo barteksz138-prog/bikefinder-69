@@ -6,9 +6,19 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).end();
   const { webhookUrl, threadId, payload } = req.body;
   if (!webhookUrl || !payload) return res.status(400).json({ error: "Brak webhookUrl lub payload" });
+
+  // Tylko webhooki Discorda — wcześniej proxy wysyłało dowolne dane pod DOWOLNY adres,
+  // więc każdy, kto znał adres aplikacji, mógł go używać jako przekaźnika.
+  let target;
+  try { target = new URL(webhookUrl); } catch { return res.status(400).json({ error: "Niepoprawny webhookUrl" }); }
+  const discordHost = ["discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"].includes(target.hostname);
+  if (target.protocol !== "https:" || !discordHost || !/^\/api\/(v\d+\/)?webhooks\//.test(target.pathname)) {
+    return res.status(400).json({ error: "Dozwolone są tylko webhooki Discorda" });
+  }
+  if (threadId) target.searchParams.set("thread_id", String(threadId));
+
   try {
-    const url = webhookUrl + (threadId ? `?thread_id=${threadId}` : "");
-    const resp = await fetch(url, {
+    const resp = await fetch(target.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

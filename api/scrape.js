@@ -6,8 +6,18 @@ export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end();
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: "Brak url" });
+
+  // Tylko Kleinanzeigen — wcześniej proxy pobierało DOWOLNY adres, więc każdy, kto znał adres
+  // aplikacji, mógł przez nią ściągać cokolwiek z internetu. Status 400 (nie 403!), żeby aplikacja
+  // nie pomyliła odrzuconego linku z blokadą ze strony Kleinanzeigen.
+  let target;
+  try { target = new URL(url); } catch { return res.status(400).json({ error: "Niepoprawny url" }); }
+  if (target.protocol !== "https:" || !["www.kleinanzeigen.de", "kleinanzeigen.de"].includes(target.hostname)) {
+    return res.status(400).json({ error: "Dozwolone są tylko adresy kleinanzeigen.de" });
+  }
+
   try {
-    const resp = await fetch(url, {
+    const resp = await fetch(target.toString(), {
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "de-DE,de;q=0.9",
@@ -16,7 +26,9 @@ export default async function handler(req, res) {
     });
     const html = await resp.text();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(html);
+    // Prawdziwy status z Kleinanzeigen (np. 403/429 przy blokadzie, 404/410 dla usuniętego
+    // ogłoszenia) — wcześniej zawsze było 200, więc aplikacja nie mogła wykryć blokady.
+    return res.status(resp.status).send(html);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
