@@ -38,66 +38,22 @@ const { useState, useEffect, useRef, useCallback } = React;
 // Typy wpisów:
 //   isCategory: true  → categoryUrl to pełny URL Kleinanzeigen z filtrem kategorii
 //   (brak)            → query to fraza wyszukiwana w /s-fahrraeder/{query}/k0c217
-//
-// Lista modeli ZAMIAST całej kategorii "Mountain Bike" — celowo węższe wyszukiwanie po
-// konkretnych, znanych modelach (z cennika referencyjnego i wiedzy Groqa o pełnych zawieszeniach)
-// zamiast łapania WSZYSTKIEGO z zakresu cenowego. To bezpośrednio zmniejsza wolumen ogłoszeń
-// lecących przez Groq/Gemini (mniej = taniej i mniej przeciążeń), kosztem tego że model spoza
-// tej listy nie zostanie znaleziony. Możesz dowolnie włączać/wyłączać pojedyncze modele checkboxem
-// w Ustawieniach — bez zmian w kodzie. Dopisuj tu modele, które Gemini rozpoznaje z własnej wiedzy
-// rynkowej (patrz "powod_decyzji" w logach), żeby lista rosła wraz z tym co faktycznie się trafia.
 const BIKE_MODELS = [
-  { id: "canyon_torque",     label: "Canyon Torque",       query: "Canyon Torque" },
-  { id: "canyon_spectral",   label: "Canyon Spectral",     query: "Canyon Spectral" },
-  { id: "canyon_strive",     label: "Canyon Strive",       query: "Canyon Strive" },
-  { id: "canyon_neuron",     label: "Canyon Neuron",       query: "Canyon Neuron" },
-  { id: "canyon_stitched",   label: "Canyon Stitched",     query: "Canyon Stitched" },
-  { id: "trek_remedy",       label: "Trek Remedy",         query: "Trek Remedy" },
-  { id: "trek_slash",        label: "Trek Slash",          query: "Trek Slash" },
-  { id: "trek_fuel_ex",      label: "Trek Fuel EX",        query: "Trek Fuel EX" },
-  { id: "trek_session",      label: "Trek Session",        query: "Trek Session" },
-  { id: "trek_ticket",       label: "Trek Ticket",         query: "Trek Ticket" },
-  { id: "specialized_stumpjumper", label: "Specialized Stumpjumper", query: "Specialized Stumpjumper" },
-  { id: "specialized_enduro",      label: "Specialized Enduro",      query: "Specialized Enduro" },
-  { id: "specialized_camber",      label: "Specialized Camber",      query: "Specialized Camber" },
-  { id: "specialized_demo",        label: "Specialized Demo",        query: "Specialized Demo" },
-  { id: "specialized_p3",          label: "Specialized P.3",         query: "Specialized P.3" },
-  { id: "cube_stereo",       label: "Cube Stereo",         query: "Cube Stereo" },
-  { id: "cube_ams",          label: "Cube AMS",            query: "Cube AMS" },
-  { id: "santa_cruz",  label: "Santa Cruz (cała marka)",  query: "Santa Cruz" },
-  { id: "yt",          label: "YT (cała marka)",          query: "YT" },
-  { id: "commencal",   label: "Commencal (cała marka)",   query: "Commencal" },
-  { id: "radon_swoop",  label: "Radon Swoop",  query: "Radon Swoop" },
-  { id: "radon_slide",  label: "Radon Slide",  query: "Radon Slide" },
-  { id: "radon_slush",  label: "Radon Slush",  query: "Radon Slush" },
-  { id: "ghost_riot",   label: "Ghost Riot",   query: "Ghost Riot" },
-  { id: "focus_jam",    label: "Focus Jam",    query: "Focus Jam" },
-  { id: "focus_sam",    label: "Focus Sam",    query: "Focus Sam" },
-  { id: "focus_thron",  label: "Focus Thron",  query: "Focus Thron" },
-  { id: "gt_force",     label: "GT Force",     query: "GT Force" },
-  { id: "gt_fury",      label: "GT Fury",      query: "GT Fury" },
-  { id: "rose_bruce",   label: "Rose The Bruce", query: "Rose The Bruce" },
-  { id: "dartmoor",     label: "Dartmoor (cała marka)", query: "Dartmoor" },
-  // ── Nowe marki (całe, bez rozbicia na modele) ──
-  { id: "propain",        label: "Propain (cała marka)",        query: "Propain" },
-  { id: "norco",          label: "Norco (cała marka)",          query: "Norco" },
-  { id: "ns_bikes",       label: "NS Bikes (cała marka)",       query: "NS Bikes" },
-  { id: "nukeproof",      label: "Nukeproof (cała marka)",      query: "Nukeproof" },
-  { id: "rocky_mountain", label: "Rocky Mountain (cała marka)", query: "Rocky Mountain" },
-  { id: "marin",          label: "Marin (cała marka)",          query: "Marin" },
-  { id: "transition",     label: "Transition (cała marka)",     query: "Transition" },
-  { id: "evil",           label: "Evil (cała marka)",           query: "Evil" },
-  { id: "intense",        label: "Intense (cała marka)",        query: "Intense" },
-  { id: "raaw",           label: "Raaw (cała marka)",           query: "Raaw" },
-  { id: "beddo",          label: "Beddo (dirt)",                query: "Beddo" },
-  { id: "giant",          label: "Giant (cała marka)",          query: "Giant" },
+  {
+    id: "cat_mountainbike",
+    label: "🏔️ Mountain Bike",
+    isCategory: true,
+    categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:0:2000/c217+fahrraeder.type_s:mountainbike",
+  },
 ];
 
-// Etykiety typu roweru zwracanego przez Gemini
+// Etykiety typu roweru zwracanego przez Gemini/Groq
 const TYPE_LABELS = {
   full: { label: "🟢 Full",  color: "#22c55e" },
   dirt: { label: "🟠 Dirt",  color: "#f59e0b" },
   elektryk_gorski: { label: "⚡ Elektryk górski", color: "#38bdf8" },
+  czesc: { label: "🔧 Część", color: "#a855f7" },
+  stary: { label: "🕰️ Stary", color: "#78716c" },
   inny: { label: "⚫ Inny",  color: "#475569" },
 };
 
@@ -116,9 +72,9 @@ const PROVIDERS = {
   groq: {
     label: "Groq (darmowy, bez karty)",
     models: [
-      { id: "llama-3.3-70b-versatile",  label: "Llama 3.3 70B (zalecany)" },
+      { id: "openai/gpt-oss-120b",      label: "GPT-OSS 120B (zalecany — tani, z reasoningiem)" },
+      { id: "llama-3.3-70b-versatile",  label: "Llama 3.3 70B" },
       { id: "llama-3.1-8b-instant",     label: "Llama 3.1 8B (szybki)" },
-      { id: "mixtral-8x7b-32768",       label: "Mixtral 8x7B" },
     ],
     keyPlaceholder: "gsk_...",
     keyHint: "console.groq.com/keys",
@@ -151,10 +107,9 @@ function App() {
   });
   const [geminiKey,      setGeminiKey]      = useState(cfg.geminiKey || "");
   const [provider,       setProvider]       = useState(cfg.provider || "groq");
-  const [geminiModel,    setGeminiModel]    = useState(cfg.geminiModel || "llama-3.3-70b-versatile");
+  const [geminiModel,    setGeminiModel]    = useState(cfg.geminiModel || "openai/gpt-oss-120b");
   const [geminiChatName, setGeminiChatName] = useState(cfg.geminiChatName || "");
   const [minProfit,      setMinProfit]      = useState(cfg.minProfit || 20);
-  const [excludeElektryk, setExcludeElektryk] = useState(cfg.excludeElektryk !== false); // domyślnie WŁĄCZONE — odrzuca e-MTB od razu na Etapie 1, zero kosztu Gemini
   // Klucz Groq używany WYŁĄCZNIE do szybkiej, lekkiej klasyfikacji typu roweru (etap 1) — niezależnie od
   // tego jaki provider jest wybrany do właściwej analizy opłacalności (etap 2, zwykle Gemini).
   const [groqClassifierKey, setGroqClassifierKey] = useState(cfg.groqClassifierKey || "");
@@ -178,12 +133,14 @@ function App() {
   const [filterKeywords, setFilterKeywords] = useState(cfg.filterKeywords ?? DEFAULT_FILTER_KEYWORDS);
   const [selectedBikes,  setSelectedBikes]  = useState(() => {
     const saved = cfg.selectedBikes;
-    if (!saved || saved.length === 0) return BIKE_MODELS.map(b => b.id);
-    // Stara konfiguracja mogła mieć zaznaczoną kategorię "cat_mountainbike", której już nie ma
-    // (zastąpiona listą konkretnych modeli) — po odfiltrowaniu nieistniejących id, jeśli nic nie
-    // zostało, wybierz WSZYSTKIE nowe modele zamiast zostawić pustą, milczącą listę.
-    const filtered = saved.filter(id => BIKE_MODELS.some(b => b.id === id));
-    return filtered.length > 0 ? filtered : BIKE_MODELS.map(b => b.id);
+    if (!saved) return BIKE_MODELS.map(b => b.id);
+    // Migracja: stary id mtb_full_category -> nowy cat_mountainbike
+    const migrated = saved.map(id => id === 'mtb_full_category' ? 'cat_mountainbike' : id);
+    // Dodaj nowe kategorie jeśli ich nie ma
+    ['cat_mountainbike','cat_dirt_bmx','cat_downhill'].forEach(id => {
+      if (!migrated.includes(id)) migrated.push(id);
+    });
+    return migrated.filter(id => BIKE_MODELS.some(b => b.id === id));
   });
 
   const [logs,     setLogs]     = useState([]);
@@ -224,43 +181,57 @@ function App() {
   const runningRef   = useRef(false);
   const firstCycleRef = useRef(true); // cykl #1 = tylko zbieramy ID, nie analizujemy
   const geminiCallsRef = useRef(0); // licznik analiz Gemini w BIEŻĄCYM cyklu — reset na starcie każdego cyklu
-  const groqKeyIndexRef = useRef(0); // wskaźnik round-robin do rotacji kluczy Groq między wywołaniami
-  const groqKeyCooldownsRef = useRef({}); // { [apiKey]: timestampMs } — cooldown PER KLUCZ po dziennym limicie (TPD)
-
-  // ── Gemini explicit context caching ─────────────────────────────────────────────────────
-  // Duży statyczny blok promptu (cennik/reguły osprzętu, patrz analyzeWithGemini) jest identyczny
-  // w wielu wywołaniach pod rząd — zamiast wysyłać go za każdym razem, cache'ujemy go RAZ po stronie
-  // Google i tylko odwołujemy się do niego nazwą (odczyt z cache ~10% ceny bazowej input).
-  // Klucz w mapie = `${model}|${wariant}|${hash statycznego tekstu}` — osobny cache dla:
-  //  - każdego modelu Gemini (cache jest przypisany do konkretnego modelu, nie da się dzielić),
-  //  - wariantu typeSection (typ już zaufany z Groqa vs. Gemini musi sam rozpoznać typ),
-  //  - treści cennika/bazy wiedzy (gdy zmienisz cennik w Ustawieniach, hash się zmieni i zrobimy nowy cache).
-  // cacheMapRef: { [key]: { name, expiresAt } }
-  // cacheFailCooldownRef: { [key]: timestampMs } — jeśli tworzenie cache zawiedzie (np. prompt za
-  // krótki wg progu Google — dokumentacja jest w tej kwestii niespójna, 2048 vs 32768 tokenów),
-  // NIE próbujemy ponownie przy każdym kolejnym ogłoszeniu — czekamy chwilę i po prostu wysyłamy
-  // pełny prompt bez cache (dokładnie tak jak działało to wcześniej, zero regresji).
-  const cacheMapRef = useRef({});
-  const cacheFailCooldownRef = useRef({});
   const logsEndRef  = useRef(null);
 
-  // Zapamiętaj widziane ID między restartami
-  const loadSeenIds = () => {
-    try { return new Set(JSON.parse(localStorage.getItem("ddf_seen") || "[]")); } catch { return new Set(); }
-  };
-  const seenIdsRef = useRef(loadSeenIds());
-  const saveSeenId = (id) => {
-    seenIdsRef.current.add(id);
+  // Zapamiętaj widziane ogłoszenia między restartami — ID + historia ceny (do wykrywania spadków).
+  // Format w localStorage: tablica obiektów {id, price, lowest, notifiedAt, type}.
+  // MIGRACJA: stary format to goła tablica ID-stringów — każdy taki wpis dostaje
+  // {price:null, lowest:null, ...} (brak punktu odniesienia), żeby pierwszy skan po
+  // aktualizacji NIE strzelił fałszywym "spadkiem ceny" dla wszystkiego naraz.
+  const loadSeenMap = () => {
+    const map = new Map();
     try {
-      const arr = [...seenIdsRef.current].slice(-2000); // max 2000 ID
+      const raw = JSON.parse(localStorage.getItem("ddf_seen") || "[]");
+      for (const item of raw) {
+        if (typeof item === "string") {
+          map.set(item, { price: null, lowest: null, notifiedAt: null, type: null });
+        } else if (item && item.id) {
+          map.set(item.id, {
+            price: item.price ?? null, lowest: item.lowest ?? null,
+            notifiedAt: item.notifiedAt ?? null, type: item.type ?? null,
+          });
+        }
+      }
+    } catch {}
+    return map;
+  };
+  const seenIdsRef = useRef(loadSeenMap());
+
+  const persistSeenMap = () => {
+    try {
+      const arr = [...seenIdsRef.current.entries()].slice(-2000).map(([id, d]) => ({ id, ...d }));
       localStorage.setItem("ddf_seen", JSON.stringify(arr));
     } catch {}
+  };
+
+  // Nowo odkryte ogłoszenie — zapamiętaj z ceną z chwili pierwszego zobaczenia jako punkt odniesienia.
+  const saveSeenEntry = (listing) => {
+    seenIdsRef.current.set(listing.listingId, {
+      price: listing.price ?? null, lowest: listing.price ?? null, notifiedAt: null, type: null,
+    });
+    persistSeenMap();
+  };
+
+  // Po udanej klasyfikacji Etapu 1 — zapamiętaj typ, żeby przy kolejnym spadku ceny pominąć Groq.
+  const updateSeenType = (id, typ) => {
+    const e = seenIdsRef.current.get(id);
+    if (e) { e.type = typ; persistSeenMap(); }
   };
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
   const saveSettings = () => {
-    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, provider, minProfit, excludeElektryk };
+    const data = { geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, provider, minProfit };
     localStorage.setItem("ddf_cfg", JSON.stringify(data));
     addLog("💾 Ustawienia zapisane", "success");
   };
@@ -286,10 +257,7 @@ function App() {
   };
 
   // Wywołanie AI — obsługuje Gemini i Groq przez backend proxy /api/gemini
-  // overrides: opcjonalne nadpisania generationConfig (używane przy eskalacji do "myślenia" — patrz analyzeWithGemini)
-  // cachedContent (opcjonalnie) — nazwa explicit cache (patrz analyzeWithGemini/getCachedContentName).
-  // Gdy podana, "prompt" powinien zawierać TYLKO dynamiczną część (bez powtarzania cache'owanej treści).
-  const callGemini = async (prompt, overrides = {}, cachedContent = null) => {
+  const callGemini = async (prompt) => {
     const data = await callProxy({
       provider,
       model: geminiModel,
@@ -297,10 +265,9 @@ function App() {
       messages: provider === "groq"
         ? [{ role: "user", content: prompt }]
         : [{ role: "user", parts: [{ text: prompt }] }],
-      ...(cachedContent ? { cachedContent } : {}),
       generationConfig: provider === "groq"
-        ? { temperature: 0.3, maxOutputTokens: 600, ...overrides }
-        : { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json", ...overrides },
+        ? { temperature: 0.3, maxOutputTokens: 2048 }
+        : { temperature: 0.3, maxOutputTokens: 2048, responseMimeType: "application/json" },
     });
     if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
     if (provider === "groq") {
@@ -395,72 +362,48 @@ function App() {
     return null;
   };
 
-  // ── Filtr roku — odrzuca stare rowery (< MIN_BIKE_YEAR) ZANIM trafią choćby do Groqa ─────────
-  // Działa w 2 krokach (patrz użycie w pętli fazy 1):
-  //  1) checkListingYearBlock(listing) — lokalny regex na TYTULE, zero kosztu, zero API.
-  //     Jeśli w tytule jest jawny rok < MIN_BIKE_YEAR albo słowo "retro"/"vintage"/itp. → odrzuć od razu,
-  //     ogłoszenie nawet nie dotrze do Groqa.
-  //  2) Jeśli tytuł NIE ma roku ani słowa retro — puszczamy dalej do Groqa, który w Etapie 1 SAM
-  //     dodatkowo spróbuje oszacować rok na podstawie modelu/wersji (patrz prompt w classifyWithGroq).
-  //     Jeśli Groq oszacuje rok < MIN_BIKE_YEAR → odpowiada "stary" i też nie idzie do Gemini.
-  //     Jeśli Groq nie da rady oszacować → normalna klasyfikacja typu, idzie dalej do Gemini,
-  //     gdzie rok produkcji jest ostatnią linią obrony (patrz prompt Etapu 2 w analyzeWithGemini).
-  const MIN_BIKE_YEAR = 2017;
+  // ── Filtr roku — zero kosztu, ZANIM cokolwiek trafi do Groqa/Gemini ────────
+  // Łapie TYLKO jawny rok/retro w tekście. Brak jawnego roku → przepuszczamy dalej,
+  // Groq (etap 1) spróbuje oszacować rok z modelu/osprzętu; jeśli i on nie da rady,
+  // trafia do Gemini jako zwykły kandydat.
+  const MIN_YEAR = 2017;
+  const PRICE_DROP_THRESHOLD = 0.20; // 20% spadku ceny na znanym ogłoszeniu żeby uznać to za istotną zmianę
 
-  const RETRO_KEYWORDS = [
-    "retro", "vintage", "oldschool", "old school", "klassiker", "youngtimer",
-    "70er", "80er", "90er", "oldtimer", "classic bike", "classic mtb"
-  ];
+  const extractExplicitYear = (listing) => {
+    const text = `${listing.title} ${listing.desc}`;
 
-  // Wyciąga rok z tytułu — najpierw próbuje jawnych wzorców roku produkcji (Bj., Baujahr, MY, Modelljahr),
-  // dopiero potem "gołego" 4-cyfrowego tokenu w zakresie 1970-2035 (odfiltrowując ceny typu "1800€").
-  const extractYearFromTitle = (title) => {
-    if (!title) return null;
-    const t = title;
-
-    const explicitPatterns = [
-      /\bB(?:au)?j(?:ahr)?\.?\s*(\d{4})\b/i,   // Bj. 2016 / Baujahr 2016
-      /\bMY\s*'?(\d{2,4})\b/i,                  // MY19 / MY 2019
-      /\bModelljahr\s*(\d{4})\b/i,
-    ];
-    for (const re of explicitPatterns) {
-      const m = t.match(re);
-      if (m) {
-        let y = parseInt(m[1], 10);
-        if (y < 100) y += y < 50 ? 2000 : 1900; // MY19 -> 2019, MY99 -> 1999
-        if (y >= 1970 && y <= 2035) return y;
-      }
+    if (/\b(retro|vintage|oldschool|old school|klassiker|klassik|90er|80er|90s|80s)\b/i.test(text)) {
+      return "retro/vintage";
     }
 
-    // Gołe 4 cyfry, ale NIE gdy bezpośrednio sąsiadują z € / ceną (żeby nie złapać "1800€" jako roku)
-    const bareMatches = [...t.matchAll(/\b(19[7-9]\d|20[0-3]\d)\b/g)];
-    for (const m of bareMatches) {
-      const idx = m.index ?? 0;
-      const after = t.slice(idx + m[0].length, idx + m[0].length + 3);
-      const before = t.slice(Math.max(0, idx - 3), idx);
-      if (/^\s*[€$]/.test(after) || /[€$]\s*$/.test(before)) continue; // to raczej cena, nie rok
-      return parseInt(m[1], 10);
+    let m = text.match(/\bB(?:au)?j(?:ahr)?\.?:?\s*(\d{4})\b/i);
+    if (m) return parseInt(m[1], 10);
+
+    m = text.match(/\bMY\.?\s*'?(\d{2,4})\b/i) || text.match(/\bModell?jahr\.?:?\s*(\d{4})\b/i);
+    if (m) {
+      let y = parseInt(m[1], 10);
+      if (y < 100) y += 2000;
+      return y;
     }
+
+    const yearMatches = [...text.matchAll(/\b(19[89]\d|20[0-2]\d)\b/g)].map(x => parseInt(x[1], 10));
+    if (yearMatches.length > 0) return Math.min(...yearMatches); // ostrożnie: bierz najstarszy
+
     return null;
   };
 
-  const checkListingYearBlock = (listing) => {
-    const title = listing.title || "";
-    const titleLower = title.toLowerCase();
-
-    const retroHit = RETRO_KEYWORDS.find(kw => titleLower.includes(kw));
-    if (retroHit) return { blocked: true, reason: `słowo "${retroHit}" w tytule` };
-
-    const year = extractYearFromTitle(title);
-    if (year != null && year < MIN_BIKE_YEAR) {
-      return { blocked: true, reason: `rok ${year} < ${MIN_BIKE_YEAR}` };
-    }
-    return { blocked: false };
+  const matchesYearFilter = (listing) => {
+    const year = extractExplicitYear(listing);
+    if (year === null) return null;
+    if (year === "retro/vintage") return "retro/vintage";
+    if (typeof year === "number" && year < MIN_YEAR) return `rok ${year} < ${MIN_YEAR}`;
+    return null;
   };
 
   // Biała lista — zwraca true jeśli ogłoszenie zawiera CHOĆ JEDNO wymagane słowo (sygnał full/dirt).
   // Jeśli lista jest pusta, filtr jest wyłączony (przepuszcza wszystko, jak dotychczas).
-  const GROQ_CLASSIFIER_MODEL = "llama-3.3-70b-versatile"; // mocniejszy model — lepiej radzi sobie z niuansami (część vs cały rower, szacowanie roku); wciąż szybki i darmowy na Groq
+  const GROQ_CLASSIFIER_MODEL = "llama-3.1-8b-instant"; // lekki, szybki, hojny darmowy limit (14 400 zapytań/dzień)
+  const GROQ_ESCALATION_MODEL = "openai/gpt-oss-120b"; // mocniejszy, tani, z reasoningiem — tylko dla "niepewne" z etapu 1a
 
   // ── Etap 1: szybka, "głupia" klasyfikacja typu roweru przez Groq ──────────
   // Cel: odrzucić ewidentnie nietrafione typy (szosówki, miejskie, dziecięce, części...) BEZ
@@ -468,42 +411,18 @@ function App() {
   // tokenów na zapytanie, więc nie zapycha limitu TPM Groqa tak jak zrobiłby to pełny prompt z cennikiem.
   // Gdy Groq nie jest pewien typu (lub wystąpi błąd/limit) — NIE odrzucamy, tylko oznaczamy jako
   // "niepewne" i przepuszczamy dalej z niższym priorytetem (patrz Faza 2 w runOneCycle).
-  // Parsuje pole klucza Groq — akceptuje jeden klucz LUB kilka (każdy w nowej linii lub po przecinku).
-  // Kilka kluczy = kilka NIEZALEŻNYCH dziennych budżetów 500k tokenów (Groq liczy limit per klucz/konto).
-  const getGroqKeyList = () =>
-    [...new Set(groqClassifierKey.split(/[\n,]/).map(s => s.trim()).filter(Boolean))];
-
   const classifyWithGroq = async (listing) => {
-    const keys = getGroqKeyList();
-    if (keys.length === 0) return "niepewne"; // brak klucza = filtr wyłączony, przepuść wszystko
+    if (!groqClassifierKey) return "niepewne"; // brak klucza = filtr wyłączony, przepuść wszystko
 
-    // ── Wiele kluczy Groq + cooldown PER KLUCZ po dziennym limicie tokenów (TPD) ──────────────
-    // Każdy darmowy klucz Groq ma WŁASNY dzienny budżet 500k tokenów — więc kilka kluczy (np.
-    // z różnych kont) mnoży dostępny budżet. Klucze są używane rotacyjnie (round-robin) między
-    // wywołaniami, więc obciążenie rozkłada się równo i żaden klucz nie wyczerpuje się sam pierwszy.
-    // Gdy dany klucz dostanie błąd "tokens per day" — dostaje WŁASNY cooldown (nie blokuje innych
-    // kluczy) i w TYM SAMYM wywołaniu od razu próbujemy KOLEJNEGO klucza z listy, zamiast czekać.
-    // Dopiero gdy WSZYSTKIE klucze są w cooldownie, przepuszczamy jako "niepewne" bez wywołania API.
-    const now = Date.now();
-    const startIdx = groqKeyIndexRef.current % keys.length;
-    groqKeyIndexRef.current = (groqKeyIndexRef.current + 1) % keys.length; // rotacja na następne wywołanie
-    const ordered = keys.map((_, i) => keys[(startIdx + i) % keys.length]);
-    const usableKeys = ordered.filter(k => (groqKeyCooldownsRef.current[k] || 0) <= now);
-
-    if (usableKeys.length === 0) {
-      const soonest = Math.min(...keys.map(k => groqKeyCooldownsRef.current[k] || 0));
-      const remainingSec = Math.max(0, Math.ceil((soonest - now) / 1000));
-      addLog(`⏸️ Groq: wszystkie klucze (${keys.length}) w cooldownie (TPD) — pomijam wywołanie, najbliższy wznowi za ~${remainingSec}s — ${listing.title}`, "info");
-      return "niepewne";
-    }
-
-    const prompt = `Klasyfikator ogłoszeń rowerowych. Na podstawie tytułu i opisu określ TYLKO typ roweru.
+    const buildClassifierPrompt = () => `Klasyfikator ogłoszeń rowerowych. Na podstawie tytułu i opisu określ TYLKO typ roweru.
 
 Typy:
 - full — PEŁNE zawieszenie (amortyzator z tyłu + widelec z przodu): enduro/trail/all-mountain/downhill.
 - dirt — dirt jump/slopestyle/pumptrack, sztywny hardtail do skoków.
 - elektryk_gorski — elektryczny rower górski/e-MTB (napęd + charakter trail/enduro). NIE miejski e-bike.
-- inny — reszta: szosówka, gravel, trekking, miejski, dziecięcy, hardtail XC bez cech dirtowych, części, miejski e-bike.
+- czesc — to NIE JEST cały rower, tylko POJEDYNCZA CZĘŚĆ/KOMPONENT wystawiona na sprzedaż osobno (sama rama, sam widelec, sam amortyzator, same koła, napęd itp — ogłoszenie SPRZEDAJE TĘ CZĘŚĆ, a nie kompletny rower z tą częścią zamontowaną). UWAGA: jeśli ogłoszenie sprzedaje CAŁY, KOMPLETNY rower i tylko WYMIENIA jego wyposażenie w opisie (np. "Canyon Spectral z widelcem Fox 36 i amortyzatorem DPX2") — to NIE jest "czesc", to normalny rower ze szczegółowym opisem osprzętu. "czesc" dotyczy WYŁĄCZNIE sytuacji gdy tytuł/opis jednoznacznie mówi że przedmiotem sprzedaży jest sama część, nie cały rower.
+- stary — rower JEST full/dirt/elektryk_gorski, ale na podstawie modelu, generacji osprzętu lub wprost podanego roku szacujesz rok produkcji na PRZED 2017. Nie myl z "inny" — "stary" to rower który TYPEM by się kwalifikował, ale jest zbyt stary.
+- inny — reszta: szosówka, gravel, trekking, miejski, dziecięcy, hardtail XC bez cech dirtowych, miejski e-bike.
 
 ZASADA: samo słowo "Mountainbike"/"MTB" w tytule BEZ dowodu na pełne zawieszenie = zwykle TANI HARDTAIL, czyli "inny", NIE "full"! Klasyfikuj jako "full" TYLKO gdy jest konkretny dowód: "vollgefedert"/"Fully"/"full suspension", wzmianka o amortyzatorze/zawieszeniu z tyłu ("Dämpfer", "Federung hinten", "Hinterbau"), lub znany model full: Canyon Torque/Spectral/Strive/Neuron/Nerve, Trek Fuel/Slash/Remedy, Specialized Stumpjumper/Enduro/Camber, Cube Stereo/AMS, Santa Cruz, YT, Commencal, Radon Swoop/Slide, Ghost Riot/SL AMR, Focus Jam/Sam/Thron.
 
@@ -511,115 +430,98 @@ ZNANE HARDTAILE (= "inny", nie "full"): Trek Marlin/Roscoe/X-Caliber, Cube Aim/A
 
 E-BIKE: sygnały napędu ("E-Bike","Akku","Motor",Bosch/Shimano Steps/Brose/Yamaha, przebieg w km, "E1.5"/"E-8"). Z charakterem górskim (zawieszenie/MTB/teren) → elektryk_gorski. Z charakterem miejskim/touring (koszyk, błotniki, "City"/"Trekking") → inny.
 
-CZĘŚCI vs CAŁY ROWER — WAŻNE: samo wymienienie konkretnych komponentów w opisie CAŁEGO roweru na sprzedaż (np. "z widelcem RockShox Pike, kołami Mavic, hamulcami Code") to NORMALNY opis wyposażenia — dalej klasyfikuj normalnie po typie zawieszenia. Odpowiedz "inny" TYLKO gdy z tytułu/opisu WPROST wynika, że przedmiotem ogłoszenia jest SAMA CZĘŚĆ, nie cały rower — np. "verkaufe nur Rahmen", "biete Gabel/Dämpfer/Laufradsatz an", "Ersatzteil", "Teile vom [model]", "nur Rahmenset", "Einzelteile", tytuł zaczynający się od nazwy komponentu bez wzmianki że to kompletny rower. W razie wątpliwości (nie jest jasne czy to część czy cały rower) → niepewne, NIE inny.
+ROK PRODUKCJI: jeśli tytuł/opis PODAJE rok wprost — użyj go. Jeśli NIE podaje roku wprost, OSZACUJ rok na podstawie modelu i generacji osprzętu — tylko jeśli masz z czego wnioskować. Jeśli oszacowany lub podany rok to przed 2017 → typ: "stary". Jeśli NIE masz żadnej podstawy żeby ocenić rok (brak roku, nieznany/nierozpoznawalny model) — NIE zgaduj, po prostu klasyfikuj normalnie po typie.
 
-ROK PRODUKCJI: Jeśli w tytule/opisie NIE MA podanego roku, ale rozpoznajesz model na tyle dokładnie (nazwa, wersja, charakterystyczne komponenty/kolorystyka danego rocznika), że potrafisz oszacować rok produkcji — i szacowany rok jest WCZEŚNIEJSZY niż 2017 — odpowiedz dokładnie jednym słowem: stary (zamiast normalnej klasyfikacji typu). Jeśli nie potrafisz wiarygodnie oszacować roku, zignoruj tę zasadę i klasyfikuj normalnie.
-
-Brak wystarczających informacji → odpowiedz: niepewne
+Brak wystarczających informacji żeby ocenić typ → odpowiedz: niepewne
 
 Tytuł: ${listing.title}
 Opis: ${listing.desc}
 
-FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 słów) — co przeważyło o klasyfikacji. Następnie w OSTATNIEJ, OSOBNEJ linii podaj WYŁĄCZNIE jedno słowo z: full/dirt/elektryk_gorski/inny/niepewne/stary — nic więcej w tej linii, żadnej kropki ani komentarza.`;
+Odpowiedz WYŁĄCZNIE jednym słowem (full/dirt/elektryk_gorski/czesc/stary/inny/niepewne), bez innego tekstu.`;
 
-    addLog(`🔎 Groq: klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}${keys.length > 1 ? ` [klucz ${ordered.indexOf(usableKeys[0]) + 1}/${keys.length}]` : ""}`, "info");
+    const KNOWN_TYPES = ["full", "dirt", "elektryk_gorski", "czesc", "stary", "inny", "niepewne"];
+    const TYPE_ICON = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", czesc: "🔧", stary: "🕰️", inny: "⚫", niepewne: "❓" };
 
-    // Pętla PO KLUCZACH — gdy aktualny klucz trafi TPD, próbujemy od razu następnego dostępnego,
-    // zamiast czekać. Wewnątrz każdego klucza działa krótki retry z backoffem na zwykły RPM 429.
-    for (const apiKey of usableKeys) {
+    // Pojedynczy strzał klasyfikacji na wskazanym modelu, z retry/backoffem na 429.
+    // Używane zarówno dla taniego pierwszego przebiegu (8B) jak i droższej eskalacji
+    // (GPT-OSS-120B) dla przypadków które 8B zostawił jako "niepewne".
+    const runClassification = async (model, maxTokens) => {
+      const prompt = buildClassifierPrompt();
+      addLog(`🔎 Groq (${model}): klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}`, "info");
+
       for (let attempt = 1; attempt <= 3; attempt++) {
         const startedAt = Date.now();
         try {
           const data = await callProxy({
             provider: "groq",
-            model: GROQ_CLASSIFIER_MODEL,
-            apiKey,
+            model,
+            apiKey: groqClassifierKey,
             messages: [{ role: "user", content: prompt }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 100 },
+            generationConfig: { temperature: 0.1, maxOutputTokens: maxTokens },
           });
           const ms = Date.now() - startedAt;
 
           if (data?.error) {
             const msg = data.error?.message || "błąd";
-            const isDailyLimit = /tokens per day|TPD/i.test(msg);
             const isRateLimit = /rate limit|429|too many requests/i.test(msg);
-
-            if (isDailyLimit) {
-              // Dzienny budżet TEGO klucza wyczerpany — cooldown TYLKO dla niego, inne klucze
-              // (jeśli są) próbujemy dalej w tym samym wywołaniu, bez czekania.
-              const m = msg.match(/try again in ([\d.]+)(ms|s|m)/i);
-              let waitMs = 120000; // domyślnie 2 min, jeśli nie uda się sparsować
-              if (m) {
-                const val = parseFloat(m[1]);
-                waitMs = m[2].toLowerCase() === "ms" ? val : m[2].toLowerCase() === "m" ? val * 60000 : val * 1000;
-              }
-              groqKeyCooldownsRef.current[apiKey] = Date.now() + waitMs + 5000; // +5s zapasu
-              const keyLabel = keys.length > 1 ? ` (klucz #${keys.indexOf(apiKey) + 1}/${keys.length})` : "";
-              addLog(`⏸️ Groq${keyLabel}: dzienny limit tokenów (TPD) wyczerpany — cooldown ~${Math.ceil((waitMs + 5000) / 1000)}s dla tego klucza${keys.length > 1 ? ", próbuję kolejnego klucza" : ", wszystko dalej idzie jako \"niepewne\""} — ${msg}`, "error");
-              break; // przerwij retry na TYM kluczu, przejdź do kolejnego klucza w pętli zewnętrznej
-            }
-
             if (isRateLimit && attempt < 3) {
               const m = msg.match(/try again in ([\d.]+)(ms|s)/i);
               const waitMs = m ? (m[2].toLowerCase() === "ms" ? parseFloat(m[1]) : parseFloat(m[1]) * 1000) : 3000;
-              addLog(`⏳ Groq: limit RPM osiągnięty — czekam ${Math.ceil((waitMs + 300) / 1000)}s, próba ${attempt + 1}/3 — ${listing.title}`, "error");
+              addLog(`⏳ Groq (${model}): limit RPM osiągnięty — czekam ${Math.ceil((waitMs + 300) / 1000)}s, próba ${attempt + 1}/3 — ${listing.title}`, "error");
               await sleep(waitMs + 300);
-              continue; // ponów na tym samym kluczu
+              continue; // ponów
             }
-            addLog(`⚠️ Groq klasyfikator: ${msg} (${ms}ms) — przepuszczam dalej jako niepewne`, "error");
+            addLog(`⚠️ Groq (${model}): ${msg} (${ms}ms) — przepuszczam dalej jako niepewne`, "error");
             return "niepewne";
           }
 
           const raw = (data?.choices?.[0]?.message?.content || "").toLowerCase().trim();
-          // Bierzemy TYLKO ostatnią niepustą linię — reszta to opcjonalne krótkie uzasadnienie
-          // (patrz prompt: "najpierw uzasadnienie, w OSTATNIEJ linii wyłącznie słowo klasyfikacji").
-          // Gdyby patrzeć na cały tekst, wzmianka o innym typie w uzasadnieniu (np. "to nie dirt,
-          // tylko full") mogłaby zostać błędnie złapana jako pierwsze pasujące słowo.
-          const rawLines = raw.split("\n").map(l => l.trim()).filter(Boolean);
-          const lastLine = rawLines.length ? rawLines[rawLines.length - 1] : raw;
           let typ;
-          if (lastLine.includes("stary")) typ = "stary";
-          else if (lastLine.includes("elektryk")) typ = "elektryk_gorski";
-          else if (lastLine.includes("dirt")) typ = "dirt";
-          else if (lastLine.includes("full")) typ = "full";
-          else if (lastLine.includes("inny")) typ = "inny";
+          if (raw.includes("elektryk")) typ = "elektryk_gorski";
+          else if (raw.includes("dirt")) typ = "dirt";
+          else if (raw.includes("czesc") || raw.includes("część")) typ = "czesc";
+          else if (raw.includes("stary")) typ = "stary";
+          else if (raw.includes("full")) typ = "full";
+          else if (raw.includes("inny")) typ = "inny";
           else typ = "niepewne";
 
-          const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", inny: "⚫", niepewne: "❓", stary: "🕰️" }[typ];
-          const rawNote = !["full", "dirt", "elektryk_gorski", "inny", "niepewne", "stary"].includes(lastLine) && lastLine && typ === "niepewne"
-            ? ` (Groq odpowiedział niejednoznacznie: "${lastLine.slice(0, 40)}")`
+          const rawNote = !KNOWN_TYPES.includes(raw) && raw && typ === "niepewne"
+            ? ` (Groq odpowiedział niejednoznacznie: "${raw.slice(0, 40)}")`
             : "";
-          // Krótkie uzasadnienie (jeśli Groq je dodał, patrz format promptu) — pomaga debugować klasyfikacje
-          const reasonLine = rawLines.length > 1 ? rawLines.slice(0, -1).join(" ").slice(0, 80) : "";
-          const reasonNote = reasonLine ? ` — powód: "${reasonLine}"` : "";
-          addLog(`${icon} Groq (${ms}ms): typ="${typ}"${rawNote}${reasonNote} — ${listing.title}`, "info");
+          addLog(`${TYPE_ICON[typ]} Groq ${model} (${ms}ms): typ="${typ}"${rawNote} — ${listing.title}`, "info");
           return typ;
         } catch (e) {
           const ms = Date.now() - startedAt;
           if (attempt < 3) {
-            addLog(`⏳ Groq: błąd sieci (${e.message}, ${ms}ms) — ponawiam za 2s, próba ${attempt + 1}/3 — ${listing.title}`, "error");
+            addLog(`⏳ Groq (${model}): błąd sieci (${e.message}, ${ms}ms) — ponawiam za 2s, próba ${attempt + 1}/3 — ${listing.title}`, "error");
             await sleep(2000);
             continue;
           }
-          addLog(`⚠️ Groq klasyfikator: ${e.message} (${ms}ms) — przepuszczam dalej jako niepewne`, "error");
+          addLog(`⚠️ Groq (${model}): ${e.message} (${ms}ms) — przepuszczam dalej jako niepewne`, "error");
           return "niepewne"; // błąd/limit Groqa po 3 próbach → nie odrzucaj, przepuść dalej
         }
-      } // koniec pętli prób (RPM retry) dla jednego klucza
-    } // koniec pętli po kluczach — tu trafiamy tylko gdy WSZYSTKIE dostępne klucze skończyły się na TPD
-    addLog(`⚠️ Groq: wszystkie dostępne klucze (${usableKeys.length}/${keys.length}) trafiły dzienny limit w tym wywołaniu — przepuszczam jako niepewne — ${listing.title}`, "error");
-    return "niepewne";
+      }
+      return "niepewne"; // nie powinno tu dotrzeć, ale na wszelki wypadek
+    };
+
+    // Etap 1a: tani, szybki 8B.
+    let typ = await runClassification(GROQ_CLASSIFIER_MODEL, 20);
+
+    // Etap 1b: jeśli 8B się nie zdecydował, eskaluj do mocniejszego (ale wciąż bardzo taniego)
+    // modelu z reasoningiem — zanim poddamy się i wyślemy do drogiego Etapu 2 (Gemini).
+    if (typ === "niepewne") {
+      typ = await runClassification(GROQ_ESCALATION_MODEL, 500);
+    }
+
+    return typ;
   };
 
   const scrapeKleinanzeigen = async (bike) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
-    // Modele/marki konkretne używają wyszukiwania po frazie + DOPIĘTEGO filtra
-    // "fahrraeder.type_s:mountainbike" — to ogranicza wyniki TYLKO do ogłoszeń otagowanych
-    // przez sprzedającego jako rower górski, więc np. "Giant"/"Marin"/"Norco" (marki które
-    // robią też szosówki/miejskie) nie zaśmiecają wyników niezwiązanymi typami rowerów.
-    // Format zweryfikowany na realnych URL-ach Kleinanzeigen: /s-fahrraeder/{fraza}/k0c217+fahrraeder.type_s:mountainbike
+    // Modele konkretne używają wyszukiwania po frazie
     const url = bike.isCategory
       ? bike.categoryUrl
-      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:mountainbike`;
+      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217`;
     const resp = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`);
     if (!resp.ok) throw new Error(`Scrape HTTP ${resp.status}`);
     return resp.text();
@@ -687,35 +589,49 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
   // groqType: "full" | "dirt" | "elektryk_gorski" | "niepewne" — wynik klasyfikacji z Etapu 1 (Groq).
   // Gdy Groq był PEWNY typu, Gemini mu ufa i NIE klasyfikuje od nowa (oszczędność promptu/tokenów,
   // zero duplikacji pracy). Tylko dla "niepewne" Gemini sam rozpoznaje typ jako siatka bezpieczeństwa.
+  // ── Filtrowanie bazy wiedzy po słowach kluczowych — mniej tokenów, mniej szumu dla modelu ──
+  // Dopasowuje wpisy, których jakieś znaczące słowo (marka/model) pojawia się w ogłoszeniu.
+  // Zero trafień (literówka, nietypowa nazwa) → BEZPIECZNY FALLBACK: wraca pełna, nieprzefiltrowana
+  // lista, żeby nigdy po cichu nie stracić wiedzy tylko dlatego że dopasowanie zawiodło.
+  const KNOWLEDGE_STOPWORDS = new Set(["oraz","żeby","które","model","modelu","rower","rowery","cena","ceny","cenie","sprzedaje","sprzedaż","zakup","zakupu","wersja","wersji","roku","dobrej","dobra","można","warto","także","tylko","nawet","bardzo","jest","być","czyli","czasem","sobie","swoje","this","that","with","from","price","model"]);
+
+  const extractSignificantWords = (text) =>
+    (text.toLowerCase().match(/[a-ząćęłńóśźż0-9]{4,}/g) || []).filter(w => !KNOWLEDGE_STOPWORDS.has(w));
+
+  const filterKnowledgeForListing = (listing) => {
+    if (priceKnowledge.length === 0) return [];
+    const listingWords = new Set(extractSignificantWords(`${listing.title} ${listing.desc}`));
+    if (listingWords.size === 0) return priceKnowledge;
+    const matched = priceKnowledge.filter(e =>
+      extractSignificantWords(e.text).some(w => listingWords.has(w))
+    );
+    return matched.length > 0 ? matched : priceKnowledge; // zero trafień → fallback do pełnej listy
+  };
+
   const analyzeWithGemini = async (listing, groqType) => {
     const chatInfo = geminiChatName
       ? `\nKontekst: ${geminiChatName}.`
       : "";
 
-    const knowledgeSection = priceKnowledge.length > 0
+    const relevantKnowledge = filterKnowledgeForListing(listing);
+    const knowledgeSection = relevantKnowledge.length > 0
       ? `=== TWOJA BAZA WIEDZY O CENACH (REALNE TRANSAKCJE I NOTATKI — NAJWAŻNIEJSZE ŹRÓDŁO) ===
-${priceKnowledge.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}
+${relevantKnowledge.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}
 
-Ta baza pochodzi z realnych sprzedaży i rozmów z użytkownikiem — traktuj ją jako PRIORYTETOWE źródło prawdy o cenach, ważniejsze niż ogólny cennik referencyjny poniżej. Jeśli dane z bazy wiedzy są sprzeczne z cennikiem referencyjnym, ufaj bazie wiedzy.
-
-ZANIM oszacujesz cenę sprzedaży samodzielnie: sprawdź NAJPIERW, czy w bazie wiedzy powyżej jest wpis o TYM SAMYM modelu (nazwa + ewentualnie rocznik/wersja). Jeśli jest — MUSISZ użyć ceny/zysku z tego wpisu jako podstawy, nie wolno Ci obok niego oszacować własnej, niższej wartości. Dopiero gdy modelu nie ma w bazie wiedzy, szacuj na podstawie cennika referencyjnego lub własnej wiedzy rynkowej.
+Ta baza pochodzi z realnych sprzedaży i rozmów z użytkownikiem — traktuj ją jako PRIORYTETOWE źródło prawdy o cenach, ważniejsze niż ogólny cennik referencyjny poniżej. Jeśli dane z bazy wiedzy są sprzeczne z cennikiem referencyjnym, ufaj bazie wiedzy. Jeśli model z ogłoszenia jest tu wymieniony — UŻYJ TEJ CENY, nie szacuj własnej.
 
 `
       : "";
 
     const typeIsTrusted = ["full", "dirt", "elektryk_gorski"].includes(groqType);
 
-    // ── CACHING: instrukcje rozpoznawania typu są TERAZ ZAWSZE identyczne (ta sama, pełna wersja),
-    // niezależnie od tego czy Etap 1 (Groq) był pewny czy nie. Wcześniej ta sekcja miała dwa różne
-    // warianty tekstu wstawiane PRZED "OCENA OPŁACALNOŚCI" — to psuło wspólny, powtarzalny początek
-    // promptu między wywołaniami. Teraz cały ten fragment (razem z cennikiem i moimi uwagami wyżej)
-    // jest bajt-w-bajt taki sam za każdym razem → Gemini 2.5+ automatycznie wykrywa powtarzający się
-    // prefiks promptu i płaci za niego wg mocno obniżonej stawki ("implicit caching", ~90% taniej,
-    // działa automatycznie od ok. 1-2 tys. tokenów wspólnego początku, bez żadnych zmian w gemini.js).
-    // Informację "ten konkretny rower ma już ustalony typ z Etapu 1" przenosimy do KOŃCA promptu
-    // (patrz typeHint niżej, tuż przy samym ogłoszeniu) — to jedyna część, która ma prawo się zmieniać.
-    const typeInstructions = `=== ROZPOZNAWANIE TYPU ROWERU ===
-Określ typ NA PODSTAWIE TYTUŁU I OPISU (chyba że w sekcji ogłoszenia niżej podano, że typ jest już ustalony — wtedy tylko go potwierdź):
+    const typeSection = typeIsTrusted
+      ? `=== TYP ROWERU — JUŻ USTALONY, ZAUFAJ TEMU ===
+To ogłoszenie zostało już wstępnie sklasyfikowane (etap wcześniejszy) jako typ: "${groqType}" (full = pełne zawieszenie / enduro / trail / downhill, dirt = dirt jump / hardtail do skoków, elektryk_gorski = elektryczny rower górski / e-MTB). NIE klasyfikuj typu od nowa — przejdź od razu do oceny opłacalności poniżej i w polu "typ_roweru" w odpowiedzi wpisz dokładnie "${groqType}".
+
+`
+      : `=== KROK 1 — ROZPOZNAJ TYP ROWERU ===
+Wstępna klasyfikacja była niepewna — sam określ typ NA PODSTAWIE TYTUŁU I OPISU:
 • "dirt" — rower dirt jump / slopestyle / pumptrack / street. Sztywna rama (hardtail), brak tylnego zawieszenia, geometria do skoków. Przykłady: Canyon Stitched, Trek Ticket DJ, Dartmoor Two6player, Rose The Bruce, Specialized P.3, Radon Slush.
 • "full" — rower z PEŁNĄ amortyzacją (amortyzator z tyłu + widelec z przodu). Typy: enduro, trail, all-mountain, downhill. Przykłady: Canyon Torque, Canyon Spectral, Canyon Strive, Trek Slash, Santa Cruz, Commencal, YT Capra, Specialized Enduro/Stumpjumper FSR.
 • "elektryk_gorski" — elektryczny rower górski / e-MTB (silnik wspomagający + charakter trail/enduro/downhill). NIE miejski/touringowy e-bike.
@@ -725,63 +641,28 @@ Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
 
 `;
 
-    // Krótka, DYNAMICZNA notka o wyniku Etapu 1 — wstawiana dopiero przy ogłoszeniu (na końcu promptu),
-    // żeby nie psuć wspólnego, cache'owalnego prefiksu powyżej.
-    const typeHint = typeIsTrusted
-      ? `To ogłoszenie zostało już wstępnie sklasyfikowane (Etap 1) jako typ: "${groqType}". NIE klasyfikuj typu od nowa — w polu "typ_roweru" wpisz dokładnie "${groqType}" i przejdź od razu do oceny opłacalności.\n`
-      : `Wstępna klasyfikacja typu (Etap 1) była niepewna — sam określ typ wg zasad z sekcji "ROZPOZNAWANIE TYPU ROWERU" wyżej.\n`;
-
-    const staticPrefix = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
+    const prompt = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
 
 ${knowledgeSection}=== CENNIK REFERENCYJNY — CO WIESZ O TYCH MODELACH ===
-To są PRZYKŁADY modeli, które dobrze znasz z wcześniejszych transakcji — TO NIE JEST wyczerpująca lista wszystkich modeli które możesz wycenić! Dla WSZYSTKICH modeli SPOZA tej listy (nie tylko DH — dotyczy to też mainstreamowych marek jak Canyon, Trek, Specialized, Cube, Rose, Radon, Ghost, Merida, Scott, Focus, GT, Commencal) MUSISZ użyć swojej OGÓLNEJ, szerokiej wiedzy o niemieckim/polskim rynku wtórnym rowerów — dokładnie tak jak zrobiłby to doświadczony handlarz, który zna markę i segment nawet bez ściągawki. Znasz mniej więcej ceny nowych rowerów tych marek i typowy spadek wartości na rynku wtórnym (zwykle 40-60% wartości nowej po 2-4 latach, zależnie od stanu i wyposażenia) — użyj tego do oszacowania, zamiast czekać na dokładny wpis w cenniku.
-PRZYBLIŻONY szacunek z rozsądnym marginesem błędu (np. "prawdopodobnie 1400-1700 PLN") jest ZNACZNIE bardziej użyteczny niż automatyczne "niepewne" — "niepewne" zostaw NAPRAWDĘ dla przypadków gdy marka/model jest Ci kompletnie nieznana (egzotyczna/no-name) albo opis faktycznie nie zawiera informacji o stanie/roku/wyposażeniu. Zanim napiszesz w polu "powod_decyzji" że "opis nie mówi nic o stanie/wyposażeniu" — DOKŁADNIE SPRAWDŹ opis: jeśli wymienia JAKIEKOLWIEK komponenty (widelec, amortyzator, hamulce, napęd), rok produkcji, albo opis stanu technicznego — ten powód jest NIEPRAWDZIWY i nie wolno Ci go użyć, musisz znaleźć prawdziwą przyczynę niepewności.
 • Canyon Stitched 360 Pro (2021-2024): cena zakupu max 500-600€ żeby zarobić. Wersja z upgradami (Bomber DJ, koła NOA, mostek Title) — warta do 700€ zakupu.
 • Rose The Bruce 2: max zakup 500-550€ żeby wyjść na swoje (sprzedaż ~880€ PL).
 • Trek Ticket DJ z amortyzatorem Pike DJ lub Bomber DJ: można zapłacić do 900€ bo sprzedaż 1400€ PL.
 • Canyon Torque AL 5 (2018): rower enduro full-suspension. Dobra cena zakupu do 700€, sprzedaż ~1160€ PL.
 • Canyon Spectral AL 6: trail/all-mountain full-suspension. Dobra cena zakupu do 1000€, sprzedaż ~1510€ PL.
 • Dartmoor Two6player, Specialized P.3, Radon Slush: popularne dirtowe — wyceniaj analogicznie do Stitched.
-• Rowery DH (Downhill) — YT Tues, Trek Session, Specialized Demo, Santa Cruz V10, Canyon Sender, Commencal Supreme DH, GT Fury: sprzęt niszowy z węższą grupą kupujących (dłuższy czas sprzedaży niż enduro), ALE entuzjaści płacą dobrze za kompletne rowery z topowymi komponentami (widelec dwukoronowy Fox 40/RockShox Boxxer, hamulce Saint/Zee/Code, rama karbonowa) — pod względem WYCENY traktuj podobnie jak topowe enduro/trail tej samej klasy komponentów, nie zaniżaj tylko dlatego że to nisza.
 
-=== UWAGA — CENA "NOWEGO" ROWERU W OPISIE TO NIE SZACOWANA CENA SPRZEDAŻY ===
-Sprzedający bardzo często podają w opisie oryginalną cenę zakupu roweru gdy był nowy (np. "oryginalny cena zakupu 2.999€", "kosztował nowy X€", niemieckie "Neupreis"/"UVP"). To WYŁĄCZNIE informacja pomocnicza o poziomie wyposażenia/segmencie modelu — NIGDY nie wolno Ci ustawić "szacowana_sprzedaz_eur" na poziomie równym lub zbliżonym do tej ceny. Nawet rower "jak nowy" z minimalnym przebiegiem (np. 200-300 km) sprzedaje się na rynku wtórnym z dyskontem rzędu 15-30% względem ceny nowego, a rower używany "normalnie" — z dyskontem 40-60% (patrz sekcja cennika wyżej). Zamiana ceny nowego na cenę sprzedaży to POWAŻNY błąd wyceny, który prowadzi do fałszywej okazji — zawsze traktuj cenę nowego z opisu jako GÓRNY sufit, od którego odejmujesz odpowiedni % w zależności od przebiegu/stanu/wieku, i wpisz do "powod_decyzji" że była to cena nowego, nie sprzedaży.
-
-=== UWAGA — WYCENIAJ PO REALNYM OSPRZĘCIE, NIE TYLKO PO MARCE RAMY ===
-Renomowana marka/model ramy (Santa Cruz, Canyon, YT, Specialized, Commencal) NIE oznacza automatycznie wysokiej wyceny — o cenie decyduje przede wszystkim POZIOM ZAMONTOWANEGO OSPRZĘTU, konkretnie wymieniony w opisie. Podstawowe/wejściowe komponenty w danej rodzinie (np. SRAM NX Eagle zamiast GX/X01, RockShox Pike BASE/Recon/Yari zamiast Ultimate/Factory, FOX Float Performance/Rhythm zamiast Factory/Kashima, Shimano Deore/SLX zamiast XT/XTR, felgi aluminiowe zamiast karbonowych) oznaczają że to PODSTAWOWA wersja danego modelu — wyceniaj ją bliżej dolnej granicy przedziału dla tego modelu/segmentu, NIE ceny topowej wersji tej samej rodziny, nawet jeśli sama rama jest topowa (np. Carbon C/CC). Zawsze przejrzyj listę komponentów z opisu, zanim podasz "szacowana_sprzedaz_eur" — jeśli osprzęt jest w większości podstawowy, obniż szacunek odpowiednio, niezależnie od prestiżu marki.
-
-=== UWAGA — SPRAWDŹ OPIS PRZED OZNACZENIEM "niepewne" Z POWODU BRAKU OSPRZĘTU ===
-Wiele ogłoszeń (szczególnie rowerów budowanych indywidualnie/na zamówienie) podaje pełną listę komponentów w formie wypunktowania (np. "Sattel: X, Bremsen: Y, Gabel: Z, Dämpfer: W, Kurbeln: ..."). PRZED napisaniem w "powod_decyzji" że "opis nie mówi nic o stanie/wyposażeniu" lub "nierozpoznawalny model/marka" — przeskanuj opis pod kątem SŁÓW-KLUCZY (w dowolnym języku): widelec/Gabel/fork, amortyzator/Dämpfer/shock, hamulce/Bremsen/brakes, napęd/Schaltung/Antrieb/drivetrain/Kurbel/crank, koła/Laufräder/Felgen/wheels/hub, sztyca/Sattelstütze/dropper. Jeśli choć kilka z nich występuje — osprzęt JEST opisany i musisz oszacować cenę na tej podstawie (nawet z szerszym marginesem błędu), a nie oznaczać jako "niepewne".
-
-${typeInstructions}=== OCENA OPŁACALNOŚCI ===
+${typeSection}=== OCENA OPŁACALNOŚCI ===
 • Jeśli typ = "inny" → ZAWSZE decyzja: "nie". Nie analizuj dalej.
 • Jeśli typ = "dirt", "full" lub "elektryk_gorski":
   - Sprawdź cenę ogłoszenia (w EUR).
   - Na podstawie modelu, roku produkcji, wyposażenia i stanu (opisanego w tytule/opisie) oszacuj realną cenę sprzedaży w Polsce (w PLN i EUR).
   - Oblicz przewidywany zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia.
   - decyzja: "tak" TYLKO jeśli zysk wynosi minimum ${minProfit}% ceny zakupu I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
-  - decyzja: "niepewne" gdy NAPRAWDĘ brakuje kluczowych informacji — np. brak ceny w ogłoszeniu, opis faktycznie nie zawiera ŻADNYCH informacji o stanie/wyposażeniu/roku, marka/model jest Ci kompletnie nieznana (egzotyczna/no-name), lub niejasny rok produkcji którego nie da się oszacować. NIE oznaczaj jako "niepewne" tylko dlatego, że modelu nie ma w przykładowym cenniku referencyjnym powyżej — jeśli rozpoznajesz markę i segment (nawet bez dokładnej ceny w pamięci), OSZACUJ na podstawie ogólnej wiedzy rynkowej (patrz sekcja cennika wyżej), nawet z szerszym marginesem błędu. NIE odrzucaj automatycznie jako "nie" gdy czegoś brakuje — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
+  - decyzja: "niepewne" gdy brakuje kluczowych informacji żeby ocenić opłacalność — np. brak ceny w ogłoszeniu, zdawkowy opis bez informacji o stanie/wyposażeniu, niejasny model/rok, lub potencjał wydaje się być ale nie masz pewności co do zysku. NIE odrzucaj takich automatycznie jako "nie" — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
   - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
   - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji. Dla e-MTB uwzględnij też stan baterii/silnika jeśli opisany.
-  - TWARDA REGUŁA ROKU: jeśli na podstawie modelu/wersji/komponentów rozpoznajesz, że rower pochodzi sprzed 2017 roku → decyzja: "nie", niezależnie od ceny i pozornej opłacalności. To ogłoszenie powinno zostać odrzucone WCZEŚNIEJ, ale gdybyś i tak zobaczył wyraźnie stary rocznik — nie licz go jako okazję.
   - Jeśli cena ogłoszenia nie jest podana (null/brak) → decyzja: "niepewne" (nie "nie" — może być warta sprawdzenia ręcznie).${chatInfo}
 
-Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON, TYLKO liczby i słowa kluczowe — bez opisów słownych, oszczędzaj tokeny — WYJĄTEK: pole "powod_decyzji" poniżej):
-{
-  "typ_roweru": "full" | "dirt" | "elektryk_gorski" | "inny",
-  "decyzja": "tak" | "nie" | "niepewne",
-  "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
-  "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
-  "przewidywany_zysk": liczba w EUR lub 0,
-  "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'brak ceny w ogłoszeniu' / 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": dokładny wpis w bazie wiedzy / cennik referencyjny / własna wiedza rynkowa o tym modelu."
-}
-
-=== KONIEC CZĘŚCI STAŁEJ === (wszystko powyżej tej linii to staticPrefix — kandydat do explicit cache; patrz getCachedContentName)`;
-
-    // ── Dynamiczna część promptu — TYLKO to zmienia się między wywołaniami. Gdy mamy aktywny
-    // explicit cache dla staticPrefix (patrz niżej), wysyłamy do Gemini WYŁĄCZNIE ten fragment
-    // jako "contents", a cache pokrywa całą resztę (persona/cennik/reguły/schemat JSON powyżej).
-    const dynamicSuffix = `${typeHint}
 === OGŁOSZENIE DO OCENY ===
 Tytuł: ${listing.title}
 Cena z ogłoszenia: ${listing.price != null ? listing.price + "€" : "BRAK CENY"}
@@ -789,320 +670,101 @@ Lokalizacja: ${listing.location}
 Opis: ${listing.desc}
 Model/kategoria wyszukiwania: ${listing.bike}
 
-Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu podanego wyżej (nic poza JSON).`;
-
-    // Pełny prompt "po staremu" — używany jako fallback gdy nie mamy (jeszcze/wcale) działającego cache.
-    const prompt = `${staticPrefix}\n\n${dynamicSuffix}`;
+Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON, TYLKO liczby i słowa kluczowe — bez opisów słownych, oszczędzaj tokeny):
+{
+  "typ_roweru": "full" | "dirt" | "elektryk_gorski" | "inny",
+  "decyzja": "tak" | "nie" | "niepewne",
+  "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
+  "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
+  "przewidywany_zysk": liczba w EUR lub 0
+}`;
 
         addLog(`🤖 Gemini (etap 2): analizuję — ${listing.title}${listing.price != null ? ` za ${listing.price}€` : ""} | typ z etapu 1: ${groqType}`, "info");
 
-    // ── Explicit context cache — spróbuj dostać nazwę cache dla tego modelu+wariantu staticPrefix.
-    // Zwraca null gdy: cache się nie udało utworzyć (np. za mało tokenów wg progu Google — patrz
-    // komentarz w api/gemini.js), jesteśmy w cooldownie po ostatniej nieudanej próbie, albo trwa
-    // właśnie tworzenie. W KAŻDYM z tych przypadków po prostu wysyłamy PEŁNY prompt jak dotychczas —
-    // zero regresji funkcjonalnej, cache to czysta optymalizacja kosztu.
-    const cacheKey = `${geminiModel}|${hashStr(staticPrefix)}`;
-    const getCachedContentName = async () => {
-      if (provider === "groq") return null; // cache dotyczy tylko Gemini
-      const now = Date.now();
-      const existing = cacheMapRef.current[cacheKey];
-      if (existing && existing.expiresAt > now) return existing.name;
-
-      const cooldownUntil = cacheFailCooldownRef.current[cacheKey];
-      if (cooldownUntil && cooldownUntil > now) return null;
-
+    // Retry loop — czeka gdy quota wyczerpana
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const ttlSeconds = 3300; // 55 min
-        const data = await callProxy({
-          action: "createCache",
-          provider: "gemini",
-          model: geminiModel,
-          apiKey: geminiKey,
-          messages: [{ role: "user", parts: [{ text: staticPrefix }] }],
-          ttlSeconds,
-        });
-        if (data?.error || !data?.name) {
-          // Najczęstsza przyczyna: staticPrefix poniżej minimalnego progu tokenów dla explicit
-          // cache (Google: dokumentacja niespójna, 2048 vs 32768 w zależności od modelu/API).
-          addLog(`ℹ️ Gemini: nie udało się utworzyć explicit cache (${data?.error?.message || "brak name w odpowiedzi"}) — wysyłam pełny prompt bez cache (10 min cooldown przed kolejną próbą)`, "info");
-          cacheFailCooldownRef.current[cacheKey] = now + 10 * 60 * 1000;
+        const data = await callGemini(prompt);
+
+        if (data?.error) {
+          const msg = data.error.message || "";
+          // Quota exceeded — wyciągnij czas retry i poczekaj
+          const retryMatch = msg.match(/retry in ([\d.]+)s/i);
+          const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : 60;
+          if (msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("429")) {
+            addLog(`⏳ Quota Gemini wyczerpana — czekam ${waitSec}s (próba ${attempt}/3)`, "error");
+            if (attempt < 3) { await sleep(waitSec * 1000); continue; }
+            else { addLog("❌ Quota wyczerpana — włącz billing w aistudio.google.com", "error"); return null; }
+          }
+          addLog(`⚠️ Gemini API error: ${msg}`, "error");
           return null;
         }
-        cacheMapRef.current[cacheKey] = {
-          name: data.name,
-          expiresAt: now + (ttlSeconds - 120) * 1000, // margines bezpieczeństwa 2 min przed realnym wygaśnięciem
-        };
-        addLog(`💾 Gemini: utworzono explicit cache dla statycznej części promptu (${geminiModel}) — kolejne wywołania tańsze o ~90% na tej części`, "success");
-        return data.name;
+
+        const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (!raw) {
+          const reason = data?.candidates?.[0]?.finishReason || "brak odpowiedzi";
+          addLog(`⚠️ Gemini pusta odpowiedź (${reason})`, "error");
+          return null;
+        }
+
+        let clean = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        if (jsonMatch) clean = jsonMatch[0];
+        const parsed = JSON.parse(clean);
+
+        // Jeśli typ był już PEWNY (z Groqa) — wymuszamy go, ignorując co zwróciło Gemini (mogło się pomylić/zignorować instrukcję).
+        // Jeśli był "niepewne" — ufamy klasyfikacji Gemini (to ona robiła KROK 1 w tym przypadku).
+        const typ = typeIsTrusted
+          ? groqType
+          : (["full", "dirt", "elektryk_gorski"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny");
+        parsed.typ_roweru = typ;
+
+        // Normalizuj decyzję — fallback na "nie" jeśli Gemini zwróci coś nieoczekiwanego
+        const decyzja = ["tak", "nie", "niepewne"].includes(parsed.decyzja) ? parsed.decyzja : "nie";
+        parsed.decyzja = decyzja;
+
+        // TWARDA REGUŁA: "inny" zawsze = nie opłaca się, niezależnie co zwróci Gemini
+        // (w praktyce trafia tu tylko z gałęzi "niepewne", bo typ zaufany nigdy nie jest "inny")
+        if (typ === "inny") {
+          parsed.decyzja = "nie";
+        }
+
+        // Kompatybilność wsteczna — pole oplaca_sie używane w Discord embed / wynikach
+        parsed.oplaca_sie = parsed.decyzja === "tak";
+
+        // ── Opis budujemy TUTAJ, z liczb — Gemini już nie generuje prozy (oszczędność tokenów/czasu) ──
+        const cena = parsed.cena_zakupu_eur;
+        const sprzedaz = parsed.szacowana_sprzedaz_eur;
+        const zysk = parsed.przewidywany_zysk;
+        if (parsed.decyzja === "tak") {
+          parsed.krotki_opis = `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ → zysk ~${zysk}€.`;
+        } else if (parsed.decyzja === "niepewne") {
+          parsed.krotki_opis = cena != null
+            ? `Zakup ${cena}€ — za mało danych w ogłoszeniu żeby rzetelnie oszacować sprzedaż/zysk. Wymaga ręcznego sprawdzenia.`
+            : `Brak ceny w ogłoszeniu — wymaga ręcznego sprawdzenia.`;
+        } else if (typ === "inny") {
+          parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
+        } else {
+          parsed.krotki_opis = sprzedaz != null
+            ? `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€, próg ${minProfit}%).`
+            : `Zakup ${cena ?? "?"}€ — zysk za mały lub transakcja się nie opłaca.`;
+        }
+
+        return parsed;
+
       } catch (e) {
-        addLog(`ℹ️ Gemini: błąd tworzenia cache (${e.message}) — wysyłam pełny prompt bez cache`, "info");
-        cacheFailCooldownRef.current[cacheKey] = now + 10 * 60 * 1000;
+        const msg = e.message || "";
+        const isTransient = /high demand|overloaded|unavailable|503|temporarily/i.test(msg);
+        if (isTransient && attempt < 3) {
+          addLog(`⏳ Gemini chwilowo przeciążony — ponawiam za 8s (próba ${attempt}/3)`, "error");
+          await sleep(8000);
+          continue;
+        }
+        addLog(`⚠️ Błąd parsowania Gemini: ${msg}`, "error");
         return null;
       }
-    };
-
-    // ── Pojedyncza próba wywołania Gemini + parsowanie odpowiedzi ─────────────────────────
-    // overrides — nadpisania generationConfig (patrz callGemini) — używane do eskalacji z myśleniem.
-    // Ma własny retry loop (3 próby) na błędy przejściowe/quota, tak jak dotychczas — DODATKOWO
-    // wykrywa ucięcie odpowiedzi (finishReason "MAX_TOKENS", zwykle przy włączonym myśleniu —
-    // model zużywa limit tokenów na samo myślenie i nie starcza mu miejsca na dokończenie JSON,
-    // co objawia się jako "Unterminated string in JSON") i automatycznie ponawia z WIĘKSZYM
-    // limitem tokenów zamiast poddawać się za pierwszym razem.
-    const attemptAnalysis = async (overrides) => {
-      let effectiveOverrides = { ...overrides };
-      // Sprawdź RAZ przed pętlą retry czy mamy działający cache — nie warto próbować go tworzyć
-      // ponownie przy każdej z 3 prób w razie błędu przejściowego (patrz cooldown w getCachedContentName).
-      const cachedContentName = await getCachedContentName();
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const data = cachedContentName
-            ? await callGemini(dynamicSuffix, effectiveOverrides, cachedContentName)
-            : await callGemini(prompt, effectiveOverrides);
-
-          if (data?.error) {
-            const msg = data.error.message || "";
-            // Quota exceeded — wyciągnij czas retry i poczekaj
-            const retryMatch = msg.match(/retry in ([\d.]+)s/i);
-            const waitSec = retryMatch ? Math.ceil(parseFloat(retryMatch[1])) + 2 : 60;
-            if (msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("429")) {
-              addLog(`⏳ Quota Gemini wyczerpana — czekam ${waitSec}s (próba ${attempt}/3)`, "error");
-              if (attempt < 3) { await sleep(waitSec * 1000); continue; }
-              else { addLog("❌ Quota wyczerpana — włącz billing w aistudio.google.com", "error"); return null; }
-            }
-            addLog(`⚠️ Gemini API error: ${msg}`, "error");
-            return null;
-          }
-
-          const finishReason = data?.candidates?.[0]?.finishReason;
-          const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-          if (!raw) {
-            addLog(`⚠️ Gemini pusta odpowiedź (${finishReason || "brak odpowiedzi"})`, "error");
-            return null;
-          }
-
-          // Ucięta odpowiedź (zwykle myślenie zjadło cały limit tokenów) — nie próbuj nawet
-          // parsować, tylko od razu ponów z wyraźnie większym limitem, jeśli zostały próby.
-          if (finishReason === "MAX_TOKENS" && attempt < 3) {
-            const bumped = (effectiveOverrides.maxOutputTokens || 600) + 2000;
-            addLog(`⏳ Gemini: odpowiedź ucięta (zabrakło tokenów, myślenie zjadło limit) — ponawiam z limitem ${bumped}, próba ${attempt + 1}/3 — ${listing.title}`, "error");
-            effectiveOverrides = { ...effectiveOverrides, maxOutputTokens: bumped };
-            continue;
-          }
-
-          let clean = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-          const jsonMatch = clean.match(/\{[\s\S]*\}/);
-          if (jsonMatch) clean = jsonMatch[0];
-          const parsed = JSON.parse(clean);
-
-          // Jeśli typ był już PEWNY (z Groqa) — wymuszamy go, ignorując co zwróciło Gemini (mogło się pomylić/zignorować instrukcję).
-          // Jeśli był "niepewne" — ufamy klasyfikacji Gemini (to ona robiła KROK 1 w tym przypadku).
-          const typ = typeIsTrusted
-            ? groqType
-            : (["full", "dirt", "elektryk_gorski"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny");
-          parsed.typ_roweru = typ;
-
-          // Normalizuj decyzję — fallback na "nie" jeśli Gemini zwróci coś nieoczekiwanego
-          const decyzja = ["tak", "nie", "niepewne"].includes(parsed.decyzja) ? parsed.decyzja : "nie";
-          parsed.decyzja = decyzja;
-
-          // TWARDA REGUŁA: "inny" zawsze = nie opłaca się, niezależnie co zwróci Gemini
-          // (w praktyce trafia tu tylko z gałęzi "niepewne", bo typ zaufany nigdy nie jest "inny")
-          if (typ === "inny") {
-            parsed.decyzja = "nie";
-          }
-
-          // TWARDA REGUŁA: wykluczenie e-MTB — dotyczy TEŻ przypadku gdy to Gemini (nie Groq) określiło
-          // typ_roweru jako "elektryk_gorski" (dzieje się gdy groqType === "niepewne" albo Groq jest
-          // w cooldownie po limicie — wtedy klasyfikację przejmuje Gemini i filtr z Etapu 1 go nie łapie).
-          if (typ === "elektryk_gorski" && excludeElektryk) {
-            parsed.decyzja = "nie";
-          }
-
-          // ── TWARDA WALIDACJA MATEMATYCZNA ZYSKU — NIE UFAMY polu "przewidywany_zysk" od Gemini ──
-          // Modele językowe potrafią podać trzy liczby (cena/sprzedaż/zysk), które OSOBNO brzmią
-          // sensownie, ale nie są ze sobą spójne arytmetycznie (np. zakup 1950€ → sprzedaż 1800€,
-          // a mimo to "zysk: +280€" — to POWINNO wyjść -150€). To nie da się naprawić samym
-          // promptem — LICZYMY zysk SAMI z podanych cena/sprzedaż i to jest jedyne źródło prawdy.
-          const cenaNum = typeof parsed.cena_zakupu_eur === "number" ? parsed.cena_zakupu_eur : null;
-          const sprzedazNum = typeof parsed.szacowana_sprzedaz_eur === "number" ? parsed.szacowana_sprzedaz_eur : null;
-          const zyskLiczony = (cenaNum != null && sprzedazNum != null) ? Math.round((sprzedazNum - cenaNum) * 100) / 100 : null;
-
-          if (zyskLiczony != null && parsed.przewidywany_zysk != null && Math.abs(zyskLiczony - parsed.przewidywany_zysk) > 1) {
-            addLog(`⚠️ Gemini: niespójna matematyka — podał zysk ${parsed.przewidywany_zysk}€ przy zakupie ${cenaNum}€/sprzedaży ${sprzedazNum}€ (powinno być ${zyskLiczony}€) — POPRAWIAM na policzone — ${listing.title}`, "error");
-          }
-          parsed.przewidywany_zysk = zyskLiczony; // zawsze nadpisujemy policzoną wartością, nigdy nie ufamy surowej odpowiedzi modelu
-
-          // ── TWARDA REGUŁA: WYKRYWANIE POMYLENIA "CENY NOWEGO" Z CENĄ SPRZEDAŻY ────────────────
-          // To NIE jest coś, na co można liczyć że prompt zawsze wystarczy — model potrafi
-          // zignorować instrukcję i tak czy inaczej zakotwiczyć się na liczbie z opisu.
-          // Zamiast ufać że Gemini się zastosuje, WYCIĄGAMY samodzielnie (regex) ewentualną
-          // "cenę nowego"/"oryginalną cenę zakupu" wprost z opisu ogłoszenia i porównujemy
-          // z tym, co Gemini podało jako "szacowana_sprzedaz_eur". Jeśli oszacowanie jest
-          // podejrzanie blisko (albo wyżej) tej ceny nowego — to niemal na pewno pomyłka
-          // (Gemini przepisało cenę nowego zamiast realnie oszacować rynek wtórny) — nadpisujemy
-          // na "niepewne", niezależnie od tego co model zwrócił.
-          const extractNewPriceFromDesc = (text) => {
-            if (!text) return null;
-            const patterns = [
-              /neupreis\D{0,15}?(\d[\d.,]*)\s*€/i,
-              /\buvp\D{0,15}?(\d[\d.,]*)\s*€/i,
-              /listenpreis\D{0,15}?(\d[\d.,]*)\s*€/i,
-              /original\w*\s*(?:verkaufs|kauf)?preis\w*\D{0,15}?(\d[\d.,]*)\s*€/i,
-              /verkaufspreis\s+betrug\D{0,15}?(\d[\d.,]*)\s*€/i,
-              /kostete\s+neu\D{0,15}?(\d[\d.,]*)\s*€/i,
-              /neu\s+f[üu]r\D{0,10}?(\d[\d.,]*)\s*€/i,
-              /cena\s+nowego\D{0,15}?(\d[\d.,]*)\s*(?:€|eur)/i,
-              /nowy\D{0,10}?(\d[\d.,]*)\s*(?:€|eur)/i,
-            ];
-            for (const re of patterns) {
-              const m = text.match(re);
-              if (m) {
-                const num = parseFloat(m[1].replace(/\./g, "").replace(",", "."));
-                if (Number.isFinite(num) && num > 200) return num; // odfiltruj przypadkowe małe liczby
-              }
-            }
-            return null;
-          };
-
-          const newPriceInDesc = extractNewPriceFromDesc(listing.desc || listing.title || "");
-          if (
-            parsed.decyzja !== "niepewne" &&
-            newPriceInDesc != null &&
-            sprzedazNum != null &&
-            sprzedazNum >= newPriceInDesc * 0.9
-          ) {
-            addLog(`🚫 Gemini: szacowana sprzedaż ${sprzedazNum}€ jest podejrzanie blisko/wyżej ceny nowego z opisu (${newPriceInDesc}€) — najpewniej pomylił cenę nowego z ceną sprzedaży — zmieniam na "niepewne" — ${listing.title}`, "error");
-            parsed.decyzja = "niepewne";
-            parsed.powod_decyzji = `Gemini oszacował sprzedaż (${sprzedazNum}€) blisko/powyżej ceny nowego z opisu (${newPriceInDesc}€) — wymaga ręcznej weryfikacji.`;
-          }
-
-          // TWARDA REGUŁA: decyzja "tak" MUSI być poparta policzonym zyskiem >= progu minProfit%.
-          // Jeśli Gemini powiedziało "tak", ale liczby tego nie potwierdzają (albo brakuje liczb) —
-          // nadpisujemy na "nie" (strata/zbyt mały zysk) lub "niepewne" (brak danych do policzenia).
-          if (parsed.decyzja === "tak") {
-            if (cenaNum == null || sprzedazNum == null || cenaNum <= 0) {
-              parsed.decyzja = "niepewne";
-              addLog(`⚠️ Gemini: decyzja "tak" bez kompletnych liczb (zakup/sprzedaż) — zmieniam na "niepewne" — ${listing.title}`, "error");
-            } else {
-              const zyskProcent = (zyskLiczony / cenaNum) * 100;
-              if (zyskProcent < minProfit) {
-                addLog(`⚠️ Gemini: decyzja "tak" ale policzony zysk to tylko ${zyskProcent.toFixed(1)}% (próg ${minProfit}%) — zmieniam na "nie" — ${listing.title}`, "error");
-                parsed.decyzja = "nie";
-              }
-            }
-          }
-
-          // Kompatybilność wsteczna — pole oplaca_sie używane w Discord embed / wynikach
-          parsed.oplaca_sie = parsed.decyzja === "tak";
-
-          // Sanityzacja powodu decyzji (Gemini czasem i tak doda za dużo tekstu mimo instrukcji)
-          if (typeof parsed.powod_decyzji === "string") {
-            parsed.powod_decyzji = parsed.powod_decyzji.trim().slice(0, 220);
-          }
-
-          // ── Opis budujemy TUTAJ, z liczb — Gemini już nie generuje prozy (oszczędność tokenów/czasu) ──
-          const cena = parsed.cena_zakupu_eur;
-          const sprzedaz = parsed.szacowana_sprzedaz_eur;
-          const zysk = parsed.przewidywany_zysk;
-          if (parsed.decyzja === "tak") {
-            parsed.krotki_opis = `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ → zysk ~${zysk}€.`;
-          } else if (parsed.decyzja === "niepewne") {
-            parsed.krotki_opis = cena != null
-              ? `Zakup ${cena}€ — za mało danych w ogłoszeniu żeby rzetelnie oszacować sprzedaż/zysk. Wymaga ręcznego sprawdzenia.`
-              : `Brak ceny w ogłoszeniu — wymaga ręcznego sprawdzenia.`;
-          } else if (typ === "inny") {
-            parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
-          } else if (typ === "elektryk_gorski" && excludeElektryk) {
-            parsed.krotki_opis = `Odrzucone — e-MTB wykluczone w Ustawieniach (rozpoznane przez Gemini, nie Groq).`;
-          } else {
-            parsed.krotki_opis = sprzedaz != null
-              ? `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€, próg ${minProfit}%).`
-              : `Zakup ${cena ?? "?"}€ — zysk za mały lub transakcja się nie opłaca.`;
-          }
-          if (parsed.powod_decyzji) {
-            parsed.krotki_opis += ` (${parsed.powod_decyzji})`;
-          }
-
-          return parsed;
-
-        } catch (e) {
-          const msg = e.message || "";
-          const isTransient = /high demand|overloaded|unavailable|503|temporarily/i.test(msg);
-          if (isTransient && attempt < 3) {
-            addLog(`⏳ Gemini chwilowo przeciążony — ponawiam za 8s (próba ${attempt}/3)`, "error");
-            await sleep(8000);
-            continue;
-          }
-          // Zabezpieczenie na wypadek gdyby Google NIE zgłosił finishReason="MAX_TOKENS" wprost,
-          // a JSON i tak wygląda na ucięty w połowie — te komunikaty błędu JSON.parse to typowy
-          // odcisk palca truncation, nie faktycznie zepsutego JSON-a od modelu.
-          const looksTruncated = /unterminated string|unexpected end of json/i.test(msg);
-          if (looksTruncated && attempt < 3) {
-            const bumped = (effectiveOverrides.maxOutputTokens || 600) + 2000;
-            addLog(`⏳ Gemini: JSON wygląda na ucięty (${msg}) — ponawiam z limitem ${bumped}, próba ${attempt + 1}/3 — ${listing.title}`, "error");
-            effectiveOverrides = { ...effectiveOverrides, maxOutputTokens: bumped };
-            continue;
-          }
-          addLog(`⚠️ Błąd parsowania Gemini: ${msg}`, "error");
-          return null;
-        }
-      }
-      return null;
-    };
-
-    // ── Budżet myślenia — 2 niezależne "gałki", obie kosztują z tego samego budżetu Gemini ──
-    // OPCJA A: stałe, niewielkie myślenie przy KAŻDEJ pierwszej próbie (nie tylko niepewnych) —
-    //   podnosi jakość wszystkich analiz, kosztem małego, ale STAŁEGO narzutu na 100% wywołań.
-    // OPCJA B: szerszy próg eskalacji do PEŁNEGO myślenia — nie tylko gdy Gemini samo napisze
-    //   "niepewne", ale też gdy policzony przez nas % zysku wypadnie BLISKO progu minProfit
-    //   (w tę lub w tę stronę) — bo tak/nie tuż przy granicy jest z natury bardziej podatne na
-    //   pomyłkę przy płytkiej analizie, nawet jeśli model "czuł się pewny".
-    // Obie gałki razem celują w ok. 3-4x dzisiejszego kosztu Gemini — dostrajaj wg realnych
-    // wydatków (Google AI Studio → Billing) zamiast zgadywać z góry; token-per-call zależy od
-    // długości opisów i bazy wiedzy, więc realny mnożnik może się różnić.
-    const FIRST_PASS_THINKING_BUDGET = 500;   // OPCJA A — stały budżet myślenia (tokeny) dla 2.5/starszych; zwiększ/zmniejsz by dostroić koszt
-    const BORDERLINE_PROFIT_MARGIN_PCT = 8;   // OPCJA B — jak blisko progu minProfit (w punktach %) uznajemy wynik za "graniczny"
-
-    const isGen3Model = /gemini-3|flash-latest|pro-latest/i.test(geminiModel);
-
-    // ── Próba #1 — teraz z NIEWIELKIM, stałym myśleniem zamiast całkowicie wyłączonego (Opcja A) ──
-    const firstPassOverrides = {
-      ...(isGen3Model ? { thinkingLevel: "low" } : { thinkingBudget: FIRST_PASS_THINKING_BUDGET }),
-      maxOutputTokens: 1200, // nawet małe myślenie potrzebuje więcej zapasu niż płaskie 600
-    };
-    const firstPass = await attemptAnalysis(firstPassOverrides);
-    if (!firstPass) return null; // twardy błąd (quota/parsing) — już zalogowany wyżej
-
-    // ── Kiedy eskalować do PEŁNEGO myślenia (Opcja B rozszerza to o wyniki graniczne) ────────
-    const cena = firstPass.cena_zakupu_eur;
-    const zysk = firstPass.przewidywany_zysk;
-    const profitPct = (cena != null && cena > 0 && zysk != null) ? (zysk / cena) * 100 : null;
-    const isBorderline = firstPass.decyzja !== "niepewne"
-      && firstPass.typ_roweru !== "inny" // "inny" to twarde odrzucenie, nie osąd wart eskalacji
-      && profitPct != null
-      && Math.abs(profitPct - minProfit) <= BORDERLINE_PROFIT_MARGIN_PCT;
-
-    if (firstPass.decyzja !== "niepewne" && !isBorderline) return firstPass;
-
-    const escalationReason = firstPass.decyzja === "niepewne"
-      ? "pierwsza próba niepewna"
-      : `wynik graniczny (zysk ~${profitPct.toFixed(1)}% vs próg ${minProfit}%, decyzja "${firstPass.decyzja}")`;
-    addLog(`🧠 Gemini: ${escalationReason} — eskaluję z pełnym myśleniem — ${listing.title}`, "info");
-    const escalationOverrides = {
-      ...(isGen3Model ? { thinkingLevel: "medium" } : { thinkingBudget: -1 }), // -1 = dynamiczny budżet, model sam decyduje ile "pomyśleć"
-      maxOutputTokens: 4000, // myślenie (thinkingBudget: -1) bywa nieprzewidywalne co do zużycia — spory zapas, żeby rzadziej trzeba było ponawiać przez ucięcie (patrz attemptAnalysis)
-    };
-    const escalatedPass = await attemptAnalysis(escalationOverrides);
-
-    if (!escalatedPass) {
-      addLog(`⚠️ Gemini: eskalacja z myśleniem nie powiodła się — zostaje wynik z pierwszej próby — ${listing.title}`, "error");
-      return firstPass;
     }
-
-    escalatedPass._escalated = true;
-    addLog(`🧠 Gemini (z myśleniem): decyzja="${escalatedPass.decyzja}" (było: "${firstPass.decyzja}") — ${listing.title}`, "info");
-    return escalatedPass;
+    return null;
   };
 
   // ── Discord embed ──────────────────────────────────────────────────────
@@ -1135,14 +797,6 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-  // Prosty, deterministyczny hash (djb2) — używany TYLKO do rozpoznania "czy statyczny blok promptu
-  // się zmienił" (np. edytowałeś cennik w Ustawieniach), nie do żadnych celów bezpieczeństwa.
-  const hashStr = (str) => {
-    let h = 5381;
-    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
-    return (h >>> 0).toString(36);
-  };
-
   // ── One full scan cycle ────────────────────────────────────────────────
   // ── One full scan cycle ────────────────────────────────────────────────
   const runOneCycle = useCallback(async (cycleN) => {
@@ -1150,7 +804,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} modeli`, "success");
     addLog(
       groqClassifierKey
-        ? `🤖 Etap 1 (Groq) AKTYWNY — model ${GROQ_CLASSIFIER_MODEL}, ${getGroqKeyList().length} klucz(e), limit Gemini/cykl = ${maxGeminiPerCycle}`
+        ? `🤖 Etap 1 (Groq) AKTYWNY — model ${GROQ_CLASSIFIER_MODEL}, limit Gemini/cykl = ${maxGeminiPerCycle}`
         : `ℹ️ Etap 1 (Groq) WYŁĄCZONY — brak klucza w Ustawieniach, wszystko po czarnej liście leci prosto do Gemini`,
       "info"
     );
@@ -1158,18 +812,11 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     geminiCallsRef.current = 0; // reset licznika analiz Gemini na nowy cykl
     const uncertainBatch = [];   // zbiorcza lista "niepewnych" na ten cykl
     const geminiCandidates = []; // { listing, groqType } — zebrane ze WSZYSTKICH modeli w tym cyklu, czekają na analizę Gemini
-    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, oldBike: 0 }; // statystyki fazy 1 do podsumowania
+    const phase1Stats = { blacklist: 0, oldYear: 0, groqInny: 0, groqCzesc: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, priceDrops: 0 }; // statystyki fazy 1 do podsumowania
 
     // ── FAZA 1: scraping + filtr słów + klasyfikacja Groq (etap 1, tani/szybki) ──
-    for (let bikeIdx = 0; bikeIdx < activeBikes.length; bikeIdx++) {
-      const bike = activeBikes[bikeIdx];
+    for (const bike of activeBikes) {
       if (!runningRef.current) return;
-
-      // Odstęp między kolejnymi requestami scrapowania — przy liście wielu konkretnych modeli
-      // (zamiast jednego requestu na całą kategorię) brak przerwy między nimi wygląda dla
-      // Kleinanzeigen jak bot i grozi captchą (patrz wykrywanie "captcha"/"robot"/"blocked" w parseListings).
-      if (bikeIdx > 0) await sleep(3000);
-
       addLog(`🔍 ${bike.label}…`, "info");
 
       let listings = [];
@@ -1189,22 +836,54 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
       const fresh = listings.filter(l => !seenIdsRef.current.has(l.listingId));
 
       if (firstCycleRef.current) {
-        // Cykl #1 — tylko zapamiętaj istniejące ID, nie analizuj
-        fresh.forEach(l => saveSeenId(l.listingId));
+        // Cykl #1 — tylko zapamiętaj istniejące ID (z ceną jako punkt odniesienia), nie analizuj
+        fresh.forEach(l => saveSeenEntry(l));
         addLog(`📌 ${bike.label}: zapamiętano ${fresh.length} istniejących ogłoszeń`, "info");
         continue;
       }
 
-      if (fresh.length === 0) {
+      // ── Spadki cen na JUŻ widzianych ogłoszeniach — dane już mamy z tego samego skanu, ──
+      // ── zero dodatkowych requestów. Zgłaszamy tylko gdy spadek >= PRICE_DROP_THRESHOLD ──
+      // ── i cena jeszcze nie była na tym poziomie zgłoszona (bez spamu przy wahaniach). ──
+      const freshIds = new Set(fresh.map(l => l.listingId));
+      const priceDropped = listings.filter(l => {
+        if (freshIds.has(l.listingId) || l.price == null) return false;
+        const entry = seenIdsRef.current.get(l.listingId);
+        if (!entry || entry.lowest == null) return false; // brak punktu odniesienia (np. migracja) — pomijamy
+        if (l.price >= entry.lowest * (1 - PRICE_DROP_THRESHOLD)) return false;
+        if (entry.notifiedAt != null && l.price >= entry.notifiedAt * (1 - PRICE_DROP_THRESHOLD)) return false;
+        return true;
+      });
+      if (priceDropped.length > 0) {
+        priceDropped.forEach(l => {
+          const e = seenIdsRef.current.get(l.listingId);
+          e.lowest = Math.min(e.lowest, l.price);
+          e.notifiedAt = l.price;
+        });
+        persistSeenMap();
+        addLog(`📉 ${bike.label}: ${priceDropped.length} spadków ceny na znanych ogłoszeniach`, "success");
+      }
+
+      if (fresh.length === 0 && priceDropped.length === 0) {
         addLog(`✔ ${bike.label}: brak nowych`, "info");
-      } else {
+      } else if (fresh.length > 0) {
         addLog(`🆕 ${bike.label}: ${fresh.length} nowych ogłoszeń`, "success");
         setStats(s => ({ ...s, scanned: s.scanned + fresh.length }));
       }
 
-      for (const listing of fresh) {
+      const toProcess = [
+        ...fresh.map(l => ({ ...l, _source: "new" })),
+        ...priceDropped.map(l => ({ ...l, _source: "price_drop", _cachedType: seenIdsRef.current.get(l.listingId)?.type || null })),
+      ];
+
+      for (const listing of toProcess) {
         if (!runningRef.current) return;
-        saveSeenId(listing.listingId);
+        if (listing._source === "new") {
+          saveSeenEntry(listing);
+        } else {
+          phase1Stats.priceDrops++;
+          addLog(`📉 Spadek ceny: ${listing.title} → ${listing.price}€`, "info");
+        }
 
         // ── Filtr lokalny PRZED Groq — zero kosztu, odrzuca ewidentne nie-trafienia ──
         const filterHit = matchesFilterKeyword(listing);
@@ -1220,14 +899,14 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           continue; // nie idzie nawet do Groq
         }
 
-        // ── Filtr roku PRZED Groq — zero kosztu, odrzuca ewidentnie stare rowery po samym tytule ──
-        const yearBlock = checkListingYearBlock(listing);
-        if (yearBlock.blocked) {
-          phase1Stats.oldBike++;
-          addLog(`🚫 Filtr roku: odrzucono (${yearBlock.reason}) — ${listing.title}`, "info");
+        // ── Filtr roku PRZED Groq — zero kosztu ──
+        const yearHit = matchesYearFilter(listing);
+        if (yearHit) {
+          phase1Stats.oldYear = (phase1Stats.oldYear || 0) + 1;
+          addLog(`🚫 Filtr roku: odrzucono (${yearHit}) — ${listing.title}`, "info");
           setResults(prev => [{
             id: Date.now() + Math.random(), listing,
-            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone filtrem roku (${yearBlock.reason})` },
+            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone filtrem roku (${yearHit})` },
             status: "skip",
             timestamp: new Date().toLocaleTimeString("pl-PL"),
           }, ...prev].slice(0, 400));
@@ -1235,28 +914,51 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
         }
 
         // ── Etap 1 — Groq: szybka klasyfikacja typu (tanio, byle jak, zero limitu Gemini) ──
-        const typ = await classifyWithGroq(listing);
-        await sleep(2500); // margines poniżej limitu 30 RPM darmowego Groqa (2000ms = dokładnie na granicy, bez zapasu)
+        // Dla spadku ceny na JUŻ widzianym ogłoszeniu, którego typ znamy z poprzedniego razu —
+        // pomijamy Groq całkowicie, typ roweru się nie zmienia, tylko cena.
+        const cachedTrusted = listing._cachedType && ["full", "dirt", "elektryk_gorski"].includes(listing._cachedType)
+          ? listing._cachedType
+          : null;
+        let typ;
+        if (cachedTrusted) {
+          typ = cachedTrusted;
+          addLog(`💾 Typ z cache (bez Groq): "${typ}" — ${listing.title}`, "info");
+        } else {
+          typ = await classifyWithGroq(listing);
+          await sleep(2500); // margines poniżej limitu 30 RPM darmowego Groqa (2000ms = dokładnie na granicy, bez zapasu)
+          if (["full", "dirt", "elektryk_gorski"].includes(typ)) updateSeenType(listing.listingId, typ);
+        }
 
-        if (typ === "stary") {
-          phase1Stats.oldBike++;
-          addLog(`🚫 Groq: rower oszacowany jako sprzed ${MIN_BIKE_YEAR} — odrzucono — ${listing.title}`, "info");
+        if (typ === "inny") {
+          phase1Stats.groqInny++;
+          addLog(`🚫 Groq: typ "inny" — odrzucono — ${listing.title}`, "info");
           setResults(prev => [{
             id: Date.now() + Math.random(), listing,
-            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Groq oszacował rok produkcji jako sprzed ${MIN_BIKE_YEAR} — odrzucone` },
+            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: "Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski" },
             status: "skip",
             timestamp: new Date().toLocaleTimeString("pl-PL"),
           }, ...prev].slice(0, 400));
           continue; // nie idzie do Gemini
         }
 
-        if (typ === "inny" || (typ === "elektryk_gorski" && excludeElektryk)) {
-          phase1Stats.groqInny++;
-          const label = typ === "elektryk_gorski" ? "elektryk górski (wykluczone w Ustawieniach)" : "inny";
-          addLog(`🚫 Groq: typ "${label}" — odrzucono — ${listing.title}`, "info");
+        if (typ === "czesc") {
+          phase1Stats.groqCzesc = (phase1Stats.groqCzesc || 0) + 1;
+          addLog(`🚫 Groq: typ "czesc" — odrzucono — ${listing.title}`, "info");
           setResults(prev => [{
             id: Date.now() + Math.random(), listing,
-            analysis: { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: typ === "elektryk_gorski" ? "Odrzucone — e-MTB wykluczone w Ustawieniach" : "Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski" },
+            analysis: { typ_roweru: "czesc", decyzja: "nie", oplaca_sie: false, krotki_opis: "Odrzucone przez Groq (etap 1) — pojedyncza część/komponent, nie cały rower" },
+            status: "skip",
+            timestamp: new Date().toLocaleTimeString("pl-PL"),
+          }, ...prev].slice(0, 400));
+          continue; // nie idzie do Gemini
+        }
+
+        if (typ === "stary") {
+          phase1Stats.oldYear = (phase1Stats.oldYear || 0) + 1;
+          addLog(`🚫 Groq: typ "stary" (rok < ${MIN_YEAR} wg oceny Groqa) — odrzucono — ${listing.title}`, "info");
+          setResults(prev => [{
+            id: Date.now() + Math.random(), listing,
+            analysis: { typ_roweru: "stary", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone przez Groq (etap 1) — oszacowany rok < ${MIN_YEAR}` },
             status: "skip",
             timestamp: new Date().toLocaleTimeString("pl-PL"),
           }, ...prev].slice(0, 400));
@@ -1307,7 +1009,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     }
 
     addLog(
-      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🕰️ ${phase1Stats.oldBike} odrzuconych (za stary, < ${MIN_BIKE_YEAR}) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
+      `📊 Podsumowanie etapu 1: 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🚫 ${phase1Stats.oldYear} odrzuconych (rok < ${MIN_YEAR}/retro) · 🚫 ${phase1Stats.groqCzesc} odrzuconych (Groq: część) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · 📉 ${phase1Stats.priceDrops} spadków ceny → ➡️ ${geminiCandidates.length} kandydatów do Gemini (${phase1Stats.confident} pewnych, ${phase1Stats.uncertain} niepewnych)`,
       "success"
     );
 
@@ -1388,7 +1090,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
 
     firstCycleRef.current = false;
     addLog(`✔ Cykl #${cycleN} zakończony — czekam 60s przed kolejnym`, "info");
-  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, priceKnowledge, minProfit, excludeElektryk]);
+  }, [geminiKey, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, priceKnowledge, minProfit]);
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
@@ -1582,7 +1284,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
                   </div>
                 ))}
               <button onClick={() => {
-                seenIdsRef.current = new Set();
+                seenIdsRef.current = new Map();
                 localStorage.removeItem("ddf_seen");
                 addLog("🗑 Reset — następny cykl przeskanuje wszystko od nowa", "info");
               }} style={{
@@ -1644,7 +1346,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
                     {r.listing.title}
                   </a>
                   {r.analysis && (
-                    <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>{r.analysis._escalated ? "🧠 " : ""}{r.analysis.krotki_opis}</div>
+                    <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>{r.analysis.krotki_opis}</div>
                   )}
                   <div style={{ marginTop: 6 }}>
                     <a href={r.listing.href} target="_blank" rel="noopener noreferrer"
@@ -1960,13 +1662,12 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
               </div>
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  Klucz(e) API Groq (osobne od providera w czacie powyżej)
+                  Klucz API Groq (osobny od providera w czacie powyżej)
                 </label>
-                <textarea rows={2} placeholder={"gsk_...\ngsk_... (opcjonalnie kolejny klucz w nowej linii)"}
-                  style={{ width: "100%", fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
+                <input type="password" placeholder="gsk_..."
                   value={groqClassifierKey} onChange={e => setGroqClassifierKey(e.target.value)} />
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  console.groq.com/keys — model llama-3.3-70b-versatile (mocniejszy, lepiej rozróżnia część/cały rower i szacuje rok), 500 000 tokenów/dzień za darmo NA KLUCZ. Możesz wkleić kilka kluczy (każdy w nowej linii lub po przecinku, np. z różnych kont) — program używa ich rotacyjnie i automatycznie przełącza się na kolejny, gdy dany klucz trafi dzienny limit tokenów. Każde świeże ogłoszenie (po przejściu filtra słów i filtra roku) dostaje krótkie pytanie z miejscem na jednozdaniowe uzasadnienie: full / dirt / elektryk górski / inny / niepewne / stary. Tylko "inny" i "stary" (rower sprzed 2017) są od razu odrzucane — nie idą do Gemini. "Niepewne" (lub błąd Groqa) przechodzi dalej, ale z niższym priorytetem w Etapie 2. Puste pole = ten etap jest wyłączony, wszystko leci od razu do Gemini.
+                  console.groq.com/keys — model llama-3.1-8b-instant, 14 400 zapytań/dzień za darmo. Każde świeże ogłoszenie (po przejściu filtra słów) dostaje krótkie pytanie: full / dirt / elektryk górski / inny / niepewne. Tylko "inny" jest od razu odrzucane — nie idzie do Gemini. "Niepewne" (lub błąd Groqa) przechodzi dalej, ale z niższym priorytetem w Etapie 2. Puste pole = ten etap jest wyłączony, wszystko leci od razu do Gemini.
                 </div>
               </div>
 
@@ -2030,17 +1731,6 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 4 }}>
                   Gemini powie TAK tylko gdy szacowany zysk wynosi minimum {minProfit}% ceny zakupu
-                </div>
-              </div>
-
-              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-                  <input type="checkbox" checked={excludeElektryk} onChange={e => setExcludeElektryk(e.target.checked)}
-                    style={{ width: 18, height: 18, accentColor: "#f59e0b" }} />
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>⚡ Wyklucz elektryki górskie (e-MTB)</span>
-                </label>
-                <div style={{ fontSize: 11, color: "#334155", marginTop: 6, marginLeft: 28 }}>
-                  Gdy zaznaczone — ogłoszenia sklasyfikowane przez Groq jako "elektryk_gorski" są odrzucane od razu na Etapie 1, zanim dotrą do Gemini (zero kosztu). Odznacz, żeby wrócić do analizowania e-MTB.
                 </div>
               </div>
             </div>
