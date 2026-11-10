@@ -337,6 +337,7 @@ const GEMINI_PRICES = {
   // Claude Haiku 5.5 (cennik Anthropic, 11.2026, prompty do 100 tys. tokenów): "write" = zapis do cache na 1 h.
   // Cache Claude nie ma opłaty za przechowywanie — płaci się tylko za zapis i odczyty.
   "claude-haiku-5-5":      { in: 0.10, cached: 0.01,  out: 0.50,  storage: 0, write: 0.20 },
+  "claude-sonnet-5-5":     { in: 2.00, cached: 0.10,  out: 10.00, storage: 0, write: 4.00 },
 };
 const GEMINI_PRICE_FALLBACK = { in: 2.00, cached: 0.20, out: 12.00, storage: 4.50 }; // nieznany model — liczymy jak najdroższy
 
@@ -347,9 +348,10 @@ const aiName = (m) => isClaudeModel(m) ? "Claude" : "Gemini";
 // Domyślnie Gemini 2.5 Pro (jak dotąd); w Ustawieniach można wybrać tańszy model.
 const STRONG_GEMINI_MODEL = "gemini-2.5-pro";
 const STRONG_MODELS = [
-  { id: "gemini-2.5-pro",   label: "Gemini 2.5 Pro (dotychczasowy, najdroższy)" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash (z myśleniem)" },
-  { id: "claude-haiku-5-5", label: "Claude Haiku 5.5 (Anthropic — wielokrotnie tańszy)" },
+  { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 (Anthropic — mocny; cena podobna do Gemini 2.5 Pro)" },
+  { id: "gemini-2.5-pro",    label: "Gemini 2.5 Pro (dotychczasowy)" },
+  { id: "claude-haiku-5-5",  label: "Claude Haiku 5.5 (Anthropic — najtańszy)" },
+  { id: "gemini-2.5-flash",  label: "Gemini 2.5 Flash (z myśleniem)" },
 ];
 
 // ── Kolejka ofert i powiadomień (v5.6) ────────────────────────────────────────────────
@@ -367,6 +369,26 @@ const AI_FETCH_TIMEOUT_MS = 180000;               // limit czasu jednego zapytan
 const SCRAPE_TIMEOUT_MS = 30000;
 const DISCORD_TIMEOUT_MS = 20000;
 const ECO_FROM_BUDGET_SHARE = 0.85;               // od 85% budżetu — tryb oszczędny; od 100% — analizy wstrzymane
+// ── v5.11 ──
+const MIN_LISTING_PRICE_DEFAULT = 200;            // tańsze ogłoszenia odpadają bez AI (symboliczne ceny, części, "1 €")
+const SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;     // ogłoszenie niewidziane w wynikach przez 30 dni wypada z pamięci
+const STATUS_NOTIFY_COOLDOWN_MS = 6 * 60 * 60 * 1000; // ten sam problem zgłaszamy na Discord najwyżej co 6 h
+const SCRAPE_BLOCK_PAUSE_MS = 20 * 60 * 1000;     // 2 zablokowane wyszukiwania pod rząd → 20 min przerwy w odpytywaniu Kleinanzeigen
+const OUTBOX_REFRESH_MIN_GAP_MS = 5 * 60 * 1000;  // zaległą okazję sprawdzamy na stronie ogłoszenia najwyżej co 5 min
+const RARE_SEARCH_AFTER_MS = 3 * 24 * 60 * 60 * 1000; // wyszukiwanie bez nowych ofert od 3 dni = "rzadkie"…
+const RARE_SEARCH_RESCAN_MS = 10 * 60 * 1000;     // …sprawdzane co ok. 10 min zamiast w każdym cyklu (popularne częściej)
+const NEAR_DEAL_MAX_OVER = 0.30;                  // "na granicy okazji": cena najwyżej 30% powyżej ceny, przy której zakup się opłaca
+const NEAR_DEAL_OFFER_SHARE = 0.70;               // propozycja dla sprzedawcy: ok. 70% tej ceny, w dół do 50 €
+
+// Numer ogłoszenia z linku: /s-anzeige/<tytuł>/<numer>-217-<miejsce>. Tytuł w linku zmienia się, gdy sprzedawca
+// edytuje ogłoszenie — dlatego ofertę rozpoznajemy po numerze, a nie po całym linku.
+const LISTING_ID_RE = /\/(\d{6,12})-\d+-\d+(?:[/?#]|$)/;
+const listingIdFromHref = (href) => { const m = String(href || "").match(LISTING_ID_RE); return m ? m[1] : null; };
+const fmtAgo = (ts) => {
+  if (!Number.isFinite(ts)) return null;
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  return m < 60 ? `${m} min temu` : m < 48 * 60 ? `${Math.round(m / 60)} h temu` : `${Math.round(m / 1440)} dni temu`;
+};
 
 // Czy liczba z opisu (rocznik, cena nowego) dotyczy PODZESPOŁU, a nie całego roweru.
 // Patrzymy na najbliższe słowo przed liczbą w tej samej linii (do ~45 znaków): podzespół → "component",
@@ -393,7 +415,9 @@ const keywordRe = (kw) => {
 };
 // W OPISIE odrzucamy tylko jednoznaczne zwroty o sprzedaży samej ramy — pojedyncze słowa
 // ("Laufrad", "Ersatzteile", "Rennrad") w opisie kompletnego roweru są normalne ("inkl. Ersatzteile", "kein Tausch gegen Rennrad").
-const DESC_PARTS_ONLY_RE = /\b(?:nur\s+(?:der|den|das)?\s*rahmen(?:set)?|rahmen\s+only|frame\s+only)\b/i;
+const DESC_PARTS_ONLY_RE = /\b(?:nur\s+(?:der|den|das)?\s*rahmen(?:set)?|rahmen\s+only|frame\s+only)\b/gi;
+const DESC_NEGATION_BEFORE_RE = /(?:nicht|kein\w*|not)\s*$/i;           // "nicht nur Rahmen", "not frame only"
+const DESC_COMPLETE_BIKE_RE = /komplett(?:es|er|rad)?\s*(?:fahr)?rad|komplettrad|complete\s+bike|fahrbereit/i;
 
 // Data dodania z karty ogłoszenia na liście wyników: "Heute, 14:22", "Gestern, 09:10", "07.11.2026",
 // "vor 5 Minuten". Zwraca znacznik czasu albo null (nie udało się odczytać).
@@ -430,11 +454,14 @@ const fmtDuration = (ms) => {
 const dealSnapshot = (a) => ({
   typ_roweru: a.typ_roweru, fakty: { rocznik: a.fakty?.rocznik ?? null, rocznik_zrodlo: a.fakty?.rocznik_zrodlo ?? "brak" },
   przewidywany_zysk: a.przewidywany_zysk, transport_eur: a.transport_eur ?? null, krotki_opis: a.krotki_opis,
-  zdjecia: a.zdjecia ?? null, _photos: a._photos ?? null,
+  cena_zakupu_eur: a.cena_zakupu_eur ?? null, szacowana_sprzedaz_eur: a.szacowana_sprzedaz_eur ?? null, // do przeliczenia zysku przy zmianie ceny
+  zdjecia: a.zdjecia ?? null, _photos: a._photos ?? null, _verifyMode: a._verifyMode ?? null, ostrzezenia: a.ostrzezenia ?? null,
+  rozmiar_ramy: a.rozmiar_ramy ?? null, argumenty_negocjacji: a.argumenty_negocjacji ?? null,
 });
 const slimListing = (l) => ({
   listingId: l.listingId, title: l.title, price: l.price ?? null, href: l.href, desc: l.desc || "",
   location: l.location || "", bike: l.bike || "", postedAt: l.postedAt ?? null,
+  prevPrice: l.prevPrice ?? null, photo: l.photo || (Array.isArray(l.images) ? l.images[0] : null) || null,
 });
 
 // Górny limit ceny sprzedaży używanego roweru jako ułamek "ceny nowego" z opisu, wg wieku (lata od rocznika).
@@ -450,18 +477,21 @@ const UNKNOWN_YEAR_CAP = 0.65;
 const UNCERTAIN_LABELS = {
   nisza_custom: "Nisza/custom — brak cen rynkowych",
   za_malo_opisu: "Za mało informacji w opisie",
-  mozliwe_uszkodzenia: "Możliwe uszkodzenia",
   nieznany_model: "Nieznany model",
   inne: "Do sprawdzenia",
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v5.6 (2026-11-09)";
+const APP_VERSION = "v5.11 (2026-11-10)";
 
 // ── Analiza zdjęć ──
-// Zdjęcia idą do Gemini tylko tam, gdzie zmieniają decyzję: słaby opis, wynik "niepewne" i weryfikacja
-// okazji przed wysłaniem. Serwer (api/gemini.js) sam pobiera je z img.kleinanzeigen.de.
+// Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
+// i weryfikacja okazji: WSZYSTKIE zdjęcia z galerii (do 20). Serwer (api/gemini.js) sam pobiera je z img.kleinanzeigen.de.
 const MAX_PHOTOS_PER_CALL = 4;
+const MAX_PHOTOS_ALL = 20;     // górny limit "wszystkich zdjęć" (Claude przyjmuje do 20 zdjęć bez dodatkowych ograniczeń rozmiaru)
+const DETAILS_WAIT_MAX_MS = 2 * 60 * 60 * 1000;  // ile czekać na pełny opis (blokada / błąd strony), zanim ocenimy z fragmentu
+const DETAILS_MAX_AGE_MS = 30 * 60 * 1000;      // oferta czekająca dłużej niż 30 min: przed analizą/wysyłką pobieramy stronę ponownie (cena, dostępność)
+const RESUME_MAX_UNDATED = 5;  // po długiej przerwie: ile ofert BEZ daty na wyszukiwanie mimo to analizujemy
 const WEAK_DESC_CHARS = 250;   // krótszy opis (bez tytułu) = słaby — zdjęcia już w pierwszej analizie
 const WEAK_DESC_RE = /siehe\s+(bilder|fotos?)|(details|infos?|mehr)\s+(auf|siehe)\s+(den\s+)?(bildern|fotos)|see\s+(pictures|photos)|wie\s+auf\s+(den\s+)?(bildern|fotos)/i;
 
@@ -525,6 +555,10 @@ function App() {
   const [aiBudgetPln, setAiBudgetPln] = useState(cfg.aiBudgetPln ?? 400);
   // Koszt transportu jednego roweru do PL (€) — program odejmuje go od zysku przy każdej wycenie.
   const [transportCostEur, setTransportCostEur] = useState(Number.isFinite(cfg.transportCostEur) ? cfg.transportCostEur : TRANSPORT_DEFAULT_EUR);
+  // v5.11: minimalna cena ogłoszenia, webhook komunikatów o problemach, webhook ofert "na granicy okazji"
+  const [minListingPrice, setMinListingPrice] = useState(Number.isFinite(cfg.minListingPrice) ? cfg.minListingPrice : MIN_LISTING_PRICE_DEFAULT);
+  const [statusWebhook, setStatusWebhook] = useState(cfg.statusWebhook || "");
+  const [nearWebhook, setNearWebhook] = useState(cfg.nearWebhook || "");
   const [queueInfo, setQueueInfo] = useState({ pending: 0, outbox: 0 }); // licznik kolejki do panelu Status
   const [lastCycleMs, setLastCycleMs] = useState(null);                  // ile trwał ostatni pełny cykl
   const [stopping, setStopping] = useState(false);                       // STOP kliknięty, kończy się bieżący krok
@@ -628,6 +662,7 @@ function App() {
   const priceDiagLoggedRef = useRef(false); // szczegółowa diagnostyka parsera cen — tylko raz na sesję
   const descDiagLoggedRef  = useRef(false); // diagnostyka parsera pełnego opisu — tylko raz na sesję
   const detailBlockedUntilRef = useRef(0);  // bezpiecznik: do kiedy NIE pobieramy stron ogłoszeń (po blokadzie)
+  const scrapeBlockedUntilRef = useRef(0);  // v5.11: do kiedy NIE odpytujemy wyszukiwań (po 2 blokadach pod rząd)
 
   // Zapamiętaj widziane ogłoszenia między restartami — ID + historia ceny (do wykrywania spadków).
   // Format w localStorage: tablica obiektów {id, price, lowest, notifiedAt, type}.
@@ -635,21 +670,31 @@ function App() {
   // {price:null, lowest:null, ...} (brak punktu odniesienia), żeby pierwszy skan po
   // aktualizacji NIE strzelił fałszywym "spadkiem ceny" dla wszystkiego naraz.
   const PRICE_DROP_THRESHOLD = 0.20; // spadek o min. 20% na znanym ogłoszeniu = istotna obniżka
-  const SEEN_MAX = 4000; // przy 44 wyszukiwaniach na cykl aktywnych ogłoszeń bywa ponad 1000
+  const SEEN_MAX = 15000; // v5.11: było 4000 — przy 44 wyszukiwaniach limit kończył się po kilku dniach
+  // v5.11: klucz = numer ogłoszenia (stare wpisy z całym linkiem są przeliczane), lastSeenAt = kiedy ostatnio
+  // ogłoszenie było w wynikach — z pamięci wypadają ogłoszenia niewidziane od 30 dni, a nie najdawniej dodane.
   const loadSeenMap = () => {
     const map = new Map();
+    const now = Date.now();
     try {
       const raw = JSON.parse(localStorage.getItem("ddf_seen") || "[]");
-      for (const item of raw) {
-        if (typeof item === "string") {
-          map.set(item, { price: null, lowest: null, notifiedAt: null, type: null });
-        } else if (item && item.id) {
-          map.set(item.id, {
-            price: item.price ?? null, lowest: item.lowest ?? null,
-            notifiedAt: item.notifiedAt ?? null, type: item.type ?? null,
-            overMax: item.overMax === true,
-          });
-        }
+      for (const item of Array.isArray(raw) ? raw : []) {
+        const rawId = typeof item === "string" ? item : item?.id;
+        if (!rawId) continue;
+        const id = listingIdFromHref(rawId) || rawId;
+        const e = typeof item === "string"
+          ? { price: null, lowest: null, notifiedAt: null, type: null }
+          : { price: item.price ?? null, lowest: item.lowest ?? null, notifiedAt: item.notifiedAt ?? null, type: item.type ?? null,
+              overMax: item.overMax === true, noPrice: item.noPrice === true };
+        e.lastSeenAt = Number.isFinite(item?.lastSeenAt) ? item.lastSeenAt : now;
+        const prev = map.get(id);
+        if (prev) { // ten sam rower zapamiętany pod dwoma linkami (sprzedawca zmienił tytuł) — scalamy
+          prev.lowest = prev.lowest == null ? e.lowest : e.lowest == null ? prev.lowest : Math.min(prev.lowest, e.lowest);
+          prev.price = prev.price ?? e.price;
+          prev.type = prev.type || e.type;
+          prev.notifiedAt = prev.notifiedAt ?? e.notifiedAt;
+          prev.lastSeenAt = Math.max(prev.lastSeenAt, e.lastSeenAt);
+        } else map.set(id, e);
       }
     } catch {}
     return map;
@@ -665,7 +710,9 @@ function App() {
     try {
       const raw = JSON.parse(localStorage.getItem("ddf_pending") || "[]");
       for (const j of Array.isArray(raw) ? raw : []) {
-        if (j?.listing?.listingId) map.set(j.listing.listingId, { attempts: 0, stage: "new", ...j });
+        if (!j?.listing?.listingId) continue;
+        j.listing.listingId = listingIdFromHref(j.listing.href) || listingIdFromHref(j.listing.listingId) || j.listing.listingId; // v5.11: numer ogłoszenia
+        map.set(j.listing.listingId, { attempts: 0, stage: "new", ...j });
       }
     } catch {}
     return map;
@@ -677,7 +724,11 @@ function App() {
   // item = { id, kind: "deal"|"uncertain", listing, analysis?, reason?, resultId?, addedAt, tries }
   const outboxRef = useRef(null);
   if (outboxRef.current === null) {
-    try { const raw = JSON.parse(localStorage.getItem("ddf_outbox") || "[]"); outboxRef.current = Array.isArray(raw) ? raw : []; }
+    try {
+      const raw = JSON.parse(localStorage.getItem("ddf_outbox") || "[]");
+      outboxRef.current = Array.isArray(raw) ? raw : [];
+      for (const o of outboxRef.current) if (o?.listing) o.listing.listingId = listingIdFromHref(o.listing.href) || o.listing.listingId;
+    }
     catch { outboxRef.current = []; }
   }
 
@@ -727,7 +778,20 @@ function App() {
 
   const persistSeenMap = () => {
     try {
-      const arr = [...seenIdsRef.current.entries()].slice(-SEEN_MAX).map(([id, d]) => ({ id, ...d }));
+      const m = seenIdsRef.current;
+      const now = Date.now();
+      for (const [id, d] of m) if (now - (d.lastSeenAt || 0) > SEEN_TTL_MS) m.delete(id);
+      if (m.size > SEEN_MAX) { // ponad limit — wypadają najdawniej WIDZIANE (nie najdawniej dodane)
+        [...m.entries()].sort((a, b) => (a[1].lastSeenAt || 0) - (b[1].lastSeenAt || 0))
+          .slice(0, m.size - SEEN_MAX).forEach(([id]) => m.delete(id));
+      }
+      const arr = [...m.entries()].map(([id, d]) => {
+        const o = { id };
+        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt"]) if (d[k] != null) o[k] = d[k];
+        if (d.overMax) o.overMax = true;
+        if (d.noPrice) o.noPrice = true;
+        return o;
+      });
       localStorage.setItem("ddf_seen", JSON.stringify(arr));
     } catch {}
   };
@@ -735,7 +799,7 @@ function App() {
   // Nowo odkryte ogłoszenie — zapamiętaj z ceną z chwili pierwszego zobaczenia jako punkt odniesienia.
   const saveSeenEntry = (listing, persist = true) => {
     seenIdsRef.current.set(listing.listingId, {
-      price: listing.price ?? null, lowest: listing.price ?? null, notifiedAt: null, type: null,
+      price: listing.price ?? null, lowest: listing.price ?? null, notifiedAt: null, type: null, lastSeenAt: Date.now(),
       // Droższe niż limit zakupu — zapamiętujemy, żeby sprawdzić ponownie, gdy cena spadnie poniżej limitu
       overMax: listing.price != null && listing.price > maxBuyPrice,
     });
@@ -750,11 +814,18 @@ function App() {
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
 
-  const saveSettings = () => {
-    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, filterMigratedV56: true };
-    localStorage.setItem("ddf_cfg", JSON.stringify(data));
-    addLog("💾 Ustawienia zapisane", "success");
+  const saveSettings = (silent = false) => {
+    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, filterMigratedV56: true };
+    try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
+    if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
+  // v5.11: ustawienia zapisują się same chwilę po każdej zmianie (wcześniej tylko przyciskiem — odświeżenie strony je gubiło)
+  const settingsReadyRef = useRef(false);
+  useEffect(() => {
+    if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
+    const t = setTimeout(() => saveSettings(true), 600);
+    return () => clearTimeout(t);
+  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -855,7 +926,8 @@ function App() {
   // imageUrls (opcjonalnie) — adresy zdjęć z ogłoszenia; serwer pobiera je i dokleja do zapytania (tylko Gemini).
   // cachePrefix (opcjonalnie) — statyczna część promptu (baza cen + reguły), wysyłana PRZED "prompt".
   // Gemini/Groq dostają ją sklejoną z resztą; Claude jako osobny blok ze znacznikiem cache.
-  const callGemini = async (prompt, overrides = {}, cachedContent = null, modelOverride = null, imageUrls = null, cachePrefix = null) => {
+  // cacheable=false — stała część bez znacznika cache Claude (rzadko używany model weryfikacji: zapis do cache kosztuje 2× i zwykle się nie zwraca)
+  const callGemini = async (prompt, overrides = {}, cachedContent = null, modelOverride = null, imageUrls = null, cachePrefix = null, cacheable = true) => {
     const model = modelOverride || geminiModel;
     const prov = providerFor(model);
     const apiKey = keyFor(model);
@@ -863,7 +935,10 @@ function App() {
     const fullText = cachePrefix ? `${cachePrefix}\n\n${prompt}` : prompt;
     if (prov !== "groq") {
       const maxOut = overrides.maxOutputTokens || 600;
-      const est = estimateCallCostUsd(model, fullText.length, maxOut, Array.isArray(imageUrls) ? imageUrls.length : 0);
+      let est = estimateCallCostUsd(model, fullText.length, maxOut, Array.isArray(imageUrls) ? imageUrls.length : 0);
+      // Claude: najgorszy przypadek — cała stała część promptu zapisywana do cache (zapis 1 h jest droższy od zwykłego wejścia)
+      const prC = GEMINI_PRICES[model];
+      if (isClaudeModel(model) && cachePrefix && cacheable && prC?.write) est += (cachePrefix.length / 3) * (prC.write - prC.in) / 1e6;
       if (!budgetAllows(est)) {
         const err = new Error(`budżet AI na ten miesiąc wyczerpany (${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} z ${aiBudgetPln} zł)`);
         err.budget = true;
@@ -875,10 +950,12 @@ function App() {
       model,
       apiKey,
       ...(prov !== "groq" && Array.isArray(imageUrls) && imageUrls.length > 0 ? { imageUrls } : {}),
+      // Stała część (cacheControl) jako osobny blok — proxy wstawia zdjęcia ZA nią, przed danymi ogłoszenia,
+      // żeby wspólny początek promptu (i cache) był taki sam dla wszystkich ogłoszeń. Dla Gemini znacznik jest usuwany.
       messages: prov === "groq"
         ? [{ role: "user", content: fullText }]
-        : prov === "anthropic" && cachePrefix
-          ? [{ role: "user", parts: [{ text: cachePrefix, cacheControl: true }, { text: prompt }] }]
+        : cachePrefix
+          ? [{ role: "user", parts: [{ text: cachePrefix, ...(cacheable ? { cacheControl: true } : {}) }, { text: prompt }] }]
           : [{ role: "user", parts: [{ text: fullText }] }],
       ...(cachedContent ? { cachedContent } : {}),
       // Groq/GPT-OSS: "gałki" myślenia Gemini (pierwsza próba vs eskalacja) tłumaczymy na poziom
@@ -928,7 +1005,9 @@ function App() {
         + (kbNotes.length > 0 ? `Notatki użytkownika (realne transakcje i uwagi — mają pierwszeństwo przed bazą; kwoty sprzedaży w PL bez waluty to złotówki):\n${kbNotes.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}\n\n` : "")
         + `---\n\n`;
 
-      const historyForApi = [...newMsgs];
+      // Ostatnie 20 wiadomości bez komunikatów o błędach; pierwsza musi być od użytkownika (wymóg Claude)
+      const historyForApi = newMsgs.filter(m => !m.isError).slice(-20);
+      while (historyForApi.length > 1 && historyForApi[0].role !== "user") historyForApi.shift();
       if (knowledgeBlock) {
         // Wstrzyknij bazę wiedzy jako kontekst do pierwszej wiadomości w wysyłce (nie zapisujemy tego w widocznej historii)
         historyForApi[0] = { ...historyForApi[0], content: knowledgeBlock + historyForApi[0].content };
@@ -938,6 +1017,10 @@ function App() {
         ? historyForApi.map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }))
         : historyForApi.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
 
+      if (provider !== "groq") {
+        const est = estimateCallCostUsd(geminiModel, JSON.stringify(messages).length, isClaudeModel(geminiModel) ? 16000 : 8192, 0);
+        if (!budgetAllows(est)) throw new Error(`Budżet AI na ten miesiąc wyczerpany (${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} z ${aiBudgetPln} zł) — zwiększ go w Ustawieniach`);
+      }
       const data = await callProxy({
         provider: providerFor(geminiModel),
         model: geminiModel,
@@ -983,6 +1066,21 @@ function App() {
     }
   };
   const callDiscord = (payload) => postDiscord(discordWebhook, discordThread, payload);
+  // v5.11: komunikat o problemie (brak środków AI, blokada, budżet…) — na webhook statusu albo, gdy pusty, na kanał okazji.
+  // Ten sam rodzaj problemu najwyżej co 6 h, żeby nie zasypać kanału.
+  const statusNotifiedRef = useRef({});
+  const notifyStatus = async (kind, text) => {
+    const url = statusWebhook || discordWebhook;
+    if (!url) return;
+    const now = Date.now();
+    if (now - (statusNotifiedRef.current[kind] || 0) < STATUS_NOTIFY_COOLDOWN_MS) return;
+    statusNotifiedRef.current[kind] = now;
+    const r = await postDiscord(url, statusWebhook ? "" : discordThread, { content: `⚙️ **DirtDealFinder — problem** (${new Date().toLocaleString("pl-PL")})\n${text}`.slice(0, 1900) });
+    if (!r.ok) { statusNotifiedRef.current[kind] = 0; addLog(`⚠️ Nie udało się wysłać komunikatu o problemie na Discord (${describeDiscordError(r)})`, "error"); }
+  };
+  const callNearDiscord = (payload) => nearWebhook
+    ? postDiscord(nearWebhook, "", payload)
+    : Promise.resolve({ ok: false, status: 0, retryAfter: null, error: "brak webhooka „na granicy”" });
   const callUncertainDiscord = (payload) => uncertainWebhook
     ? postDiscord(uncertainWebhook, "", payload)
     : Promise.resolve({ ok: false, status: 0, retryAfter: null, error: "brak webhooka niepewnych" });
@@ -1002,8 +1100,13 @@ function App() {
     for (const kw of getFilterKeywordList()) {
       if (kw && keywordRe(kw).test(title)) return kw;
     }
-    const m = String(listing.desc || "").match(DESC_PARTS_ONLY_RE);
-    return m ? `${m[0]} (w opisie)` : null;
+    const desc = String(listing.desc || "");
+    if (DESC_COMPLETE_BIKE_RE.test(desc)) return null; // opis mówi o kompletnym rowerze — nie odrzucamy z opisu
+    for (const m of desc.matchAll(DESC_PARTS_ONLY_RE)) {
+      if (DESC_NEGATION_BEFORE_RE.test(desc.slice(Math.max(0, m.index - 12), m.index))) continue; // "nicht nur Rahmen"
+      return `${m[0]} (w opisie)`;
+    }
+    return null;
   };
 
   // ── Filtr roku — odrzuca stare rowery (< MIN_BIKE_YEAR) ZANIM trafią choćby do Groqa ─────────
@@ -1020,8 +1123,10 @@ function App() {
 
   const RETRO_KEYWORDS = [
     "retro", "vintage", "oldschool", "old school", "klassiker", "youngtimer",
-    "70er", "80er", "90er", "oldtimer", "classic bike", "classic mtb"
+    "oldtimer", "classic bike", "classic mtb"
   ];
+  // "70er/80er/90er" (lata 70./80./90.) tylko jako osobne słowo — "170er", "180er", "190er" to skok zawieszenia, nie retro
+  const RETRO_DECADE_RE = /(?<![\d.,])(?:70|80|90)er\b/i;
 
   // Wyciąga rok z tytułu — najpierw próbuje jawnych wzorców roku produkcji (Bj., Baujahr, MY, Modelljahr),
   // dopiero potem "gołego" 4-cyfrowego tokenu w zakresie 1970-2035 (odfiltrowując ceny typu "1800€").
@@ -1043,23 +1148,25 @@ function App() {
       }
     }
 
-    // Gołe 4 cyfry, ale NIE gdy bezpośrednio sąsiadują z € / ceną (żeby nie złapać "1800€" jako roku)
-    const bareMatches = [...t.matchAll(/\b(19[7-9]\d|20[0-3]\d)\b/g)];
-    for (const m of bareMatches) {
+    // Gołe 4 cyfry — pomijamy liczby, które są ceną albo przebiegiem ("2000 km", "NP 2000 Euro", "VB 2000", "1800€").
+    // Z kilku lat bierzemy NAJNOWSZY ("2016 / Umbau 2019") — wynik służy tylko do twardego odrzucenia starego roweru.
+    const years = [];
+    for (const m of t.matchAll(/\b(19[7-9]\d|20[0-3]\d)\b/g)) {
       const idx = m.index ?? 0;
-      const after = t.slice(idx + m[0].length, idx + m[0].length + 3);
-      const before = t.slice(Math.max(0, idx - 3), idx);
-      if (/^\s*[€$]/.test(after) || /[€$]\s*$/.test(before)) continue; // to raczej cena, nie rok
-      return parseInt(m[1], 10);
+      const after = t.slice(idx + m[0].length, idx + m[0].length + 12);
+      const before = t.slice(Math.max(0, idx - 12), idx);
+      if (/^\s*(?:€|\$|eur\b|euro|,-|\.-|km\b|kilometer|vb\b|wh\b|mm\b|kg\b|g\b|zoll)/i.test(after)) continue;
+      if (/(?:\bnp|neupreis|uvp|\bvb|preis|f[üu]r|\bnur|\bab|ca\.?|€|\$)\s*:?\s*$/i.test(before)) continue;
+      years.push(parseInt(m[1], 10));
     }
-    return null;
+    return years.length > 0 ? Math.max(...years) : null;
   };
 
   const checkListingYearBlock = (listing) => {
     const title = listing.title || "";
     const titleLower = title.toLowerCase();
 
-    const retroHit = RETRO_KEYWORDS.find(kw => titleLower.includes(kw));
+    const retroHit = RETRO_KEYWORDS.find(kw => titleLower.includes(kw)) || (title.match(RETRO_DECADE_RE) || [])[0];
     if (retroHit) return { blocked: true, reason: `słowo "${retroHit}" w tytule` };
 
     const year = extractYearFromTitle(title);
@@ -1095,6 +1202,7 @@ function App() {
   // Jeden powód odrzucenia bez AI (cena/e-bike/sklep) albo null
   const freeRejectReason = (listing) => {
     if (listing.price != null && listing.price > maxBuyPrice) return { kind: "price", msg: `cena ${listing.price}€ powyżej limitu zakupu ${maxBuyPrice}€` };
+    if (listing.price != null && listing.price < minListingPrice) return { kind: "cheap", msg: `cena ${listing.price}€ poniżej minimum ${minListingPrice}€` };
     const eb = excludeElektryk ? detectEbike(listing) : null;
     if (eb) return { kind: "ebike", msg: `e-bike (wykryto: "${eb}")` };
     const shop = detectNewFromShop(listing);
@@ -1176,6 +1284,7 @@ function App() {
       const soonest = Math.min(...keys.map(k => groqKeyCooldownsRef.current[k] || 0));
       const remainingSec = Math.max(0, Math.ceil((soonest - now) / 1000));
       addLog(`⏸️ Groq: wszystkie klucze (${keys.length}) w cooldownie (TPD) — pomijam wywołanie, najbliższy wznowi za ~${remainingSec}s — ${listing.title}`, "info");
+      notifyStatus("groq_tpd", `⏸️ Groq (etap 1): dzienny limit tokenów wyczerpany na wszystkich kluczach — oferty idą do analizy AI bez wstępnej klasyfikacji (drożej). Wznowienie za ok. ${Math.ceil(remainingSec / 60)} min.`);
       return "niedostepny";
     }
 
@@ -1326,6 +1435,28 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
   const DESC_MAX_CHARS = 6000;                   // dłuższe opisy przycinamy (koszt tokenów) — 6000 znaków to ok. 2 tys. tokenów
   const DETAIL_BLOCK_PAUSE_MS = 30 * 60 * 1000;  // po wykryciu blokady: 30 min przerwy w pobieraniu
 
+  // Cena na stronie ogłoszenia: element ceny → mikrodane (itemprop/meta) → JSON-LD. Wcześniej tylko #viewad-price,
+  // więc zmiana układu strony wyglądała jak "cena zniknęła".
+  const priceFromDetailDoc = (doc) => {
+    const p1 = toPrice(doc.querySelector("#viewad-price, [id*='viewad-price']")?.textContent, false);
+    if (p1 != null) return p1;
+    for (const el of doc.querySelectorAll('meta[itemprop="price"], [itemprop="price"][content], meta[property="product:price:amount"]')) {
+      const v = parseFloat(String(el.getAttribute("content") || "").replace(",", "."));
+      if (Number.isFinite(v) && v > 0) return Math.round(v);
+    }
+    for (const s of doc.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const j = JSON.parse(s.textContent);
+        for (const it of (Array.isArray(j) ? j : [j])) {
+          const offers = Array.isArray(it?.offers) ? it.offers[0] : it?.offers;
+          const v = parseFloat(String(offers?.price ?? "").replace(",", "."));
+          if (Number.isFinite(v) && v > 0) return Math.round(v);
+        }
+      } catch {}
+    }
+    return null;
+  };
+
   const fetchListingDetails = async (listing) => {
     if (!/^https:\/\/(www\.)?kleinanzeigen\.de\//.test(listing.href || "")) {
       return { ok: false, reason: "link spoza Kleinanzeigen" };
@@ -1382,7 +1513,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
       desc: desc.length > DESC_MAX_CHARS ? desc.slice(0, DESC_MAX_CHARS) + "…" : desc,
       truncated: desc.length > DESC_MAX_CHARS,
       fullLength: desc.length,
-      price: toPrice(doc.querySelector("#viewad-price")?.textContent, false),
+      price: priceFromDetailDoc(doc),
       images: extractListingImages(doc),
     };
   };
@@ -1405,9 +1536,12 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     };
     const fromImg = (img) => { add(img.getAttribute("src")); add(img.getAttribute("data-imgsrc")); add(img.getAttribute("data-src")); };
     add(doc.querySelector('meta[property="og:image"]')?.getAttribute("content"));
-    doc.querySelectorAll(".galleryimage-element img, #viewad-image, #viewad-thumbnail-list img, .galleryimage-large img").forEach(fromImg);
-    if (out.length < 2) doc.querySelectorAll("img").forEach(fromImg);
-    return out.slice(0, 12);
+    // Tylko kontenery galerii TEGO ogłoszenia — nigdy wszystkie <img> ze strony (polecane oferty, reklamy).
+    doc.querySelectorAll([
+      ".galleryimage-element img", "#viewad-image", "#viewad-thumbnail-list img", ".galleryimage-large img",
+      "#viewad-gallery img", "[data-testid*='gallery'] img", "[class*='gallery'] img", "[id*='gallery'] img",
+    ].join(", ")).forEach(img => { if (!img.closest("[class*='recommend'], [class*='similar'], [id*='recommend'], aside, article.aditem")) fromImg(img); });
+    return out.slice(0, MAX_PHOTOS_ALL);
   };
 
   // ── HTML parser ────────────────────────────────────────────────────────
@@ -1420,7 +1554,9 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     const bodyText = doc.body?.innerText || doc.body?.textContent || "";
     if (bodyText.includes("captcha") || bodyText.includes("robot") || bodyText.includes("blocked")) {
       addLog("⚠️ Kleinanzeigen wykrył bota — captcha!", "error");
-      return [];
+      const blocked = [];
+      blocked.blocked = true; // pusty wynik z powodu blokady — NIE to samo co prawidłowo pusta strona
+      return blocked;
     }
 
     // Próbuj różne selektory — Kleinanzeigen zmienia strukturę
@@ -1436,8 +1572,9 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
         ? linkEl.getAttribute("href")
         : "https://www.kleinanzeigen.de" + linkEl.getAttribute("href");
 
-      const idMatch = href.match(/-(\d{7,})/);
-      const listingId = idMatch ? idMatch[1] : href;
+      // Numer ogłoszenia z linku (…/<numer>-217-<miejsce>), awaryjnie z data-adid karty, dopiero potem cały link
+      const adid = article.getAttribute("data-adid") || "";
+      const listingId = listingIdFromHref(href) || (/^\d{6,12}$/.test(adid) ? adid : null) || href;
 
       // ── Układ strony: od ~09.2026 Kleinanzeigen serwuje wyniki w nowym układzie (Astro/Tailwind):
       // karta = article[data-adid], tytuł = h3, opis = <p> zaraz za h3, cena = p.text-title3
@@ -1511,6 +1648,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     // to najpewniej parser nie pasuje do aktualnego HTML-a Kleinanzeigen.
     const noPriceCount = items.filter(i => i.price == null).length;
     if (items.length >= 4 && noPriceCount / items.length >= 0.5) {
+      items.priceParseBroken = true; // v5.11: takie wyszukiwanie pomijamy w tym cyklu — inaczej wszystko odpadłoby jako "brak ceny"
       addLog(`⚠️ Parser: ${noPriceCount}/${items.length} ogłoszeń bez odczytanej ceny (${bikeLabel}) — możliwa zmiana HTML Kleinanzeigen`, "error");
       if (firstNoPriceArticle && !priceDiagLoggedRef.current) {
         priceDiagLoggedRef.current = true;
@@ -1585,7 +1723,7 @@ Do tej analizy dołączono do ${n} pierwszych zdjęć z galerii ogłoszenia (pie
 • rozpoznać model i generację (kształt ramy, układ amortyzatora, prowadzenie linek, malowanie typowe dla rocznika), rozmiar kół i materiał ramy (karbon czy alu);
 • sprawdzić widoczny osprzęt i zgodność z opisem (np. złote goleni Kashima = Fox Factory, czarne = Rhythm / Performance; liczba zębatek kasety; silnik / bateria = e-bike);
 • ocenić widoczny stan: rdza, głębokie rysy, wgniecenia, pęknięcia, braki części, krzywe koło;
-• wykryć zdjęcia katalogowe / stockowe zamiast prawdziwych (studyjne, białe tło, identyczne jak u producenta) — przy podejrzanie niskiej cenie to sygnał oszustwa → "niepewne".
+• wykryć zdjęcia katalogowe / stockowe zamiast prawdziwych (studyjne, białe tło, identyczne jak u producenta) — wpisz to w "ostrzezenia" (NIE zmieniaj przez to decyzji — użytkownik sam weryfikuje sprzedawcę).
 Ze zdjęć NIE odczytasz pewnie drobnych napisów ani ukrytych wad (luzy łożysk, stan amortyzatora od środka) — nie zgaduj ich. Gdy zdjęcia przeczą opisowi (inny model lub generacja, alu zamiast karbonu, uszkodzenia), ufaj zdjęciom i napisz to w "powod_decyzji". Opis nadal jest głównym źródłem informacji — zdjęcia go uzupełniają.
 Dodaj do odpowiedzi JSON pole "zdjecia": krótko (max 25 słów), co widać na zdjęciach i czy zgadza się z opisem.`;
 
@@ -1614,7 +1752,7 @@ Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
     // Krótka, DYNAMICZNA notka o wyniku Etapu 1 — wstawiana dopiero przy ogłoszeniu (na końcu promptu),
     // żeby nie psuć wspólnego, cache'owalnego prefiksu powyżej.
     const typeHint = typeIsTrusted
-      ? `To ogłoszenie zostało już wstępnie sklasyfikowane (Etap 1) jako typ: "${groqType}". NIE klasyfikuj typu od nowa — w polu "typ_roweru" wpisz dokładnie "${groqType}". Fakty z KROKU 1 (rocznik, e-bike, sprzedawca, stan, kompletność) ustal jednak samodzielnie z opisu — są sprawdzane niezależnie od typu.\n`
+      ? `To ogłoszenie zostało już wstępnie sklasyfikowane (Etap 1) jako typ: "${groqType}". W polu "typ_roweru" wpisz "${groqType}" — chyba że opis albo zdjęcia JEDNOZNACZNIE pokazują inny typ (np. hardtail zamiast fulla, dirt zamiast fulla, silnik): wtedy wpisz właściwy typ i napisz dlaczego w "powod_decyzji". Fakty z KROKU 1 (rocznik, e-bike, sprzedawca, stan, kompletność) ustal jednak samodzielnie z opisu — są sprawdzane niezależnie od typu.\n`
       : `Wstępna klasyfikacja typu (Etap 1) była niepewna — sam określ typ wg zasad z sekcji "ROZPOZNAWANIE TYPU ROWERU" wyżej.\n`;
 
     const staticPrefix = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
@@ -1649,7 +1787,7 @@ ${typeInstructions}=== OCENA OPŁACALNOŚCI ===
   - Na podstawie modelu, roku produkcji, wyposażenia i stanu (opisanego w tytule/opisie) oszacuj realną cenę sprzedaży w Polsce (w PLN i EUR).
   - Oblicz przewidywany zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia minus koszt transportu do Polski ${transportCostEur}€ (stały koszt sprowadzenia jednego roweru — odejmij go dokładnie raz).
   - decyzja: "tak" TYLKO jeśli zysk (już po odjęciu transportu) wynosi minimum ${minProfit}% ceny zakupu I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
-  - decyzja: "niepewne" gdy NAPRAWDĘ brakuje kluczowych informacji — np. brak ceny w ogłoszeniu, opis faktycznie nie zawiera ŻADNYCH informacji o stanie/wyposażeniu/roku, marka/model jest Ci kompletnie nieznana (egzotyczna/no-name), lub niejasny rok produkcji którego nie da się oszacować. NIE oznaczaj jako "niepewne" tylko dlatego, że modelu nie ma w bazie — jeśli rozpoznajesz markę i segment (nawet bez dokładnej ceny w pamięci), OSZACUJ z wyceny kategorii z części ogólnej bazy i ogólnej wiedzy rynkowej (patrz "MODELE SPOZA BAZY" wyżej), nawet z szerszym marginesem błędu. NIE odrzucaj automatycznie jako "nie" gdy czegoś brakuje — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
+  - decyzja: "niepewne" gdy NAPRAWDĘ brakuje kluczowych informacji — np. opis faktycznie nie zawiera ŻADNYCH informacji o stanie/wyposażeniu/roku, marka/model jest Ci kompletnie nieznana (egzotyczna/no-name), lub niejasny rok produkcji którego nie da się oszacować. NIE oznaczaj jako "niepewne" tylko dlatego, że modelu nie ma w bazie — jeśli rozpoznajesz markę i segment (nawet bez dokładnej ceny w pamięci), OSZACUJ z wyceny kategorii z części ogólnej bazy i ogólnej wiedzy rynkowej (patrz "MODELE SPOZA BAZY" wyżej), nawet z szerszym marginesem błędu. NIE odrzucaj automatycznie jako "nie" gdy czegoś brakuje — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
   - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
   - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji. Dla e-MTB uwzględnij też stan baterii/silnika jeśli opisany.
   - TWARDA REGUŁA ROKU: rower z rocznikiem (podanym albo oszacowanym w KROKU 1) sprzed ${MIN_BIKE_YEAR} → decyzja: "nie", niezależnie od ceny i pozornej opłacalności.
@@ -1657,7 +1795,7 @@ ${typeInstructions}=== OCENA OPŁACALNOŚCI ===
   - NOWY ROWER ZE SKLEPU (sprzedawca "sklep" + stan "nowy") → decyzja: "nie" — to cena detaliczna, na odsprzedaży nie da się zarobić.
   - BRAK ROCZNIKA to norma — NIE jest powodem do "niepewne". Gdy rocznika nie da się ustalić, oceniaj normalnie po modelu, osprzęcie i stanie, a cenę sprzedaży szacuj ostrożnie (raczej dolna granica przedziału cen dla tego modelu).
   - Dla "niepewne" ustaw "niepewne_kategoria" na najbardziej konkretny powód; dla "tak"/"nie" wpisz null.
-  - Jeśli cena ogłoszenia nie jest podana (null/brak) → decyzja: "niepewne" (nie "nie" — może być warta sprawdzenia ręcznie).${chatInfo}
+  - PODEJRZANIE NISKA CENA, MOŻLIWE OSZUSTWO, UKRYTE WADY — to NIE jest powód do "niepewne" ani "nie". Użytkownik sam weryfikuje sprzedawcę i stan roweru. Oceniaj wg wyceny: jeśli zysk spełnia próg → "tak", a podejrzenia (np. "cena podejrzanie niska", "zdjęcia katalogowe", "sprzedawca bez historii", "możliwe ukryte wady") wpisz krótko w polu "ostrzezenia". Uszkodzenia OPISANE w ogłoszeniu albo WYRAŹNIE WIDOCZNE na zdjęciach uwzględnij w wycenie (niższa cena sprzedaży) — samo podejrzenie wad nie obniża decyzji.${chatInfo}
 
 Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON, TYLKO liczby i słowa kluczowe — bez opisów słownych, oszczędzaj tokeny — WYJĄTEK: pole "powod_decyzji" poniżej):
 {
@@ -1675,8 +1813,11 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
   "przewidywany_zysk": liczba w EUR (sprzedaż − zakup − transport ${transportCostEur}€) lub 0,
-  "niepewne_kategoria": "nisza_custom" | "za_malo_opisu" | "mozliwe_uszkodzenia" | "nieznany_model" | "inne" | null,
-  "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'brak ceny w ogłoszeniu' / 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": źródło ceny — pasmo z bazy (np. 'baza: Torque AL 2018–2021'), notatka użytkownika, wycena kategorii z bazy albo własna wiedza rynkowa."
+  "niepewne_kategoria": "nisza_custom" | "za_malo_opisu" | "nieznany_model" | "inne" | null,
+  "ostrzezenia": "krótko (max 15 słów): podejrzenia do sprawdzenia przez użytkownika — np. cena podejrzanie niska, zdjęcia katalogowe, możliwe ukryte wady — albo null",
+  "rozmiar_ramy": "rozmiar ramy z tytułu/opisu, np. \"L\", \"M/L\", \"48 cm\" — albo null",
+  "argumenty_negocjacji": "TYLKO gdy decyzja \"nie\" z powodu za małego zysku: 1–3 krótkie, PRAWDZIWE (wynikające z ogłoszenia lub rynku) powody niższej ceny, PO NIEMIECKU, rozdzielone średnikiem — np. \"Baujahr 2018; Kette und Bremsbeläge bald fällig; vergleichbare Räder werden günstiger angeboten\" — w pozostałych przypadkach null",
+  "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": źródło ceny — pasmo z bazy (np. 'baza: Torque AL 2018–2021'), notatka użytkownika, wycena kategorii z bazy albo własna wiedza rynkowa."
 }
 
 === KONIEC CZĘŚCI STAŁEJ === (wszystko powyżej tej linii to staticPrefix — kandydat do explicit cache; patrz getCachedContentName)`;
@@ -1778,7 +1919,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
         try {
           const data = cachedContentName
             ? await callGemini(dyn, effectiveOverrides, cachedContentName, null, images)
-            : await callGemini(dyn, effectiveOverrides, null, modelForCall, images, staticPrefix);
+            : await callGemini(dyn, effectiveOverrides, null, modelForCall, images, staticPrefix, !modelForCall);
           if (images && !photoLogged && !data?.error) {
             photoLogged = true;
             const attached = Number(data?.imagesAttached) || 0;
@@ -1846,9 +1987,15 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           parsed.fakty = fakty;
 
           // Typ: zaufany z Etapu 1 albo z odpowiedzi Gemini. Rower z silnikiem nie jest zwykłym full/dirt.
+          // Gdy AI (np. po obejrzeniu zdjęć) widzi inny typ niż Groq — zapamiętujemy sprzeczność; okazja z taką
+          // sprzecznością nie idzie jako "tak", tylko do ręcznego sprawdzenia (niżej).
+          const modelTyp = ["full", "dirt", "elektryk_gorski", "inny"].includes(parsed.typ_roweru) ? parsed.typ_roweru : null;
+          const typeConflict = typeIsTrusted && modelTyp != null && modelTyp !== groqType && !(modelTyp === "elektryk_gorski" && f.e_bike === true);
+          // v5.11: przy sprzeczności Groq vs AI przyjmujemy typ od AI (widzi pełny opis i zdjęcia); okazja i tak przechodzi weryfikację
           let typ = typeIsTrusted
-            ? groqType
+            ? (typeConflict ? modelTyp : groqType)
             : (["full", "dirt", "elektryk_gorski"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny");
+          if (typeConflict) addLog(`ℹ️ Sprzeczne rozpoznanie typu: Etap 1 (Groq) „${groqType}”, analiza AI${images ? " ze zdjęciami" : ""} „${modelTyp}” — przyjmuję typ od AI — ${listing.title}`, "info");
           if (fakty.e_bike && (typ === "full" || typ === "dirt")) {
             addLog(`⚡ Gemini: z opisu wynika e-bike — zmieniam typ "${typ}" na "elektryk_gorski" — ${listing.title}`, "info");
             typ = "elektryk_gorski";
@@ -1958,6 +2105,20 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             }
           }
 
+          // ── "NIE" przy zysku ≥ progu (bez twardego powodu): liczby decydują. W pierwszej analizie → "tak" (sprawdzi
+          // weryfikacja); u weryfikatora → do niepewnych (sam sobie przeczy — niech oceni człowiek).
+          if (parsed.decyzja === "nie" && !parsed.odrzucenie && typ !== "inny" && cenaNum > 0 && zyskLiczony != null
+            && (zyskLiczony / cenaNum) * 100 >= minProfit) {
+            const pctTxt = ((zyskLiczony / cenaNum) * 100).toFixed(1);
+            if (opts.verify) {
+              addLog(`⚠️ Weryfikator: "nie", ale z jego własnej wyceny zysk ${pctTxt}% (próg ${minProfit}%) — do ręcznego sprawdzenia — ${listing.title}`, "error");
+              markUncertain("inne", `weryfikator napisał „nie”, ale z jego wyceny zysk ~${zyskLiczony}€ (${pctTxt}%)${parsed.powod_decyzji ? ` — ${parsed.powod_decyzji}` : ""}`.slice(0, 220));
+            } else {
+              addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: decyzja "nie", ale z liczb wychodzi zysk ${pctTxt}% (próg ${minProfit}%) — liczby decydują: "tak", sprawdzi weryfikacja — ${listing.title}`, "info");
+              parsed.decyzja = "tak";
+            }
+          }
+
           // ── "TAK" MUSI SIĘ OBRONIĆ: kompletne liczby i próg zysku ──
           if (parsed.decyzja === "tak") {
             if (cenaNum == null || sprzedazNum == null || cenaNum <= 0) {
@@ -1968,6 +2129,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
               parsed.decyzja = "nie";
             }
           }
+          if (typeConflict) parsed._typeConflict = modelTyp;
           if (parsed.decyzja === "niepewne" && !parsed.niepewne_kategoria) parsed.niepewne_kategoria = "inne";
           if (parsed.decyzja !== "niepewne") parsed.niepewne_kategoria = null;
 
@@ -2002,7 +2164,18 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           if (parsed.powod_decyzji && parsed.decyzja !== "niepewne") {
             parsed.krotki_opis += ` (${parsed.powod_decyzji})`;
           }
+          // Ostrzeżenia do ręcznej weryfikacji (np. podejrzanie niska cena) — informacja, nie zmiana decyzji
+          parsed.ostrzezenia = typeof parsed.ostrzezenia === "string" && parsed.ostrzezenia.trim() && !/^(null|brak|none|-)$/i.test(parsed.ostrzezenia.trim())
+            ? parsed.ostrzezenia.trim().slice(0, 200) : null;
+          if (parsed.ostrzezenia) parsed.krotki_opis += ` ⚠️ ${parsed.ostrzezenia}`;
+          const cleanStr = (v, max) => {
+            const s = Array.isArray(v) ? v.filter(x => typeof x === "string").join("; ") : typeof v === "string" ? v : "";
+            return s.trim() && !/^(null|brak|none|-)$/i.test(s.trim()) ? s.trim().slice(0, max) : null;
+          };
+          parsed.rozmiar_ramy = cleanStr(parsed.rozmiar_ramy, 24);
+          parsed.argumenty_negocjacji = cleanStr(parsed.argumenty_negocjacji, 240);
           // Zdjęcia: co Gemini na nich zobaczył (pokazujemy w wynikach i na Discordzie)
+          parsed._photosRequested = images ? images.length : 0;
           if (images && (Number(data?.imagesAttached) || 0) > 0) {
             parsed._photos = Number(data.imagesAttached);
             parsed.zdjecia = typeof parsed.zdjecia === "string" && parsed.zdjecia.trim() ? parsed.zdjecia.trim().slice(0, 240) : null;
@@ -2028,6 +2201,13 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // Limit zapytań (429 / quota) — callGemini RZUCA błąd, więc obsługa musi być tutaj, nie wyżej.
           // Ważne zwłaszcza dla 2.5 Pro, który ma niższe limity zapytań na minutę niż Flash.
           const isQuota = /quota|429|exhausted|rate limit/i.test(msg);
+          // v5.11: brak środków / zły klucz / brak uprawnień — ponawianie nic nie da, a oferty nie mogą przez to lądować
+          // w "niepewnych". Zwracamy _fatal: analizy stają, oferty czekają w kolejce, idzie komunikat na Discord.
+          const isFatal = !isQuota && /credit balance|insufficient.{0,20}(credit|funds|balance)|billing|HTTP 40[13]\b|authentication_error|permission_error|x-api-key|API key not valid|API_KEY_INVALID|PERMISSION_DENIED|does not have permission|Brak klucza/i.test(msg);
+          if (isFatal) {
+            addLog(`⛔ ${aiName(modelForCall || geminiModel)} (${modelForCall || geminiModel}): ${msg.slice(0, 200)}`, "error");
+            return { _fatal: true, reason: `${aiName(modelForCall || geminiModel)} (${modelForCall || geminiModel}): ${msg.slice(0, 200)}` };
+          }
           if (isQuota && attempt < 3) {
             const m = msg.match(/retry in ([\d.]+)\s*s/i);
             const waitSec = m ? Math.ceil(parseFloat(m[1])) + 2 : 30;
@@ -2069,7 +2249,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     const tier = tierRaw === "stop" ? "eco" : tierRaw;
     const ecoModel = !isClaudeModel(geminiModel) && /pro|flash-latest|gemini-3/i.test(geminiModel) ? "gemini-2.5-flash" : null; // eco: tańszy zamiennik drogiego modelu
     const PLANS = {
-      premium: { first: { budget: 2048, level: "medium" }, esc: { model: strongModel, budget: 8192, level: "high" }, ver: { model: strongModel, budget: 16384, level: "high" } },
+      premium: { first: { budget: 2048, level: "medium" }, esc: { budget: 8192, level: "high" }, ver: { model: strongModel, budget: 16384, level: "high" } },
       normal:  { first: { budget: 1024, level: "low" }, esc: { budget: -1, level: "medium" }, ver: { model: strongModel, budget: 16384, level: "high" } },
       eco:     { first: { budget: 512, level: "low", model: ecoModel }, esc: { budget: 2048, level: "low", model: ecoModel }, ver: { budget: -1, level: "medium", model: ecoModel } },
       groq:    { first: { effort: "low" }, esc: { effort: "medium" }, ver: { effort: "high" } },
@@ -2099,15 +2279,21 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
       return `${model}, myślenie ${isGen3(model) ? step.level : step.budget === -1 ? "dynamiczne" : step.budget}`;
     };
 
-    // ── Próba #1 ── (słaby opis + są zdjęcia → zdjęcia od razu, zamiast marnować próbę na sam tekst)
+    // ── Próba #1 ── zawsze ze zdjęciami (jeśli są i analiza zdjęć jest włączona)
     const [firstOv, firstOpts] = stepConfig(plan.first);
-    const firstPhotos = weakDesc && photoUrls.length > 0;
-    if (firstPhotos) addLog(`📷 Słaby opis (${descForWeak.length} znaków) — pierwsza analiza od razu ze zdjęciami — ${listing.title}`, "info");
-    let current = await attemptAnalysis(firstOv, { ...firstOpts, images: firstPhotos ? photoUrls : null });
+    if (photoUrls.length > 0 && weakDesc) addLog(`📷 Słaby opis (${descForWeak.length} znaków) — zdjęcia są głównym źródłem informacji — ${listing.title}`, "info");
+    let current = await attemptAnalysis(firstOv, { ...firstOpts, images: photoUrls.length > 0 ? photoUrls : null });
     if (!current) return null; // twardy błąd (quota/parsing) — już zalogowany wyżej
-    if (current._aborted || current._budget) return current; // STOP albo budżet — oferta zostaje w kolejce
+    if (current._aborted || current._budget || current._fatal) return current; // STOP, budżet albo krytyczny błąd — oferta zostaje w kolejce
 
-    // ── Dokładniejsza analiza: "niepewne" albo "nie" tuż przy progu zysku ──
+    // Wszystkie zdjęcia z galerii (do 20) — dla "niepewnych" i weryfikacji okazji
+    const allPhotos = (provider !== "groq" && analyzePhotos && Array.isArray(listing.images)) ? listing.images.slice(0, MAX_PHOTOS_ALL) : [];
+    // Sprzeczność typu (Groq vs AI) zapamiętujemy z KAŻDEJ analizy — weryfikator musi ją rozstrzygnąć
+    let typeConflictNote = null;
+    const noteConflict = (r) => { if (r?._typeConflict && !typeConflictNote) typeConflictNote = `Etap 1 (Groq) rozpoznał typ „${groqType}”, a jedna z analiz AI „${r._typeConflict}”`; };
+    noteConflict(current);
+
+    // ── Dokładniejsza analiza: "niepewne" (ze WSZYSTKIMI zdjęciami) albo "nie" tuż przy progu zysku ──
     // (każde "tak" i tak przechodzi niżej weryfikację, więc tu go nie powtarzamy)
     const profitPctOf = (r) => (r.cena_zakupu_eur > 0 && r.przewidywany_zysk != null) ? (r.przewidywany_zysk / r.cena_zakupu_eur) * 100 : null;
     const pct1 = profitPctOf(current);
@@ -2117,23 +2303,35 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
       const why = current.decyzja === "niepewne"
         ? `niepewne (${UNCERTAIN_LABELS[current.niepewne_kategoria] || "?"})`
         : `wynik graniczny (zysk ~${pct1.toFixed(1)}% vs próg ${minProfit}%)`;
-      const escPhotos = photoUrls.length > 0 && (current.decyzja === "niepewne" || weakDesc);
-      addLog(`🧠 Gemini: ${why} — druga, dokładniejsza analiza (${stepLabel(plan.esc)}${escPhotos ? ", ze zdjęciami" : ""}) — ${listing.title}`, "info");
+      const escImages = current.decyzja === "niepewne" ? allPhotos : photoUrls;
+      const escNote = current.decyzja === "niepewne" && allPhotos.length > photoUrls.length
+        ? `=== WSZYSTKIE ZDJĘCIA ===\nPoprzednia analiza z ${photoUrls.length} zdjęciami dała "niepewne" (${UNCERTAIN_LABELS[current.niepewne_kategoria] || "?"}${current.powod_decyzji ? `: ${current.powod_decyzji}` : ""}). Teraz dołączono wszystkie zdjęcia z ogłoszenia (${allPhotos.length}) — dalsze zwykle pokazują zbliżenia osprzętu i stanu. Sprawdź, czy rozstrzygają tę wątpliwość. Jeśli nadal nie — zostaw "niepewne".`
+        : null;
+      addLog(`🧠 ${aiName(geminiModel)}: ${why} — druga, dokładniejsza analiza (${stepLabel(plan.esc)}${escImages.length > 0 ? `, zdjęć: ${escImages.length}` : ""}) — ${listing.title}`, "info");
       const [escOv, escOpts] = stepConfig(plan.esc);
-      const esc = !runningRef.current ? null : await attemptAnalysis(escOv, { ...escOpts, images: escPhotos ? photoUrls : null });
-      if (esc && (esc._aborted || esc._budget)) {
-        addLog(`ℹ️ Dokładniejsza analiza pominięta (${esc._budget ? "budżet AI wyczerpany" : "STOP"}) — zostaje wynik pierwszej próby — ${listing.title}`, "info");
+      if (!runningRef.current) return { _aborted: true };
+      const esc = await attemptAnalysis(escOv, { ...escOpts, extra: escNote, images: escImages.length > 0 ? escImages : null });
+      if (esc?._aborted || esc?._fatal) return esc; // STOP / krytyczny błąd — oferta zostaje w kolejce i będzie dokończona później
+      if (esc?._budget) {
+        addLog(`ℹ️ Dokładniejsza analiza pominięta (budżet AI wyczerpany) — zostaje wynik pierwszej próby — ${listing.title}`, "info");
       } else if (esc) {
-        addLog(`🧠 Gemini (dokładniejsza analiza): decyzja="${esc.decyzja}" (było: "${current.decyzja}") — ${listing.title}`, "info");
+        addLog(`🧠 Dokładniejsza analiza${esc._photos ? ` (${esc._photos} zdjęć)` : ""}: decyzja="${esc.decyzja}" (było: "${current.decyzja}") — ${listing.title}`, "info");
         esc._escalated = true;
+        noteConflict(esc);
         current = esc;
       } else {
-        addLog(`⚠️ Gemini: dokładniejsza analiza nie powiodła się — zostaje wynik pierwszej próby — ${listing.title}`, "error");
+        addLog(`⚠️ Dokładniejsza analiza nie powiodła się — zostaje wynik pierwszej próby — ${listing.title}`, "error");
       }
     }
 
     if (current.decyzja !== "tak") return current;
     if (!runningRef.current) return { _aborted: true }; // STOP — okazja bez weryfikacji nie jest wysyłana, wróci w kolejce
+    // Bez pełnego opisu (strona ogłoszenia niedostępna) okazja nie przechodzi jako "tak" — do ręcznego sprawdzenia
+    if (!listing.fullDesc) {
+      addLog(`⚠️ Okazja oceniona tylko z krótkiego fragmentu (pełny opis niedostępny) — przenoszę do niepewnych — ${listing.title}`, "error");
+      return { ...current, decyzja: "niepewne", oplaca_sie: false, niepewne_kategoria: "za_malo_opisu",
+        krotki_opis: `${UNCERTAIN_LABELS.za_malo_opisu} — wyglądało na okazję, ale pełny opis był niedostępny (ocena z fragmentu): ${current.krotki_opis}` };
+    }
 
     // ── Weryfikacja okazji — "adwokat diabła" ─────────────────────────────────────────────
     // Ponowne zadanie TEGO SAMEGO pytania zwykle powtarza ten sam błąd. Dlatego weryfikator dostaje
@@ -2148,14 +2346,15 @@ Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — t
 3. SKLEP — czy to nowy rower ze sklepu w cenie detalicznej (Onlineshop, Lieferzeit, "Zustand: Neu")?
 4. CENA NOWEGO — czy szacunek nie jest zakotwiczony na "Neupreis"/"NP"/"UVP"?
 5. WALUTY — czy kwoty z bazy zapisane w złotówkach nie zostały potraktowane jak euro?
-6. STAN — uszkodzenia, braki, niekompletny rower?
-7. BAZA CEN — czy szacunek mieści się w paśmie z bazy dla TEGO modelu i generacji (sekcja wpisów dla ogłoszenia)? Czy wybrano właściwą generację / wersję? Rocznik tylko oszacowany albo skąpy opis → dolna granica pasma.${photoUrls.length > 0 ? `
-8. ZDJĘCIA — czy zdjęcia pokazują TEN rower z opisu (model, generacja, karbon/alu, osprzęt), bez widocznych uszkodzeń, i czy to prawdziwe zdjęcia, a nie katalogowe?` : ""}
+6. STAN — uszkodzenia OPISANE w ogłoszeniu albo WYRAŹNIE widoczne na zdjęciach, braki, niekompletny rower? Uwzględnij je w wycenie. Podejrzanie niska cena, możliwe oszustwo czy podejrzenie ukrytych wad NIE są powodem do "nie" ani "niepewne" — wpisz je w "ostrzezenia" (użytkownik sam to weryfikuje).
+7. BAZA CEN — czy szacunek mieści się w paśmie z bazy dla TEGO modelu i generacji (sekcja wpisów dla ogłoszenia)? Czy wybrano właściwą generację / wersję? Rocznik tylko oszacowany albo skąpy opis → dolna granica pasma.${allPhotos.length > 0 ? `
+8. ZDJĘCIA — dołączono wszystkie zdjęcia z ogłoszenia (${allPhotos.length}). Czy pokazują TEN rower z opisu (model, generacja, karbon/alu, osprzęt), bez widocznych uszkodzeń (sprawdź też dalsze zdjęcia i zbliżenia)? Zdjęcia katalogowe zamiast prawdziwych → tylko wpis w "ostrzezenia", nie zmiana decyzji.` : ""}${typeConflictNote ? `
+9. TYP ROWERU — ${typeConflictNote}. Rozstrzygnij typ na podstawie zdjęć i opisu i napisz w "powod_decyzji", co o tym przesądza. Jeśli nie da się tego jednoznacznie ustalić — decyzja "niepewne".` : ""}
 Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej analizy. Decyzja "tak" tylko wtedy, gdy żaden punkt nie podważa okazji. Odpowiedz w tym samym formacie JSON co wyżej (z polem "fakty").`;
-    addLog(`🕵️ Weryfikacja okazji — adwokat diabła (${stepLabel(plan.ver)}${photoUrls.length > 0 ? `, ze zdjęciami: ${photoUrls.length}` : ""}) — ${listing.title}`, "info");
+    addLog(`🕵️ Weryfikacja okazji — adwokat diabła (${stepLabel(plan.ver)}${allPhotos.length > 0 ? `, wszystkie zdjęcia: ${allPhotos.length}` : ""}${typeConflictNote ? ", do rozstrzygnięcia: sprzeczny typ" : ""}) — ${listing.title}`, "info");
     const [verOv, verOpts] = stepConfig(plan.ver);
-    const verified = await attemptAnalysis(verOv, { ...verOpts, extra: verifyNote, images: photoUrls.length > 0 ? photoUrls : null });
-    if (verified?._aborted) return verified;
+    const verified = await attemptAnalysis(verOv, { ...verOpts, extra: verifyNote, images: allPhotos.length > 0 ? allPhotos : null, verify: true });
+    if (verified?._aborted || verified?._fatal) return verified;
     if (verified?._budget) {
       // Nie wysyłamy niezweryfikowanej okazji, ale też jej nie chowamy do przyszłego miesiąca — do ręcznego sprawdzenia
       addLog(`💰 Weryfikacja okazji niemożliwa — budżet AI wyczerpany — przenoszę do niepewnych — ${listing.title}`, "error");
@@ -2169,9 +2368,16 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         krotki_opis: `${UNCERTAIN_LABELS.inne} — okazja NIEZWERYFIKOWANA (weryfikacja się nie udała): ${current.krotki_opis}` };
     }
     verified._verified = true;
+    // Co weryfikator faktycznie widział — "potwierdzone" nie może sugerować obejrzenia zdjęć, których nie było
+    verified._verifyMode = verified._photos > 0 ? `ze zdjęciami (${verified._photos < allPhotos.length ? `${verified._photos} z ${allPhotos.length}` : verified._photos}) i pełnym opisem`
+      : allPhotos.length > 0 ? "TYLKO z opisu — zdjęć nie udało się pobrać"
+      : "TYLKO z opisu — brak zdjęć w ogłoszeniu (albo analiza zdjęć wyłączona)";
+    if (verified.decyzja === "tak" && typeConflictNote) {
+      verified._verifyMode += ` · sprzeczny typ rozstrzygnięty: „${verified.typ_roweru}” (Groq: „${groqType}”)`;
+    }
     if (verified.decyzja === "tak") {
-      verified.krotki_opis = `${verified.krotki_opis} ✔ potwierdzone weryfikacją`;
-      addLog(`🕵️ Weryfikacja: okazja POTWIERDZONA — ${listing.title}`, "success");
+      verified.krotki_opis = `${verified.krotki_opis} ✔ potwierdzone weryfikacją (${verified._verifyMode})`;
+      addLog(`🕵️ Weryfikacja: okazja POTWIERDZONA (${verified._verifyMode}) — ${listing.title}`, verified._photos > 0 ? "success" : "error");
     } else {
       addLog(`🕵️ Weryfikacja obaliła okazję → "${verified.decyzja}"${verified.powod_decyzji ? ` (${verified.powod_decyzji})` : ""} — ${listing.title}`, "info");
     }
@@ -2190,21 +2396,82 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         { name: "💰 Cena z ogłoszenia", value: listing.price != null ? `**${listing.price}€**` : "brak", inline: true },
         { name: "📅 Rocznik",           value: analysis.fakty?.rocznik ? `**${analysis.fakty.rocznik}**${analysis.fakty.rocznik_zrodlo === "oszacowany" ? " (oszac.)" : ""}` : "?", inline: true },
         { name: "🤑 Przewidywany zysk", value: `**~${analysis.przewidywany_zysk}€**${analysis.transport_eur ? ` (po transporcie ${analysis.transport_eur}€)` : ""}`, inline: true },
+        ...(analysis.rozmiar_ramy ? [{ name: "📏 Rozmiar", value: String(analysis.rozmiar_ramy), inline: true }] : []),
+        ...(listing.prevPrice != null && listing.price != null && listing.prevPrice > listing.price
+          ? [{ name: "📉 Obniżka", value: `${listing.prevPrice}€ → **${listing.price}€** (−${Math.round((1 - listing.price / listing.prevPrice) * 100)}%)`, inline: true }] : []),
+        ...(fmtAgo(listing.postedAt) ? [{ name: "🕒 Dodano", value: fmtAgo(listing.postedAt), inline: true }] : []),
         { name: "📍 Lokalizacja",       value: listing.location || "–", inline: true },
         { name: "🔎 Wyszukiwanie",      value: listing.bike, inline: true },
         { name: "🔗 Link do ogłoszenia",value: listing.href },
         { name: "📝 Krótki opis",       value: String(analysis.krotki_opis || "–").slice(0, 1024) },
         ...(analysis.zdjecia ? [{ name: `📷 Zdjęcia (AI, ${analysis._photos || "?"} szt.)`, value: String(analysis.zdjecia).slice(0, 1024) }] : []),
+        ...(analysis._verifyMode ? [{ name: "🕵️ Weryfikacja", value: analysis._verifyMode, inline: true }] : []),
+        ...(analysis.ostrzezenia ? [{ name: "⚠️ Do sprawdzenia", value: String(analysis.ostrzezenia).slice(0, 1024) }] : []),
       ],
+      ...(listing.photo ? { image: { url: listing.photo } } : {}),
       footer: { text: `DirtDealFinder • ${new Date().toLocaleString("pl-PL")}` },
     };
-    // Zwraca { ok, status, retryAfter, error }. Przy krótkim limicie Discorda (429) — jedna ponowna próba.
-    let r = await callDiscord({ embeds: [embed] });
+    const fallback = `🚲 **OKAZJA:** ${listing.title} — ${listing.price ?? "?"}€ → zysk ~${analysis.przewidywany_zysk}€\n${listing.href}`;
+    return postWithRetry(callDiscord, { embeds: [embed] }, fallback);
+  };
+
+  // Wysyłka z jedną ponowną próbą przy krótkim limicie Discorda (429). Odmowa treści (400, np. zepsute zdjęcie
+  // albo pole) — jeszcze raz jako zwykły tekst, żeby powiadomienie nie wisiało w kolejce przez tydzień.
+  const postWithRetry = async (send, payload, fallbackText) => {
+    let r = await send(payload);
     if (!r.ok && r.status === 429 && r.retryAfter != null && r.retryAfter <= 15) {
-      await sleep(Math.ceil(r.retryAfter * 1000) + 300);
-      r = await callDiscord({ embeds: [embed] });
+      if (!(await sleepWhileRunning(Math.ceil(r.retryAfter * 1000) + 300))) return r; // STOP — nie ponawiamy, zostaje w kolejce
+      r = await send(payload);
+    }
+    if (!r.ok && r.status === 400 && fallbackText) {
+      addLog(`⚠️ Discord odrzucił wiadomość (${r.error || "HTTP 400"}) — wysyłam wersję tekstową`, "error");
+      r = await send({ content: fallbackText.slice(0, 1900) });
     }
     return r;
+  };
+
+  // ── D: oferta "na granicy okazji" — przy obecnej cenie zysk za mały, przy niższej by się opłacało ──
+  const nearDealOf = (a) => {
+    if (!a || a.decyzja !== "nie" || a.odrzucenie || !["full", "dirt", "elektryk_gorski"].includes(a.typ_roweru)) return null;
+    const cena = Number(a.cena_zakupu_eur), sprzedaz = Number(a.szacowana_sprzedaz_eur);
+    if (!(cena > 0) || !(sprzedaz > 0)) return null;
+    const transport = Math.max(0, Number(a.transport_eur) || 0);
+    const maxPrice = Math.floor((sprzedaz - transport) / (1 + minProfit / 100)); // najwyższa cena zakupu spełniająca próg
+    if (maxPrice < minListingPrice || cena <= maxPrice || cena > maxPrice * (1 + NEAR_DEAL_MAX_OVER)) return null;
+    const offer = Math.max(50, Math.floor((maxPrice * NEAR_DEAL_OFFER_SHARE) / 50) * 50);
+    return { maxPrice, offer, profitAtOffer: Math.round(sprzedaz - offer - transport) };
+  };
+  const sellerMessage = (near, args) => [
+    "Hallo,",
+    `ist das Fahrrad noch zu haben? Ich hätte Interesse und würde Ihnen ${near.offer} € anbieten.`,
+    ...(args ? [`Mein Preisvorschlag berücksichtigt: ${args.replace(/\s*;\s*/g, ", ").replace(/[.\s]+$/, "")}.`] : []),
+    "Über eine kurze Rückmeldung würde ich mich freuen.",
+    "Viele Grüße",
+  ].join("\n");
+  const sendNearToDiscord = async (item) => {
+    const { listing, analysis: a, near } = item;
+    const msg = sellerMessage(near, a.argumenty_negocjacji);
+    const embed = {
+      title: `🤏 NA GRANICY: ${listing.title}`.slice(0, 256),
+      url: listing.href,
+      color: 0xf59e0b,
+      fields: [
+        { name: "💰 Cena z ogłoszenia", value: `**${listing.price}€**`, inline: true },
+        { name: "📈 Szac. sprzedaż PL", value: `${a.szacowana_sprzedaz_eur}€`, inline: true },
+        { name: "✅ Opłaca się do", value: `**${near.maxPrice}€**`, inline: true },
+        { name: "🤝 Proponuj", value: `**${near.offer}€** (zysk ~${near.profitAtOffer}€ po transporcie)`, inline: true },
+        { name: "📅 Rocznik", value: a.fakty?.rocznik ? `${a.fakty.rocznik}${a.fakty.rocznik_zrodlo === "oszacowany" ? " (oszac.)" : ""}` : "?", inline: true },
+        ...(a.rozmiar_ramy ? [{ name: "📏 Rozmiar", value: String(a.rozmiar_ramy), inline: true }] : []),
+        ...(fmtAgo(listing.postedAt) ? [{ name: "🕒 Dodano", value: fmtAgo(listing.postedAt), inline: true }] : []),
+        { name: "📍 Lokalizacja", value: listing.location || "–", inline: true },
+        { name: "✉️ Wiadomość do sprzedawcy (skopiuj)", value: ("```\n" + msg + "\n```").slice(0, 1024) },
+        { name: "📝 Ocena AI", value: String(a.krotki_opis || "–").slice(0, 1024) },
+      ],
+      ...(listing.photo ? { image: { url: listing.photo } } : {}),
+      footer: { text: `DirtDealFinder • ${new Date().toLocaleString("pl-PL")}` },
+    };
+    const fallback = `🤏 **NA GRANICY:** ${listing.title} — ${listing.price}€, opłaca się do ${near.maxPrice}€, proponuj ${near.offer}€\n${listing.href}\n${msg}`;
+    return postWithRetry(callNearDiscord, { embeds: [embed] }, fallback);
   };
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -2261,6 +2528,62 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (deals) {
       for (const item of outboxRef.current.filter(o => o.kind === "deal")) {
         if (!runningRef.current) return;
+        // Zaległa okazja (czeka > 30 min): przed wysyłką MUSI się udać sprawdzenie ogłoszenia — dostępność i cena
+        if (Date.now() - (item.addedAt || 0) > DETAILS_MAX_AGE_MS && !(item.checkedAt && Date.now() - item.checkedAt <= DETAILS_MAX_AGE_MS)) {
+          const toUncertain = (reason) => {
+            outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            addToOutbox({ kind: "uncertain", listing: item.listing, reason });
+            addLog(`❓ Zaległa okazja → do niepewnych (${reason}): ${item.listing.title}`, "info");
+          };
+          // v5.11: w czasie przerwy po blokadzie i częściej niż co 5 min — nie pobieramy strony (to samo co nieudane sprawdzenie)
+          if (Date.now() < detailBlockedUntilRef.current || (item.lastRefreshTryAt && Date.now() - item.lastRefreshTryAt < OUTBOX_REFRESH_MIN_GAP_MS)) {
+            if (!item.refreshFailedSince) item.refreshFailedSince = Date.now();
+            if (Date.now() - item.refreshFailedSince > DETAILS_WAIT_MAX_MS) { toUncertain("nie udało się potwierdzić, że ogłoszenie jest aktualne"); continue; }
+            persistOutbox();
+            continue;
+          }
+          item.lastRefreshTryAt = Date.now();
+          const det = await fetchListingDetails(item.listing);
+          if (!runningRef.current) return;
+          if (det.blocked) detailBlockedUntilRef.current = Date.now() + DETAIL_BLOCK_PAUSE_MS;
+          if (det.gone) {
+            outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            persistOutbox();
+            addLog(`🗑 Zaległa okazja nie wysłana — ogłoszenie zostało usunięte: ${item.listing.title}`, "info");
+            continue;
+          }
+          if (!det.ok || det.price == null) {
+            // Nie udało się potwierdzić aktualności albo odczytać ceny (blokada, błąd, zmieniony układ strony) — starej okazji
+            // nie wysyłamy. Ponowimy później; jeśli przez 2 h się nie uda — do niepewnych, do ręcznego sprawdzenia.
+            const why = det.ok ? "nie udało się odczytać ceny na stronie ogłoszenia" : det.reason;
+            if (!item.refreshFailedSince) item.refreshFailedSince = Date.now();
+            if (Date.now() - item.refreshFailedSince > DETAILS_WAIT_MAX_MS) { toUncertain(`nie udało się potwierdzić aktualności ogłoszenia (${why})`); continue; }
+            persistOutbox();
+            addLog(`⏳ Zaległa okazja czeka — nie udało się sprawdzić ogłoszenia (${why}), spróbuję później: ${item.listing.title}`, "info");
+            continue;
+          }
+          delete item.refreshFailedSince;
+          item.checkedAt = Date.now();
+          const oldPrice = item.listing.price;
+          if (oldPrice == null || det.price !== oldPrice) {
+            // Cena się zmieniła — przelicz zysk i sprawdź próg opłacalności oraz limit zakupu jeszcze raz
+            const sprzedaz = Number(item.analysis?.szacowana_sprzedaz_eur);
+            const transport = Number(item.analysis?.transport_eur ?? transportCostEur) || 0;
+            if (det.price > maxBuyPrice) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — ponad limit zakupu ${maxBuyPrice}€`); continue; }
+            if (!Number.isFinite(sprzedaz) || sprzedaz <= 0) {
+              if (oldPrice == null || det.price > oldPrice) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — zysku nie da się przeliczyć`); continue; }
+            } else {
+              const zysk = Math.round((sprzedaz - det.price - transport) * 100) / 100;
+              const pct = det.price > 0 ? (zysk / det.price) * 100 : 0;
+              if (pct < minProfit) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — zysk po transporcie ~${zysk}€ (${pct.toFixed(0)}%) poniżej progu ${minProfit}%`); continue; }
+              item.analysis = { ...item.analysis, przewidywany_zysk: zysk, cena_zakupu_eur: det.price };
+            }
+            addLog(`💶 Zaległa okazja: cena ${oldPrice ?? "?"}€ → ${det.price}€ — zysk przeliczony, nadal okazja: ${item.listing.title}`, "info");
+            item.listing.price = det.price;
+            item.analysis = { ...item.analysis, krotki_opis: `💶 Cena zmieniła się od analizy: ${oldPrice ?? "?"}€ → ${det.price}€ (zysk przeliczony). ${item.analysis.krotki_opis || ""}` };
+          }
+          persistOutbox();
+        }
         const r = await sendToDiscord(item.listing, item.analysis);
         if (r.ok) {
           outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
@@ -2271,9 +2594,28 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         } else {
           item.tries = (item.tries || 0) + 1;
           persistOutbox();
+          if (r.status === 400) { // odrzucona także wersja tekstowa — ponawianie nic nie da
+            outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            persistOutbox();
+            addLog(`⚠️ Discord odrzuca tę wiadomość (${describeDiscordError(r)}) — usuwam z kolejki: ${item.listing.title} — ${item.listing.href}`, "error");
+            continue;
+          }
           addLog(`⚠️ Discord: okazja NIE wysłana (${describeDiscordError(r)}) — ponowię w następnym cyklu — ${item.listing.title}`, "error");
           if ([401, 403, 404].includes(r.status) || r.status === 0) break; // zły webhook / brak sieci — nie ma sensu próbować dalej teraz
         }
+      }
+      // ── Oferty "na granicy okazji" (osobny kanał) ──
+      for (const item of outboxRef.current.filter(o => o.kind === "near")) {
+        if (!runningRef.current) return;
+        const drop = () => { outboxRef.current = outboxRef.current.filter(o => o.id !== item.id); persistOutbox(); };
+        if (!nearWebhook) { drop(); continue; }
+        const r = await sendNearToDiscord(item);
+        if (r.ok) { drop(); addLog(`🤏 Wysłano „na granicy okazji”: ${item.listing.title} — proponuj ${item.near.offer}€`, "success"); continue; }
+        item.tries = (item.tries || 0) + 1;
+        persistOutbox();
+        if (r.status === 400) { drop(); addLog(`⚠️ Discord odrzuca wiadomość „na granicy” (${describeDiscordError(r)}) — usuwam: ${item.listing.title}`, "error"); continue; }
+        addLog(`⚠️ Discord: „na granicy” NIE wysłane (${describeDiscordError(r)}) — ponowię w następnym cyklu — ${item.listing.title}`, "error");
+        if ([401, 403, 404].includes(r.status) || r.status === 0) break;
       }
     }
     if (!uncertain) return;
@@ -2297,11 +2639,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     chunks.push(cur);
     let sentCount = 0;
     for (let i = 0; i < chunks.length; i++) {
-      if (!runningRef.current) break;
       if (i > 0) await sleep(1200); // odstęp, żeby nie wpaść w limit Discorda
+      if (!runningRef.current) break;
       let r = await callUncertainDiscord({ content: chunks[i].text });
       if (!r.ok && r.status === 429 && r.retryAfter != null && r.retryAfter <= 15) {
-        await sleep(Math.ceil(r.retryAfter * 1000) + 300);
+        if (!(await sleepWhileRunning(Math.ceil(r.retryAfter * 1000) + 300))) break; // STOP — reszta czeka
         r = await callUncertainDiscord({ content: chunks[i].text });
       }
       if (!r.ok) {
@@ -2328,6 +2670,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         if (job.source === "price_drop") {
           phase1Stats.priceDrops++;
           addLog(`📉 Spadek ceny: ${listing.title} → ${listing.price}€`, "info");
+        } else if (job.source === "price_added") {
+          addLog(`💶 W ogłoszeniu pojawiła się cena: ${listing.title} → ${listing.price}€ — sprawdzam`, "info");
         }
 
         // ── Filtr słów PRZED Groq — zero kosztu ──
@@ -2346,11 +2690,20 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone filtrem roku (${yearBlock.reason})` });
           continue;
         }
-        // ── Limit ceny i darmowe wykrywacze — zero kosztu ──
+        // ── Brak ceny — odrzucone od razu, bez Groqa i bez analizy AI. Gdy cena pojawi się później — oferta wróci. ──
+        if (listing.price == null) {
+          phase1Stats.noPrice++;
+          const se = seenIdsRef.current.get(listing.listingId);
+          if (se) { se.noPrice = true; persistSeenMap(); }
+          addLog(`🚫 Brak ceny — odrzucono bez AI: ${listing.title}`, "info");
+          rejectJob(job, { typ_roweru: "?", decyzja: "nie", oplaca_sie: false, krotki_opis: "Odrzucone — brak ceny w ogłoszeniu (wróci, gdy cena się pojawi)" });
+          continue;
+        }
+        // ── Limit ceny (min./maks.) i darmowe wykrywacze — zero kosztu ──
         const freeReject = freeRejectReason(listing);
         if (freeReject) {
-          if (freeReject.kind === "price") phase1Stats.tooExpensive++; else phase1Stats.freeDetect++;
-          addLog(`${freeReject.kind === "price" ? "💸" : "🚫"} Bez AI: odrzucono (${freeReject.msg}) — ${listing.title}`, "info");
+          if (freeReject.kind === "price") phase1Stats.tooExpensive++; else if (freeReject.kind === "cheap") phase1Stats.tooCheap++; else phase1Stats.freeDetect++;
+          addLog(`${freeReject.kind === "price" || freeReject.kind === "cheap" ? "💸" : "🚫"} Bez AI: odrzucono (${freeReject.msg}) — ${listing.title}`, "info");
           rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone bez AI — ${freeReject.msg}` });
           continue;
         }
@@ -2384,15 +2737,6 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: typ === "elektryk_gorski" ? "Odrzucone — e-MTB wykluczone w Ustawieniach" : "Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski" });
           continue;
         }
-        // ── Brak ceny — do listy niepewnych, bez analizy AI ──
-        if (listing.price == null) {
-          phase1Stats.noPrice++;
-          addLog(`❓ Brak ceny — do listy niepewnych: ${listing.title}`, "info");
-          removeJob(listing.listingId);
-          addToOutbox({ kind: "uncertain", listing: slimListing(listing), reason: "brak ceny w ogłoszeniu" });
-          pushResult(listing, { typ_roweru: "?", decyzja: "niepewne", oplaca_sie: false, krotki_opis: "Brak ceny — wymaga ręcznego sprawdzenia" });
-          continue;
-        }
         // ── Niepewny typ + niska cena → bez analizy (tylko przy PRAWDZIWEJ niepewności Groqa) ──
         if (typ === "niepewne" && !classifierDown && listing.price < minUncertainPrice) {
           phase1Stats.priceThreshold++;
@@ -2415,15 +2759,18 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // ── Etap 2: analiza AI ofert z kolejki (pewne typy najpierw, potem najnowsze) ─────────
   // Oferta znika z kolejki dopiero po analizie albo trwałym odrzuceniu. Ponad limit na cykl, po błędzie
   // (do 3 prób), po STOP albo po wyczerpaniu budżetu — czeka na następny cykl.
-  const runStage2 = async () => {
+  // v5.11 (A): wołane po KAŻDYM wyszukiwaniu (okazja idzie na Discord od razu, a nie po przejrzeniu wszystkich 44)
+  // i raz na końcu cyklu (final). cb = wspólny licznik cyklu: analizy, pobrane strony ogłoszeń, zatrzymanie.
+  const runStage2 = async (cb, { final = false } = {}) => {
+    if (cb.halted) return; // brak środków / zły klucz / budżet — w tym cyklu już nie próbujemy
     const candidates = [...pendingRef.current.values()]
       .filter(j => j.stage === "analyze")
       .sort((a, b) => ((b.groqType !== "niepewne") - (a.groqType !== "niepewne")) || (b.addedAt - a.addedAt));
     if (candidates.length === 0) return;
-    if (candidates.length > maxGeminiPerCycle) {
-      addLog(`⚖️ ${candidates.length} ofert czeka na analizę AI, limit cyklu = ${maxGeminiPerCycle} — reszta poczeka w kolejce na następny cykl (najpierw pewne typy i najnowsze)`, "info");
+    if (final && candidates.length > maxGeminiPerCycle - cb.analyses) {
+      addLog(`⚖️ ${candidates.length} ofert czeka na analizę AI, w tym cyklu zostało ${Math.max(0, maxGeminiPerCycle - cb.analyses)} z ${maxGeminiPerCycle} — reszta poczeka na następny cykl (najpierw pewne typy i najnowsze)`, "info");
     }
-    let analyses = 0, detailFetches = 0, deferred = 0, lastDetailFetchAt = 0;
+    let deferred = 0;
     try {
       for (const job of candidates) {
         if (!runningRef.current) return;
@@ -2431,23 +2778,48 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const listing = job.listing;
         let groqType = job.groqType || "niepewne";
 
-        if (analyses >= maxGeminiPerCycle) { deferred++; continue; }
+        if (cb.analyses >= maxGeminiPerCycle) { deferred++; continue; }
 
         // ── Pełny opis i zdjęcia ze strony ogłoszenia (bez nich oferta czeka, zamiast być ocenianą z fragmentu) ──
+        // Opis pobrany dawno (oferta długo czekała w kolejce) — pobierz jeszcze raz: cena i dostępność mogły się zmienić
+        if (listing.fullDesc && listing.detailsFetchedAt && Date.now() - listing.detailsFetchedAt > DETAILS_MAX_AGE_MS) {
+          delete listing.fullDesc;
+          listing.images = [];
+        }
         const detailsPaused = Date.now() < detailBlockedUntilRef.current;
+        // Strona ogłoszenia niedostępna (blokada / błąd) — czekamy do 2 h, potem ocena z fragmentu
+        // (a "tak" z samego fragmentu i tak trafia do niepewnych — patrz analyzeWithGemini).
+        const waitForDetails = () => {
+          if (!job.detailsMissingSince) job.detailsMissingSince = Date.now();
+          return Date.now() - job.detailsMissingSince < DETAILS_WAIT_MAX_MS;
+        };
+        if (!listing.fullDesc && detailsPaused && waitForDetails()) { deferred++; continue; }
         if (!listing.fullDesc && !detailsPaused) {
-          if (detailFetches >= MAX_DETAIL_FETCHES_PER_CYCLE) { deferred++; continue; }
-          const wait = DETAIL_FETCH_DELAY_MS + Math.random() * 2000 - (Date.now() - lastDetailFetchAt);
+          if (cb.detailFetches >= MAX_DETAIL_FETCHES_PER_CYCLE) { deferred++; continue; }
+          const wait = DETAIL_FETCH_DELAY_MS + Math.random() * 2000 - (Date.now() - cb.lastDetailFetchAt);
           if (wait > 0) await sleep(wait);
           if (!runningRef.current) return;
-          lastDetailFetchAt = Date.now();
-          detailFetches++;
+          cb.lastDetailFetchAt = Date.now();
+          cb.detailFetches++;
           const det = await fetchListingDetails(listing);
           if (!runningRef.current) return;
           if (det.ok) {
             listing.fullDesc = det.desc;
             listing.fullDescTruncated = det.truncated === true;
             listing.images = det.images || [];
+            listing.detailsFetchedAt = Date.now();
+            delete job.detailsMissingSince;
+            if (job.priceUnconfirmed) {
+              delete job.priceUnconfirmed;
+              if (det.price == null) {
+                addLog(`🚫 Brak ceny także na stronie ogłoszenia — odrzucono bez AI: ${listing.title}`, "info");
+                listing.price = null;
+                const se = seenIdsRef.current.get(listing.listingId);
+                if (se) { se.noPrice = true; persistSeenMap(); }
+                rejectJob(job, { typ_roweru: "?", decyzja: "nie", oplaca_sie: false, krotki_opis: "Odrzucone — cena zniknęła z ogłoszenia" });
+                continue;
+              }
+            }
             addLog(`📄 Pełny opis (${det.fullLength} znaków${det.truncated ? `, przycięty do ${DESC_MAX_CHARS}` : ""}, zdjęć: ${listing.images.length}) — ${listing.title}`, "info");
             if (det.price != null && det.price !== listing.price) {
               addLog(`💶 Cena na stronie ogłoszenia (${det.price}€) różni się od listy (${listing.price ?? "?"}€) — używam ceny ze strony`, "info");
@@ -2459,9 +2831,16 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             continue;
           } else if (det.blocked) {
             detailBlockedUntilRef.current = Date.now() + DETAIL_BLOCK_PAUSE_MS;
-            addLog(`⛔ Kleinanzeigen blokuje strony ogłoszeń (${det.reason}) — wstrzymuję pobieranie pełnych opisów na 30 min, AI dostaje krótkie fragmenty`, "error");
+            addLog(`⛔ Kleinanzeigen blokuje strony ogłoszeń (${det.reason}) — wstrzymuję pobieranie pełnych opisów na 30 min; oferty czekają w kolejce (do 2 h), potem ocena z fragmentu`, "error");
+            notifyStatus("detail_blocked", `⛔ Kleinanzeigen blokuje strony ogłoszeń (${det.reason}). Pobieranie opisów wstrzymane na 30 min — oferty czekają w kolejce.`);
+            if (waitForDetails()) { deferred++; continue; }
+          } else if (!det.doc && waitForDetails()) {
+            // błąd sieci / HTTP — spróbujemy w następnym cyklu
+            addLog(`⏳ Strona ogłoszenia chwilowo niedostępna (${det.reason}) — spróbuję w następnym cyklu: ${listing.title}`, "info");
+            deferred++;
+            continue;
           } else {
-            addLog(`⚠️ Brak pełnego opisu (${det.reason}) — AI dostaje krótki fragment: ${listing.title}`, "error");
+            addLog(`⚠️ Brak pełnego opisu (${det.reason}) — AI dostaje krótki fragment (okazja z fragmentu trafi do niepewnych): ${listing.title}`, "error");
             if (det.doc && !descDiagLoggedRef.current) {
               descDiagLoggedRef.current = true;
               const ids = [...det.doc.querySelectorAll("[id]")].map(e => e.id).filter(id => /desc|beschreib/i.test(id)).slice(0, 10);
@@ -2502,11 +2881,19 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
         }
 
-        analyses++;
+        cb.analyses++;
         const analysis = await analyzeWithGemini(listing, groqType);
         if (analysis?._aborted) return; // STOP — oferta zostaje w kolejce
         if (analysis?._budget) {
+          cb.halted = true;
           addLog(`💰 ${analysis.reason || "Budżet AI wyczerpany"} — wstrzymuję analizy. ${pendingRef.current.size} ofert czeka w kolejce: zwiększ budżet w Ustawieniach albo poczekaj do 1. dnia miesiąca`, "error");
+          notifyStatus("budget", `💰 Budżet AI na ten miesiąc wyczerpany (${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} z ${aiBudgetPln} zł) — analizy wstrzymane, ${pendingRef.current.size} ofert czeka w kolejce. Zwiększ budżet w Ustawieniach.`);
+          return;
+        }
+        if (analysis?._fatal) {
+          cb.halted = true;
+          addLog(`⛔ Analizy AI wstrzymane: ${analysis.reason} — oferty czekają w kolejce (${pendingRef.current.size}). Sprawdź klucz API albo doładuj konto; spróbuję ponownie w następnym cyklu.`, "error");
+          notifyStatus("ai_fatal", `⛔ Analizy AI wstrzymane — ${analysis.reason}\nOferty czekają w kolejce (${pendingRef.current.size}) i nie przepadną. Sprawdź klucz API albo doładuj konto (console.anthropic.com → Billing / Google AI Studio).`);
           return;
         }
         if (!analysis) {
@@ -2544,13 +2931,22 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             : analysis.typ_roweru === "inny" ? `typ: inny — odrzucone automatycznie`
             : `zysk za mały`;
           addLog(`⏭ ${aiName(geminiModel)}: NIE opłaca się (${reason}) — [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€`, "info");
+          const near = nearDealOf(analysis);
+          if (near) {
+            analysis.krotki_opis = `${analysis.krotki_opis || ""} 🤏 Na granicy: opłaca się do ${near.maxPrice}€ — proponuj ${near.offer}€.`;
+            addLog(`🤏 Na granicy okazji: ${listing.title} — ${listing.price}€, opłaca się do ${near.maxPrice}€, proponuj ${near.offer}€${nearWebhook ? "" : " (ustaw webhook „Na granicy okazji”, żeby dostawać to na Discord)"}`, "info");
+            if (nearWebhook) {
+              addToOutbox({ kind: "near", listing: slimListing(listing), analysis: dealSnapshot(analysis), near });
+              await flushOutbox({ uncertain: false });
+            }
+          }
           pushResult(listing, analysis, "skip");
         }
         await sleep(5000);
       }
     } finally {
       persistPending();
-      if (deferred > 0) addLog(`⏳ ${deferred} ofert czeka w kolejce na następny cykl (limit ${maxGeminiPerCycle} analiz i ${MAX_DETAIL_FETCHES_PER_CYCLE} stron ogłoszeń na cykl)`, "info");
+      if (final && deferred > 0) addLog(`⏳ ${deferred} ofert czeka w kolejce na następny cykl (limit ${maxGeminiPerCycle} analiz i ${MAX_DETAIL_FETCHES_PER_CYCLE} stron ogłoszeń na cykl)`, "info");
     }
   };
 
@@ -2577,45 +2973,100 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     }
     await flushOutbox(); // zaległe powiadomienia (np. Discord nie odpowiadał w poprzednim cyklu)
 
-    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, oldBike: 0, priceDrops: 0, tooExpensive: 0, freeDetect: 0, classifierDown: 0, skippedOld: 0, queued: 0 };
+    const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, oldBike: 0, priceDrops: 0, tooExpensive: 0, tooCheap: 0, freeDetect: 0, classifierDown: 0, skippedOld: 0, queued: 0 };
+    const cb = { analyses: 0, detailFetches: 0, lastDetailFetchAt: 0, halted: false }; // wspólny limit analiz/stron na cykl
     await runStage1(phase1Stats); // zaległe oferty etapu 1 (np. przerwane STOP-em)
 
-    // ── FAZA 1: pobieranie wyników + kolejka + etap 1 ──
-    for (let bikeIdx = 0; bikeIdx < activeBikes.length; bikeIdx++) {
+    // ── FAZA 1: pobieranie wyników + kolejka + etap 1 (+ od razu analiza nowych ofert) ──
+    const scrapePaused = Date.now() < scrapeBlockedUntilRef.current;
+    if (scrapePaused) addLog(`⛔ Wyszukiwania wstrzymane po blokadzie Kleinanzeigen — wznowię ok. ${new Date(scrapeBlockedUntilRef.current).toLocaleTimeString("pl-PL")}`, "error");
+    let blockStreak = 0, scannedCount = 0, rareSkipped = 0;
+    for (let bikeIdx = 0; bikeIdx < activeBikes.length && !scrapePaused; bikeIdx++) {
       const bike = activeBikes[bikeIdx];
       if (!runningRef.current) return;
+      // v5.11 (A): wyszukiwanie bez nowych ofert od 3 dni sprawdzamy co ok. 10 min — cykl jest krótszy, więc popularne częściej
+      const stPre = scanStateRef.current.searches[bike.id];
+      if (stPre?.baselineAt) {
+        if (stPre.lastNewAt == null) stPre.lastNewAt = Date.now(); // migracja: 3 dni "na start"
+        if (Date.now() - stPre.lastNewAt > RARE_SEARCH_AFTER_MS && Date.now() - (stPre.lastScanAt || 0) < RARE_SEARCH_RESCAN_MS) { rareSkipped++; continue; }
+      }
       // Odstęp między kolejnymi wyszukiwaniami — bez przerwy wygląda to dla Kleinanzeigen jak bot (captcha)
-      if (bikeIdx > 0) await sleep(3000);
+      if (scannedCount > 0) await sleep(3000);
+      scannedCount++;
       if (!runningRef.current) return;
       addLog(`🔍 ${bike.label}…`, "info");
 
       let listings = [];
-      let scrapeOk = false;
+      let scrapeOk = false, blocked = false, priceBroken = false;
       try {
         const html = await scrapeKleinanzeigen(bike);
         addLog(`📥 ${bike.label}: pobrano ${html.length} znaków HTML`, "info");
         listings = parseListings(html, bike.label);
+        blocked = listings.blocked === true; // sprawdzić PRZED kopiowaniem tablicy (kopia gubi flagi)
+        priceBroken = listings.priceParseBroken === true;
         // Usuń duplikaty WEWNĄTRZ tego samego skanu (wyróżnione + zwykłe)
         const uniqueMap = new Map();
         listings.forEach(l => { if (!uniqueMap.has(l.listingId)) uniqueMap.set(l.listingId, l); });
         listings = [...uniqueMap.values()];
         addLog(`📋 ${bike.label}: znaleziono ${listings.length} ogłoszeń`, listings.length > 0 ? "info" : "error");
-        scrapeOk = listings.length > 0;
+        scrapeOk = !blocked && !priceBroken; // prawidłowo pusta strona to poprawny wynik; captcha — nie (nie ruszamy stanu wyszukiwania)
       } catch (e) {
         if (!runningRef.current) return;
+        if (/Scrape HTTP (403|429)/.test(e.message)) blocked = true;
         addLog(`⚠️ ${bike.label}: błąd scraping — ${e.message}`, "error");
       }
-      if (!scrapeOk) continue; // błąd/captcha/pusto — nie ruszamy stanu tego wyszukiwania
+      // ── Bezpiecznik: 2 zablokowane wyszukiwania pod rząd → przerwa we wszystkich zapytaniach do Kleinanzeigen ──
+      if (blocked) {
+        blockStreak++;
+        if (blockStreak >= 2) {
+          scrapeBlockedUntilRef.current = Date.now() + SCRAPE_BLOCK_PAUSE_MS;
+          detailBlockedUntilRef.current = Math.max(detailBlockedUntilRef.current, scrapeBlockedUntilRef.current);
+          addLog(`⛔ Kleinanzeigen blokuje wyszukiwania (2 pod rząd) — przerwa ${Math.round(SCRAPE_BLOCK_PAUSE_MS / 60000)} min we wszystkich zapytaniach, potem wznawiam sam`, "error");
+          notifyStatus("scrape_blocked", `⛔ Kleinanzeigen blokuje wyszukiwania (captcha / HTTP 403/429). Skaner robi ${Math.round(SCRAPE_BLOCK_PAUSE_MS / 60000)} min przerwy i wznowi się sam. Jeśli to się powtarza — wyłącz część wyszukiwań albo zrób dłuższą przerwę.`);
+          break;
+        }
+        continue;
+      }
+      if (scrapeOk) blockStreak = 0;
+      if (priceBroken) {
+        addLog(`⚠️ ${bike.label}: nie odczytano cen większości ogłoszeń — pomijam to wyszukiwanie w tym cyklu (oferty NIE są oznaczane jako widziane, nic nie przepada)`, "error");
+        notifyStatus("price_parse", `⚠️ Program nie odczytuje cen na liście wyników Kleinanzeigen (np. „${bike.label}”) — prawdopodobnie zmienił się wygląd strony. Wyszukiwania z takim wynikiem są pomijane, oferty nie przepadają. Skopiuj z logu linię „🔍 Diagnostyka ceny” do czatu.`);
+        continue;
+      }
+      if (!scrapeOk) continue; // błąd/pusto — nie ruszamy stanu tego wyszukiwania
 
       const now = Date.now();
+      // Wszystkie ogłoszenia z wyników: "widziane teraz" — z pamięci wypadają tylko te niewidziane od 30 dni
+      for (const l of listings) { const e = seenIdsRef.current.get(l.listingId); if (e) e.lastSeenAt = now; }
       const fresh = listings.filter(l => !seenIdsRef.current.has(l.listingId));
 
-      // Znane ogłoszenia bez ceny: ustaw punkt odniesienia; droższe niż limit zakupu: flaga overMax
+      // Oferty czekające w kolejce: aktualna cena z listy wyników (mogła się zmienić w czasie czekania)
+      let pricesUpdated = 0;
+      for (const l of listings) {
+        const j = pendingRef.current.get(l.listingId);
+        if (j && l.price != null && j.listing.price !== l.price) {
+          addLog(`💶 Kolejka: zmiana ceny ${j.listing.price ?? "?"}€ → ${l.price}€ — ${l.title}`, "info");
+          j.listing.price = l.price;
+          pricesUpdated++;
+        } else if (j && l.price == null && j.listing.price != null && !j.priceUnconfirmed) {
+          // Cena zniknęła z listy wyników — nie ufamy starej kwocie: przed analizą pobierzemy stronę ogłoszenia
+          addLog(`💶 Kolejka: brak ceny w nowym skanie (było ${j.listing.price}€) — sprawdzę na stronie ogłoszenia — ${l.title}`, "info");
+          j.priceUnconfirmed = true;
+          delete j.listing.fullDesc;
+          pricesUpdated++;
+        }
+      }
+      if (pricesUpdated > 0) persistPending();
+
+      // Znane ogłoszenia bez ceny: ustaw punkt odniesienia; droższe niż limit zakupu: flaga overMax.
+      // v5.11: ogłoszenie odrzucone za brak ceny, w którym cena się pojawiła — wraca do oceny.
       let baselinesSet = 0;
+      const priceAdded = [];
       for (const l of listings) {
         if (l.price == null) continue;
         const e = seenIdsRef.current.get(l.listingId);
         if (!e) continue;
+        if (e.noPrice) { e.noPrice = false; e.lowest = l.price; e.price = l.price; priceAdded.push(l); baselinesSet++; continue; }
         if (e.lowest == null) { e.lowest = l.price; e.price = l.price; baselinesSet++; }
         if (l.price > maxBuyPrice && !e.overMax) { e.overMax = true; baselinesSet++; }
       }
@@ -2626,22 +3077,29 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       if (!st || !st.baselineAt) {
         fresh.forEach(l => saveSeenEntry(l, false));
         persistSeenMap();
-        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now };
+        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0 };
         persistScanState();
         addLog(`📌 ${bike.label}: pierwsze skanowanie tego wyszukiwania — zapamiętano ${fresh.length} istniejących ogłoszeń (bez analizy)`, "info");
         await sleep(3000);
         continue;
       }
+      // Wyszukiwanie zainicjowane na PUSTEJ stronie, a teraz nagle wiele "nowych" ofert naraz (np. naprawiony
+      // parser) — decyduje DATA ofert, jak po długiej przerwie: z ostatnich 24 h idą do analizy, starsze nie.
+      const emptyBurst = st.emptyBaseline === true && fresh.length > 5;
+      if (st.emptyBaseline && listings.length > 0) delete st.emptyBaseline;
 
       // ── Po przerwie dłuższej niż 24 h: tylko oferty dodane w ostatnich 24 h (wg daty na karcie) ──
       const gapMs = now - (st.lastScanAt || 0);
       let toQueue = fresh;
-      if (gapMs > RESUME_WINDOW_MS && fresh.length > 0) {
-        toQueue = fresh.filter(l => l.postedAt != null && now - l.postedAt <= RESUME_WINDOW_MS);
+      if ((gapMs > RESUME_WINDOW_MS || emptyBurst) && fresh.length > 0) {
+        const recent = fresh.filter(l => l.postedAt != null && now - l.postedAt <= RESUME_WINDOW_MS);
+        // Brak daty na karcie ≠ stara oferta: kilka pierwszych bez daty (lista jest od najnowszych) też analizujemy
+        const undated = fresh.filter(l => l.postedAt == null).slice(0, RESUME_MAX_UNDATED);
+        toQueue = [...recent, ...undated];
         const skipped = fresh.length - toQueue.length;
-        if (skipped > 0) {
+        if (skipped > 0 || undated.length > 0 || emptyBurst) {
           phase1Stats.skippedOld += skipped;
-          addLog(`⏭ ${bike.label}: przerwa w skanowaniu ${st.lastScanAt ? `ok. ${Math.round(gapMs / 3600000)} h` : "o nieznanej długości"} — pomijam ${skipped} ofert starszych niż 24 h (albo bez daty)${toQueue.length > 0 ? `, ${toQueue.length} z ostatnich 24 h idzie do analizy` : ""}`, "info");
+          addLog(`⏭ ${bike.label}: ${emptyBurst && gapMs <= RESUME_WINDOW_MS ? `wcześniej puste wyszukiwanie — nagle ${fresh.length} ofert` : `przerwa w skanowaniu ${st.lastScanAt ? `ok. ${Math.round(gapMs / 3600000)} h` : "o nieznanej długości"}`} — analizuję ${recent.length} ofert z ostatnich 24 h${undated.length > 0 ? ` + ${undated.length} bez daty` : ""}${skipped > 0 ? `, pomijam ${skipped} starszych (albo bez daty ponad limit ${RESUME_MAX_UNDATED})` : ""}`, "info");
         }
       }
       st.lastScanAt = now;
@@ -2662,6 +3120,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       });
       for (const l of priceDropped) {
         const e = seenIdsRef.current.get(l.listingId);
+        const before = e.notifiedAt ?? e.price ?? e.lowest; // ostatnia znana cena — pokazujemy ją w alercie ("1200€ → 950€")
+        if (before != null && before > l.price) l.prevPrice = before;
         e.lowest = e.lowest == null ? l.price : Math.min(e.lowest, l.price);
         e.notifiedAt = l.price; // ten poziom ceny jest już "obsłużony" — oferta i tak czeka w kolejce do skutku
         e.overMax = false;
@@ -2669,14 +3129,16 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
       // Nowe ID zapamiętujemy od razu (to tylko "widziane"); do kolejki trafiają te, które mają być ocenione
       fresh.forEach(l => saveSeenEntry(l, false));
-      if (fresh.length > 0 || priceDropped.length > 0) persistSeenMap();
+      persistSeenMap(); // zawsze — zapisuje też "ostatnio widziane"
       let queuedNow = 0;
       for (const l of toQueue) if (enqueueJob(l, "new")) queuedNow++;
       for (const l of priceDropped) enqueueJob(l, "price_drop", seenIdsRef.current.get(l.listingId)?.type || null);
+      for (const l of priceAdded) enqueueJob(l, "price_added", seenIdsRef.current.get(l.listingId)?.type || null);
       persistPending();
       phase1Stats.queued += queuedNow;
+      if (queuedNow > 0 || priceDropped.length > 0 || priceAdded.length > 0) { st.lastNewAt = now; persistScanState(); }
 
-      if (toQueue.length === 0 && priceDropped.length === 0) {
+      if (toQueue.length === 0 && priceDropped.length === 0 && priceAdded.length === 0) {
         addLog(`✔ ${bike.label}: brak nowych`, "info");
       } else {
         if (queuedNow > 0) {
@@ -2687,17 +3149,20 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       }
 
       await runStage1(phase1Stats);
-      await sleep(3000);
+      if (!runningRef.current) return;
+      await runStage2(cb); // v5.11 (A): nowe oferty z tego wyszukiwania analizujemy od razu
+      if (!runningRef.current) return;
     }
     if (!runningRef.current) return;
+    if (rareSkipped > 0) addLog(`⏩ Pominięto ${rareSkipped} rzadkich wyszukiwań (bez nowych ofert od 3 dni — sprawdzane co ok. ${Math.round(RARE_SEARCH_RESCAN_MS / 60000)} min)`, "info");
 
     addLog(
-      `📊 Podsumowanie etapu 1: 🆕 ${phase1Stats.queued} nowych${phase1Stats.skippedOld ? ` (⏭ ${phase1Stats.skippedOld} starszych niż 24 h pominiętych)` : ""} · 💸 ${phase1Stats.tooExpensive} za drogich (> ${maxBuyPrice}€) · 🚫 ${phase1Stats.freeDetect} e-bike/sklep (bez AI) · 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🕰️ ${phase1Stats.oldBike} odrzuconych (za stary, < ${MIN_BIKE_YEAR}) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · ❓ ${phase1Stats.noPrice} bez ceny → niepewne · 📉 ${phase1Stats.priceDrops} spadków ceny${phase1Stats.classifierDown ? ` · ⚠️ ${phase1Stats.classifierDown}× Groq niedostępny (bez progu ceny)` : ""} · ➡️ w kolejce do analizy AI: ${[...pendingRef.current.values()].filter(j => j.stage === "analyze").length}`,
+      `📊 Podsumowanie etapu 1: 🆕 ${phase1Stats.queued} nowych${phase1Stats.skippedOld ? ` (⏭ ${phase1Stats.skippedOld} starszych niż 24 h pominiętych)` : ""} · 💸 ${phase1Stats.tooExpensive} za drogich (> ${maxBuyPrice}€) · 💸 ${phase1Stats.tooCheap} za tanich (< ${minListingPrice}€) · 🚫 ${phase1Stats.freeDetect} e-bike/sklep (bez AI) · 🚫 ${phase1Stats.blacklist} odrzuconych (czarna lista) · 🕰️ ${phase1Stats.oldBike} odrzuconych (za stary, < ${MIN_BIKE_YEAR}) · 🚫 ${phase1Stats.groqInny} odrzuconych (Groq: inny) · 🚫 ${phase1Stats.priceThreshold} odrzuconych (niepewne + cena < ${minUncertainPrice}€) · 🚫 ${phase1Stats.noPrice} bez ceny (odrzucone) · 📉 ${phase1Stats.priceDrops} spadków ceny${phase1Stats.classifierDown ? ` · ⚠️ ${phase1Stats.classifierDown}× Groq niedostępny (bez progu ceny)` : ""} · ➡️ w kolejce do analizy AI: ${[...pendingRef.current.values()].filter(j => j.stage === "analyze").length}`,
       "success"
     );
 
-    // ── FAZA 2: analiza AI ──
-    await runStage2();
+    // ── FAZA 2: analiza AI — to, co zostało (limit cyklu, oferty z poprzednich cykli) ──
+    await runStage2(cb, { final: true });
     if (!runningRef.current) return;
     await flushOutbox(); // lista niepewnych + ewentualne niewysłane okazje
 
@@ -2732,7 +3197,10 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         try {
           await runCycleRef.current(n);
         } catch (e) {
-          if (runningRef.current) addLog(`❌ Nieoczekiwany błąd w cyklu #${n}: ${e?.message || e} — kolejny cykl za 60 s`, "error");
+          if (runningRef.current) {
+            addLog(`❌ Nieoczekiwany błąd w cyklu #${n}: ${e?.message || e} — kolejny cykl za 60 s`, "error");
+            notifyStatus("cycle_error", `❌ Nieoczekiwany błąd w cyklu skanowania: ${String(e?.message || e).slice(0, 300)} — skaner działa dalej.`);
+          }
         }
         if (!runningRef.current) break;
         for (let i = 60; i > 0 && runningRef.current; i--) {
@@ -2801,7 +3269,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               DirtDeal<span style={{ color: "#f59e0b" }}>Finder</span>
             </div>
             <div style={{ fontSize: 10, color: "#334155", letterSpacing: 0.8, textTransform: "uppercase" }}>
-              Kleinanzeigen × Gemini AI × Discord · {APP_VERSION}
+              Kleinanzeigen × AI × Discord · {APP_VERSION}
             </div>
           </div>
         </div>
@@ -2913,13 +3381,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: "#94a3b8" }}>🤖 Logika decyzji</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ background: "#0a1f0f", border: "1px solid #22c55e33", borderRadius: 10, padding: 12 }}>
-                    <div style={{ color: "#22c55e", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>✅ Gemini mówi TAK</div>
+                    <div style={{ color: "#22c55e", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>✅ AI mówi TAK</div>
                     <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.5 }}>
                       Typ roweru to <strong>full</strong> lub <strong>dirt</strong> i zysk ≥ minimum — webhook Discord wysłany z typem, ceną, zyskiem i linkiem
                     </div>
                   </div>
                   <div style={{ background: "#1a0f0f", border: "1px solid #ef444433", borderRadius: 10, padding: 12 }}>
-                    <div style={{ color: "#f87171", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>❌ Gemini mówi NIE</div>
+                    <div style={{ color: "#f87171", fontWeight: 700, fontSize: 12, marginBottom: 4 }}>❌ AI mówi NIE</div>
                     <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.5 }}>
                       Ogłoszenie pominięte, webhook nie wysłany — gdy typ to <strong>"inny"</strong> (np. szosówka, hardtail XC, miejski), odrzucane jest <strong>zawsze</strong>, niezależnie od ceny
                     </div>
@@ -2931,7 +3399,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               <div style={{ background: "#0d1526", border: "1px solid #1a2d4a", borderRadius: 14, padding: 20 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: "#94a3b8" }}>📊 Status</div>
                 {[
-                  ["Gemini API",    geminiKey      ? "✅ OK" : "❌ Brak", geminiKey      ? "#22c55e" : "#f87171"],
+                  ...(provider === "groq" || !isClaudeModel(geminiModel) || !isClaudeModel(strongModel) || geminiKey
+                    ? [[provider === "groq" ? "Groq API" : "Gemini API", geminiKey ? "✅ OK" : "❌ Brak", geminiKey ? "#22c55e" : "#f87171"]] : []),
                   ...(isClaudeModel(geminiModel) || isClaudeModel(strongModel) || claudeKey
                     ? [["Claude API", claudeKey ? "✅ OK" : "❌ Brak", claudeKey ? "#22c55e" : "#f87171"]] : []),
                   ["Discord",       discordWebhook ? "✅ OK" : "❌ Brak", discordWebhook ? "#22c55e" : "#f87171"],
@@ -2956,7 +3425,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             <div style={{ background: "#070f1e", border: "1px solid #0f1f36", borderRadius: 14, padding: 16, fontSize: 12, color: "#334155", lineHeight: 1.7 }}>
                 🔄 Pełny obieg wszystkich wyszukiwań: {lastCycleMs ? fmtDuration(lastCycleMs) : "kilka minut"} + 60 s przerwy<br/>
                 🆕 Tylko <strong style={{ color: "#475569" }}>nowe ogłoszenia</strong> trafiają do AI — oferty czekające na analizę nie giną (kolejka)<br/>
-                📨 Discord tylko gdy AI = <strong style={{ color: "#22c55e" }}>TAK</strong> (po weryfikacji)
+                📨 Discord tylko gdy AI = <strong style={{ color: "#22c55e" }}>TAK</strong> (po weryfikacji)<br/>
+                ⏩ Wyszukiwania bez nowych ofert od 3 dni — sprawdzane co ok. 10 min, popularne w każdym cyklu
               </div>
             </div>
           </div>
@@ -3222,7 +3692,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   {Object.entries(PROVIDERS).map(([id, p]) => (
                     <button key={id} onClick={() => {
                       setProvider(id);
-                      setGeminiModel(p.models[0].id);
+                      if (!p.models.some(m => m.id === geminiModel)) setGeminiModel(p.models[0].id); // nie przestawiaj wybranego modelu bez potrzeby
                     }} style={{
                       flex: 1, padding: "10px 8px", borderRadius: 8, fontWeight: 600, fontSize: 12,
                       border: `1px solid ${provider === id ? "#f59e0b88" : "#1e293b"}`,
@@ -3343,7 +3813,29 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                 <input type="password" placeholder="https://discord.com/api/webhooks/..."
                   value={uncertainWebhook} onChange={e => setUncertainWebhook(e.target.value)} />
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  Rowery, które wyglądają na full/dirt ale Gemini ma za mało danych żeby ocenić opłacalność (np. brak ceny, zdawkowy opis) — wysyłane jako zbiorcza lista linków na koniec każdego cyklu, na osobny kanał.
+                  Rowery, które wyglądają na full/dirt ale AI ma za mało danych żeby ocenić opłacalność (np. zdawkowy opis, nieznany model) — wysyłane jako zbiorcza lista linków na koniec każdego cyklu, na osobny kanał.
+                </div>
+              </div>
+
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ fontSize: 11, color: "#f59e0b", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  🤏 Webhook „Na granicy okazji” (opcjonalne, osobny kanał)
+                </label>
+                <input type="password" placeholder="https://discord.com/api/webhooks/..."
+                  value={nearWebhook} onChange={e => setNearWebhook(e.target.value)} />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Oferty, w których przy obecnej cenie zysk jest za mały, ale cena jest najwyżej {Math.round(NEAR_DEAL_MAX_OVER * 100)}% powyżej kwoty, przy której zakup się opłaca. Każda z gotową wiadomością po niemiecku do sprzedawcy: propozycja ok. {Math.round(NEAR_DEAL_OFFER_SHARE * 100)}% tej kwoty (w dół do 50 €) i powody niższej ceny. Puste = tylko wpis w logu.
+                </div>
+              </div>
+
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ fontSize: 11, color: "#f87171", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  ⚙️ Webhook komunikatów o problemach (opcjonalne)
+                </label>
+                <input type="password" placeholder="puste = komunikaty idą na kanał okazji"
+                  value={statusWebhook} onChange={e => setStatusWebhook(e.target.value)} />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Skaner pisze, gdy coś przestaje działać: brak środków / zły klucz AI, wyczerpany budżet, blokada Kleinanzeigen, nieczytelne ceny, limit Groqa, nieoczekiwany błąd. Ten sam problem najwyżej co 6 h.
                 </div>
               </div>
             </div>
@@ -3351,7 +3843,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             {/* Filtr słów kluczowych */}
             <div style={{ gridColumn: "span 2", background: "#0d1526", border: "1px solid #1a2d4a", borderRadius: 16, padding: 24 }}>
               <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
-                <span>🚫</span> Filtr słów kluczowych (przed Gemini, za darmo)
+                <span>🚫</span> Filtr słów kluczowych (przed AI, za darmo)
               </div>
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
@@ -3376,7 +3868,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             {/* Etap 1 — Groq jako klasyfikator typu (zamiast białej listy słów) */}
             <div style={{ gridColumn: "span 2", background: "#0d1526", border: "1px solid #1a2d4a", borderRadius: 16, padding: 24 }}>
               <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
-                <span>🤖</span> Etap 1 — Groq jako szybki klasyfikator (przed Gemini)
+                <span>🤖</span> Etap 1 — Groq jako szybki klasyfikator (przed analizą AI)
               </div>
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
@@ -3392,7 +3884,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
               <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid #1a2d4a" }}>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  Maks. rowerów wysyłanych do Gemini na jeden cykl
+                  Maks. rowerów wysyłanych do analizy AI na jeden cykl
                 </label>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <input
@@ -3422,7 +3914,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   <div style={{ minWidth: 55, textAlign: "center", fontWeight: 800, fontSize: 22, color: "#f59e0b" }}>{minUncertainPrice}€</div>
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  Gdy Groq nie umie rozpoznać typu ("niepewne") ale ogłoszenie MA podaną cenę — idzie do analizy AI tylko jeśli ta cena wynosi co najmniej tyle (nie dotyczy sytuacji, gdy Groq jest niedostępny albo wyłączony). Poniżej progu ogłoszenie jest odrzucane bez Gemini (zbyt tanie żeby ryzykować, skoro i tak nie wiadomo co to za rower). Ogłoszenia BEZ ceny zawsze trafiają do listy niepewnych na Discord, niezależnie od tego ustawienia — nie mają z czym porównać progu.
+                  Gdy Groq nie umie rozpoznać typu ("niepewne") ale ogłoszenie MA podaną cenę — idzie do analizy AI tylko jeśli ta cena wynosi co najmniej tyle (nie dotyczy sytuacji, gdy Groq jest niedostępny albo wyłączony). Poniżej progu ogłoszenie jest odrzucane bez analizy AI (zbyt tanie żeby ryzykować, skoro i tak nie wiadomo co to za rower). Ogłoszenia BEZ ceny są odrzucane od razu, bez AI — jeśli cena pojawi się później, ogłoszenie zostanie sprawdzone.
                 </div>
               </div>
 
@@ -3440,7 +3932,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   <div style={{ minWidth: 70, textAlign: "center", fontWeight: 800, fontSize: 22, color: "#f59e0b" }}>{maxBuyPrice}€</div>
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  Droższe ogłoszenia odpadają przed jakimkolwiek wywołaniem AI (zero kosztu). Gdy cena takiego ogłoszenia spadnie do limitu, zostanie sprawdzone jeszcze raz.
+                  Droższe ogłoszenia odpadają przed jakimkolwiek wywołaniem AI (zero kosztu). Gdy cena takiego ogłoszenia spadnie do limitu, zostanie sprawdzone jeszcze raz. Ustawienia zapisują się same po każdej zmianie.
                 </div>
               </div>
 
@@ -3490,6 +3982,18 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
               <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Minimalna cena ogłoszenia (€)
+                </label>
+                <input type="number" min="0" step="10" value={minListingPrice}
+                  onChange={e => setMinListingPrice(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ width: 110 }} />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Tańsze ogłoszenia odpadają bez AI (symboliczne ceny typu 1 €, części, akcesoria).
+                </div>
+              </div>
+
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
                   Koszt transportu jednego roweru (€)
                 </label>
                 <input type="number" min="0" step="5" value={transportCostEur}
@@ -3518,14 +4022,14 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   <span style={{ fontSize: 13, fontWeight: 600 }}>📷 Analiza zdjęć (Gemini / Claude)</span>
                 </label>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 6, marginLeft: 28 }}>
-                  Gemini dostaje do {MAX_PHOTOS_PER_CALL} pierwszych zdjęć z ogłoszenia tylko wtedy, gdy opis jest słaby albo wynik to „niepewne”, oraz przy weryfikacji każdej okazji przed wysłaniem. Koszt: ok. 0,1–2,5 grosza za analizę ze zdjęciami (zależnie od modelu). Działa z Gemini i Claude (nie z Groq).
+                  AI dostaje {MAX_PHOTOS_PER_CALL} pierwsze zdjęcia z galerii przy każdej analizie ogłoszenia. Ogłoszenia „niepewne” (dokładniejsza analiza) i okazje (weryfikacja) — wszystkie zdjęcia z ogłoszenia (maks. {MAX_PHOTOS_ALL}). Koszt: ok. 0,3–1 grosza za zwykłą analizę na Haiku / Flash; weryfikacja ze wszystkimi zdjęciami na Sonnecie — do ok. 30 gr więcej. Działa z Gemini i Claude (nie z Groq).
                 </div>
               </div>
             </div>
 
             {/* Save */}
             <div style={{ gridColumn: "span 2" }}>
-              <button onClick={saveSettings} style={{
+              <button onClick={() => saveSettings(false)} style={{
                 width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
                 fontWeight: 800, fontSize: 15,
                 background: "linear-gradient(135deg, #f59e0b, #ef4444)",
