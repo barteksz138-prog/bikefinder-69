@@ -4,10 +4,11 @@
 // a proxy nie da się użyć do pobierania czegokolwiek innego: tylko adresy zdjęć ogłoszeń Kleinanzeigen,
 // najwyżej 6 zdjęć po maks. 5 MB, z limitem czasu. Zdjęcie, którego nie da się pobrać, jest pomijane.
 const IMG_URL_RE = /^https:\/\/img\.kleinanzeigen\.de\/api\/v1\/prod-ads\/images\/[0-9a-f]{2}\/[0-9a-f-]{36}\?rule=\$_\d{1,3}\.(JPG|AUTO)$/i;
-const MAX_IMAGES = 6;
+const MAX_IMAGES = 20;           // 4 przy zwykłej analizie; "niepewne" i weryfikacja okazji — wszystkie zdjęcia (do 20)
+const IMAGE_CONCURRENCY = 4;     // pobieramy po 4 naraz, nie wszystkie jednocześnie — łagodniej dla serwera zdjęć Kleinanzeigen
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TIMEOUT_MS = 8000;
-const MAX_TOTAL_BASE64 = 12 * 1024 * 1024;
+const MAX_TOTAL_BASE64 = 16 * 1024 * 1024; // Google przyjmuje do ok. 20 MB w jednym zapytaniu
 const ALLOWED_IMAGE_TYPES = { "image/jpeg": "image/jpeg", "image/jpg": "image/jpeg", "image/png": "image/png", "image/webp": "image/webp" };
 
 const fetchImagePart = async (url) => {
@@ -38,21 +39,39 @@ const fetchImagePart = async (url) => {
 };
 
 // Zdjęcia idą PRZED tekstem w ostatniej wiadomości (zalecenie Google dla zapytań z obrazami).
-const attachImages = async (messages, imageUrls) => {
+// maxPerImage — limit pojedynczego zdjęcia u danego dostawcy (Claude: 5 MB po zakodowaniu)
+const attachImages = async (messages, imageUrls, maxPerImage = Infinity) => {
   if (!Array.isArray(imageUrls) || imageUrls.length === 0 || !Array.isArray(messages) || messages.length === 0) {
     return { contents: messages, attached: 0 };
   }
   const urls = [...new Set(imageUrls)].filter(u => typeof u === "string" && IMG_URL_RE.test(u)).slice(0, MAX_IMAGES);
-  // Google przyjmuje do ok. 20 MB danych w jednym zapytaniu — trzymamy zdjęcia łącznie poniżej 12 MB (base64)
+  // Google przyjmuje do ok. 20 MB danych w jednym zapytaniu — trzymamy zdjęcia łącznie poniżej 16 MB (base64)
   let total = 0;
-  const parts = (await Promise.all(urls.map(fetchImagePart))).filter(Boolean).filter(p => {
-    total += p.inlineData.data.length;
-    return total <= MAX_TOTAL_BASE64;
-  });
+  const fetched = [];
+  for (let i = 0; i < urls.length; i += IMAGE_CONCURRENCY) {
+    fetched.push(...await Promise.all(urls.slice(i, i + IMAGE_CONCURRENCY).map(fetchImagePart)));
+  }
+  // Najpierw limit pojedynczego zdjęcia, potem łączny — licznik rośnie TYLKO o zdjęcia faktycznie dołączone,
+  // więc pominięte duże zdjęcie nie blokuje późniejszych małych.
+  const parts = [];
+  for (const p of fetched) {
+    if (!p) continue;
+    const len = p.inlineData.data.length;
+    if (len > maxPerImage || total + len > MAX_TOTAL_BASE64) continue;
+    total += len;
+    parts.push(p);
+  }
   if (parts.length === 0) return { contents: messages, attached: 0 };
+  // Zdjęcia wstawiamy ZA stałą częścią promptu (baza cen + reguły, oznaczona cacheControl), a PRZED danymi
+  // ogłoszenia. Inaczej różne zdjęcia na początku zapytania psułyby wspólny początek promptu i cache
+  // (Claude dopasowuje cały prefiks razem ze zdjęciami; automatyczny cache Gemini działa tak samo).
   const last = messages[messages.length - 1] || {};
+  const lastParts = Array.isArray(last.parts) ? last.parts : [];
+  let at = -1;
+  lastParts.forEach((p, i) => { if (p?.cacheControl) at = i; });
+  const merged = [...lastParts.slice(0, at + 1), ...parts, ...lastParts.slice(at + 1)];
   return {
-    contents: [...messages.slice(0, -1), { ...last, parts: [...parts, ...(Array.isArray(last.parts) ? last.parts : [])] }],
+    contents: [...messages.slice(0, -1), { ...last, parts: merged }],
     attached: parts.length,
   };
 };
@@ -272,14 +291,8 @@ export default async function handler(req, res) {
     } else if (provider === "anthropic") {
       if (!/^claude-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model Claude" } });
       const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;
-      let { contents, attached } = wantsImages ? await attachImages(messages, imageUrls) : { contents: messages, attached: 0 };
-      if (attached > 0) {
-        // Anthropic odrzuca zdjęcia powyżej 5 MB (base64) — takie pomijamy, zamiast tracić całe zapytanie
-        const last = contents[contents.length - 1];
-        const before = last.parts.length;
-        last.parts = last.parts.filter(p => !p?.inlineData || p.inlineData.data.length <= CLAUDE_MAX_IMAGE_BASE64);
-        attached -= before - last.parts.length;
-      }
+      // Anthropic odrzuca zdjęcia powyżej 5 MB (base64) — takie pomijamy od razu, zamiast tracić całe zapytanie
+      const { contents, attached } = wantsImages ? await attachImages(messages, imageUrls, CLAUDE_MAX_IMAGE_BASE64) : { contents: messages, attached: 0 };
       const { status, body: out } = await callClaude({ model, apiKey, contents, generationConfig });
       if (wantsImages && out && !out.error) out.imagesAttached = attached;
       return res.status(status).json(out);
