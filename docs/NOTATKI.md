@@ -1,6 +1,6 @@
 # DirtDealFinder — notatki projektu
 
-Wiedza zebrana podczas budowy (stan: 11.11.2026, v5.12). Instrukcje pracy: `CLAUDE.md`.
+Wiedza zebrana podczas budowy (stan: 11.11.2026, v5.13). Instrukcje pracy: `CLAUDE.md`.
 
 ## 1. Jak działa jeden cykl
 1. Wyczyszczenie kolejek, wysłanie zaległych powiadomień (outbox), dokończenie zaległych ofert z etapu 1.
@@ -16,6 +16,8 @@ Wiedza zebrana podczas budowy (stan: 11.11.2026, v5.12). Instrukcje pracy: `CLAU
 3. **Etap 1 (za darmo / Groq):** filtr słów w tytule (całe słowa), filtr rocznika w tytule (pomija „2000 km”, „NP 2000 €”, „180er”), brak ceny → odrzucone, cena < 200 € albo > 1400 € → odrzucone, Groq: full / dirt / elektryk_gorski / inny / niepewne / stary.
    Znany model w tytule (lista dirtów `DIRT_MODEL_RE` albo wszystkie słowa wyszukiwania modelu) bez słów o części → „inny/stary” Groqa nie odrzuca, decyduje AI.
 4. **Etap 2 (AI):** pełny opis ze strony ogłoszenia (max 15 stron na cykl, 4 s odstępu), pierwsza analiza z 4 zdjęciami.
+   - dirt (z Etapu 1 albo znany model dirtowy w tytule) → od razu wszystkie zdjęcia + ściąga widelców (`DIRT_FORK_GUIDE`); gdy AI dopiero rozpozna dirta — ściąga w dokładniejszej analizie i weryfikacji;
+   - pole `widelec` {model, zrodlo: napis/opis/wyglad/nieznany, sztywny}; w dircie widelec z wyglądu albo nierozpoznany → wpis w „Do sprawdzenia”; sztywny widelec w dircie → odrzucone;
    - „niepewne” → druga analiza ze wszystkimi zdjęciami; „nie” blisko progu (±8%) → druga analiza z 4 zdjęciami;
    - „tak” → weryfikacja „adwokat diabła” na modelu weryfikacji ze wszystkimi zdjęciami (do 20);
    - twarde reguły w kodzie: rocznik < 2017, e-bike (jeśli wykluczone), sklep + nowy, sama część, limit ceny względem „ceny nowego” zależny od wieku, zysk = sprzedaż − zakup − transport, próg zysku;
@@ -58,6 +60,8 @@ Realnie: ok. 0,7 zł/dobę przy 38 wyszukiwaniach. Groq na darmowym planie: ok. 
 - Limit rocznika 2017 dotyczy też dirtów.
 - Jeden ogólny link zamiast wyszukiwań modeli — testowany wcześniej, za dużo śmieci → zostają wyszukiwania modeli.
 - Dodatkowe dane sprzedawcy/wysyłki/stanu w alertach — na razie nie.
+- Widelce w dirtach (dokument „Ściąga: widelce w dirtach”, 11.11.2026): wysoka półka = Pike DJ (tylko 100 mm), Bomber DJ od 2020, Fox 36 831 (zawsze Kashima), Manitou Circus Pro; pasmo „słabszy widelec” = Circus Expert/Comp (srebrne lagi = Comp; mostek z tyłu = Manitou), X-Fusion Slant (średnia), Argyle, stare Marzocchi DJ 1–3, Suntour, RST, inne X-Fusion, Sektor/Recon/Judy; nierozpoznany = słabszy; sztywny widelec = rower do odrzucenia. Kashima tylko w Foxie — złote lagi RockShoxa to nie Kashima.
+- Test rozpoznawania widelców (11.11.2026): Fox Factory/Kashima pewne; wersje Fox tylko z napisu; ściąga dla Pike DJ: Sonnet 11/11 rowerów (bez niej 1/11), bez fałszywych Pike DJ; ściąga dla fulli (Fox/RockShox wersje) nie pomogła → w fullach tylko zasada „wersja z napisu, inaczej tańsza”. Kolor lag nie mówi o półce.
 - Stare notatki cenowe z lipca 2026 (sprzeczne z bazą) — usunięte przez właściciela 11.11.2026.
 
 ## 5. Pomysły na później (nie zaczynać bez zgody)
@@ -71,6 +75,7 @@ Realnie: ok. 0,7 zł/dobę przy 38 wyszukiwaniach. Groq na darmowym planie: ok. 
 - Regulamin Kleinanzeigen (§ 5 pkt 1) zakazuje automatycznego pobierania treści bez zgody — dotyczy całego skanera. Nie przyspieszać odpytywania; blokady mają bezpiecznik.
 - Zapytania idą z serwerów Vercela (`/api/scrape`), nie z komputera właściciela.
 - Chrome usypia karty w tle (Ustawienia → Wydajność → dodać adres skanera do „zawsze aktywne”); Opera GX ma limity GX Control.
+- Testy AI na żywo idą z klucza właściciela (to samo konto co skaner). 11.11.2026 testy zjadły resztę środków Anthropic i skaner stanął — przed większym testem sprawdzić saldo i liczyć koszt (Sonnet ≈ 6 gr / ogłoszenie z 12 zdjęciami).
 - Log w aplikacji trzyma ok. 500 linii (kilka cykli) — do historii służy „Dziennik zdarzeń” w Statusie.
 
 ## 7. Historia wersji (skrót)
@@ -80,4 +85,5 @@ Realnie: ok. 0,7 zł/dobę przy 38 wyszukiwaniach. Groq na darmowym planie: ok. 
 - v5.8: wszystkie zdjęcia przy weryfikacji/niepewnych; v5.9: poprawki z audytu (captcha, STOP, zaległe okazje).
 - v5.10: brak ceny → odrzucone; podejrzenia → pole „ostrzeżenia” zamiast „niepewne”.
 - v5.11: numer ogłoszenia jako ID (+migracja), pamięć 15 000 ogłoszeń wg ostatniego widzenia, min. cena 200 €, bezpiecznik blokad, krytyczne błędy AI, analiza zaraz po wyszukiwaniu, rzadkie wyszukiwania, zdjęcie/rozmiar/„dodano”/obniżka w alercie, komunikaty o problemach, kanał „na granicy”, autozapis ustawień.
+- v5.13: ściąga widelców w dirtach, pole „widelec” (alert: 🔧 Widelec), sztywny widelec → odrzucone, wszystkie zdjęcia przy dirtach, poprawiona reguła Kashimy, nowe półki widelców w bazie dirtów, wróciło „📷 Zdjęcia” w „na granicy”.
 - v5.12: odstęp 6 s, typ Mountainbike + E-Bike, usunięte ogłoszenia, poprawki Groqa (dirty, dłuższy opis, ostrożniej ze „stary”), nowe progi „na granicy”, alerty bez powtórzeń i po polsku, rocznik jako zakres, dziennik zdarzeń, autostart.

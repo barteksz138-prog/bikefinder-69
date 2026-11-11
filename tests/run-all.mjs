@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 execFileSync(process.execPath, [path.join(HERE, "build.mjs")], { stdio: "inherit" });
-const ALL = ["tests56.mjs", "tests56b.mjs", "tests57.mjs", "tests58.mjs", "tests59.mjs", "tests510.mjs", "tests511.mjs", "tests512.mjs",
+const ALL = ["tests56.mjs", "tests56b.mjs", "tests57.mjs", "tests58.mjs", "tests59.mjs", "tests510.mjs", "tests511.mjs", "tests512.mjs", "tests513.mjs",
   "t_api.mjs", "t_img.mjs", "t_disc.mjs", "t_chat.mjs"];
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 let failed = 0;
