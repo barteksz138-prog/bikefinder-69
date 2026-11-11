@@ -1,0 +1,12 @@
+import { openApp, closeBrowser, geminiResp } from "./harness.mjs";
+import assert from "node:assert/strict";
+const app = await openApp({ cfg: { geminiModel: "claude-haiku-5-5", claudeKey: "sk-ant-x" }, world: { search: () => [], ai: (b) => geminiResp("Odpowiedź testowa czatu") } });
+await app.page.getByRole("button", { name: /Chat AI/ }).click();
+await app.page.locator("textarea, input[type=text]").last().fill("Ile jest wart Canyon Torque 2021?");
+await app.page.keyboard.press("Enter");
+await app.page.getByText("Odpowiedź testowa czatu").waitFor({ timeout: 8000 });
+const r = app.st.aiReqs[0];
+assert.equal(r.provider, "anthropic"); assert.equal(r.apiKey, "sk-ant-x");
+assert.ok(r.messages[0].parts[0].text.includes("baza cen"));
+console.log("CHAT OK");
+await app.close(); await closeBrowser();
