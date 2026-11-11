@@ -377,8 +377,21 @@ const SCRAPE_BLOCK_PAUSE_MS = 20 * 60 * 1000;     // 2 zablokowane wyszukiwania 
 const OUTBOX_REFRESH_MIN_GAP_MS = 5 * 60 * 1000;  // zaległą okazję sprawdzamy na stronie ogłoszenia najwyżej co 5 min
 const RARE_SEARCH_AFTER_MS = 3 * 24 * 60 * 60 * 1000; // wyszukiwanie bez nowych ofert od 3 dni = "rzadkie"…
 const RARE_SEARCH_RESCAN_MS = 10 * 60 * 1000;     // …sprawdzane co ok. 10 min zamiast w każdym cyklu (popularne częściej)
-const NEAR_DEAL_MAX_OVER = 0.30;                  // "na granicy okazji": cena najwyżej 30% powyżej ceny, przy której zakup się opłaca
-const NEAR_DEAL_OFFER_SHARE = 0.70;               // propozycja dla sprzedawcy: ok. 70% tej ceny, w dół do 50 €
+const NEAR_DEAL_MAX_DROP = 0.20;                  // v5.12 "na granicy": cena musi spaść NAJWYŻEJ o 20%, żeby zakup się opłacał
+const NEAR_DEAL_OFFER_SHARE = 0.88;               // propozycja dla sprzedawcy: ok. 12% poniżej kwoty „opłaca się do”, w dół do 10 €
+// v5.12: wersja linków wyszukiwań. Po zmianie filtra (np. dodany typ E-Bike) nowo widoczne STARE oferty nie są
+// "nowe" — przy pierwszym skanie po zmianie analizujemy tylko te z ostatnich 24 h (jak po długiej przerwie).
+const SEARCH_URL_VERSION = 2;
+const SEARCH_GAP_MS = 6000;                       // v5.12: odstęp między wyszukiwaniami (+ losowo do 1,5 s); w v5.11 było 3 s — za szybko (blokady)
+const EVENTS_MAX = 300;                           // dziennik ważnych zdarzeń (Status → Dziennik) — trwały, przeżywa odświeżenie
+// Ważne zdarzenia do dziennika (oprócz wszystkich błędów): start/stop, wysłane alerty, blokady, budżet, autostart
+const EVENT_RE = /^(🚀|⏹|⛔|📨 Wysłano|🤏 Wysłano|❓ Zaległa|🔁|💰 .*wyczerp|🏷️ Wersja)/;
+// Znane dirty / slopestyle — Groq bywa przekonany, że to "inny" albo "stary" (sztywny tył, 26" to w dirtach norma)
+const DIRT_MODEL_RE = /(the\s*bruce|two\s*6\s*player|two6player|dartmoor\s+(gamer|shine)|stitched|specialized\s+p\.?\s?(3|26|24)\b|p\.?\s?slope|dirt\s*love|commencal\s+absolut|radon\s+slush|marin\s+alcatraz|trickshot|ns\s*(bikes\s+)?(movement|zircus|metropolis|decade|capital)|santa\s*cruz\s+jackal|voltage\s*yz|norco\s+rampage|kona\s+shonky|flying\s*circus|trek\s+ticket)/i;
+// Tytuł wskazujący na samą część — wtedy "inny" od Groqa zostaje (nie ratujemy znanym modelem)
+const PART_TITLE_RE = /\b(rahmen|rahmenset|frame|frameset|gabel|federgabel|dämpfer|daempfer|laufrad|laufradsatz|teile|ersatzteil\w*)\b/i;
+// Rocznik do wyświetlenia: podany → "2019"; oszacowany → zakres, jeśli AI go podało ("2012–2016 (oszac.)")
+const fmtYear = (f) => !f?.rocznik ? "?" : f.rocznik_zrodlo === "oszacowany" ? `${f.rocznik_zakres || f.rocznik} (oszac.)` : String(f.rocznik);
 
 // Numer ogłoszenia z linku: /s-anzeige/<tytuł>/<numer>-217-<miejsce>. Tytuł w linku zmienia się, gdy sprzedawca
 // edytuje ogłoszenie — dlatego ofertę rozpoznajemy po numerze, a nie po całym linku.
@@ -452,7 +465,8 @@ const fmtDuration = (ms) => {
 
 // Okazja zapisana do wysyłki — tylko pola potrzebne do wiadomości na Discordzie
 const dealSnapshot = (a) => ({
-  typ_roweru: a.typ_roweru, fakty: { rocznik: a.fakty?.rocznik ?? null, rocznik_zrodlo: a.fakty?.rocznik_zrodlo ?? "brak" },
+  typ_roweru: a.typ_roweru, fakty: { rocznik: a.fakty?.rocznik ?? null, rocznik_zrodlo: a.fakty?.rocznik_zrodlo ?? "brak", rocznik_zakres: a.fakty?.rocznik_zakres ?? null },
+  _summary: a._summary ?? null,
   przewidywany_zysk: a.przewidywany_zysk, transport_eur: a.transport_eur ?? null, krotki_opis: a.krotki_opis,
   cena_zakupu_eur: a.cena_zakupu_eur ?? null, szacowana_sprzedaz_eur: a.szacowana_sprzedaz_eur ?? null, // do przeliczenia zysku przy zmianie ceny
   zdjecia: a.zdjecia ?? null, _photos: a._photos ?? null, _verifyMode: a._verifyMode ?? null, ostrzezenia: a.ostrzezenia ?? null,
@@ -482,7 +496,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v5.11 (2026-11-10)";
+const APP_VERSION = "v5.12 (2026-11-11)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -770,6 +784,18 @@ function App() {
     return true;
   };
   const removeJob = (id) => { pendingRef.current.delete(id); };
+  // v5.12: znany model w tytule — "dirt" (znana dirtówka) albo "model" (wszystkie słowa wyszukiwania modelu są w tytule)
+  const knownModelInTitle = (listing) => {
+    const t = String(listing.title || "").toLowerCase();
+    if (DIRT_MODEL_RE.test(t)) return "dirt";
+    const b = BIKE_MODELS.find(x => x.label === listing.bike);
+    if (!b || b.isCategory || !b.query) return null;
+    const clean = (s) => s.replace(/[^a-z0-9äöüß.]+/g, " ");
+    const words = clean(b.query.toLowerCase()).split(" ").filter(Boolean);
+    if (words.length < 2) return null; // samo "YT" / "Santa Cruz" to marka, nie model
+    const norm = ` ${clean(t)} `;
+    return words.every(w => norm.includes(` ${w} `) || norm.includes(w)) ? "model" : null;
+  };
   useEffect(() => { setQueueInfo({ pending: pendingRef.current.size, outbox: outboxRef.current.length }); }, []);
   const addToOutbox = (item) => {
     outboxRef.current.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, addedAt: Date.now(), tries: 0, ...item });
@@ -889,10 +915,20 @@ function App() {
     return aiSpendRef.current.usd + estUsd <= (Number(aiBudgetPln) || 0) / USD_PLN_RATE;
   };
 
+  // v5.12: dziennik ważnych zdarzeń (błędy, blokady, wysłane alerty, start/stop) — w localStorage, przeżywa odświeżenie
+  const [events, setEvents] = useState(() => { try { const e = JSON.parse(localStorage.getItem("ddf_events") || "[]"); return Array.isArray(e) ? e : []; } catch { return []; } });
+  const [showEvents, setShowEvents] = useState(false);
   const addLog = useCallback((msg, type = "info") => {
     setLogs(prev => [...prev.slice(-499), {
       time: new Date().toLocaleTimeString("pl-PL"), msg, type,
     }]);
+    if (type === "error" || EVENT_RE.test(String(msg))) {
+      setEvents(prev => {
+        const next = [...prev.slice(-(EVENTS_MAX - 1)), { t: new Date().toLocaleString("pl-PL"), msg: String(msg).slice(0, 400), type }];
+        try { localStorage.setItem("ddf_events", JSON.stringify(next)); } catch {}
+        return next;
+      });
+    }
   }, []);
 
   // ── Proxy API calls ────────────────────────────────────────────────────
@@ -1300,11 +1336,13 @@ ZASADA: samo słowo "Mountainbike"/"MTB" w tytule BEZ dowodu na pełne zawieszen
 
 ZNANE HARDTAILE (= "inny", nie "full"): Trek Marlin/Roscoe/X-Caliber, Cube Aim/Access/Acid/Analog/Attention/Reaction, BULLS Sharptail/Copperhead/Wildtail/Six50, Rockrider/Rockride (Decathlon, wszystkie ST-serie), Specialized Rockhopper/Pitch/Chisel/Hardrock, Scott Aspect/Scale, Merida Big Nine/Seven/Trail, Ghost Kato/Lanao, Giant Talon/ATX, KTM Chicago/Ultra, Focus Whistler/Raven.
 
+ZNANE DIRTY / SLOPESTYLE (= "dirt" — sztywny tył i koła 26" są tu NORMALNE): Rose The Bruce, Dartmoor Two6Player / Gamer / Shine, Canyon Stitched 360 (Stitched 720 to full do slopestyle'u → full), Specialized P.3 / P.26 / P.24 / P.Slope, NS Bikes Movement / Zircus / Metropolis / Decade / Capital, YT Dirt Love, Commencal Absolut, Radon Slush, Marin Alcatraz, Propain Trickshot, Trek Ticket, Santa Cruz Jackal, Scott Voltage YZ, Norco Rampage, Kona Shonky, Cube Flying Circus. Widelec dirtowy (Manitou Circus, RockShox Pike DJ / Argyle, Marzocchi DJ) albo słowa "Dirt", "Dirtjump", "Slopestyle", "Pumptrack" przy rowerze = dirt. Motocykl / cross spalinowy albo elektryczny "Dirt Bike" z silnikiem (W, km/h, Motocross) = inny.
+
 E-BIKE: sygnały napędu ("E-Bike","Akku","Motor",Bosch/Shimano Steps/Brose/Yamaha, przebieg w km, "E1.5"/"E-8"). Z charakterem górskim (zawieszenie/MTB/teren) → elektryk_gorski. Z charakterem miejskim/touring (koszyk, błotniki, "City"/"Trekking") → inny.
 
 CZĘŚCI vs CAŁY ROWER — WAŻNE: samo wymienienie konkretnych komponentów w opisie CAŁEGO roweru na sprzedaż (np. "z widelcem RockShox Pike, kołami Mavic, hamulcami Code") to NORMALNY opis wyposażenia — dalej klasyfikuj normalnie po typie zawieszenia. Odpowiedz "inny" TYLKO gdy z tytułu/opisu WPROST wynika, że przedmiotem ogłoszenia jest SAMA CZĘŚĆ, nie cały rower — np. "verkaufe nur Rahmen", "biete Gabel/Dämpfer/Laufradsatz an", "Ersatzteil", "Teile vom [model]", "nur Rahmenset", "Einzelteile", tytuł zaczynający się od nazwy komponentu bez wzmianki że to kompletny rower. W razie wątpliwości (nie jest jasne czy to część czy cały rower) → niepewne, NIE inny.
 
-ROK PRODUKCJI: Jeśli w tytule/opisie NIE MA podanego roku, ale rozpoznajesz model na tyle dokładnie (nazwa, wersja, charakterystyczne komponenty/kolorystyka danego rocznika), że potrafisz oszacować rok produkcji — i szacowany rok jest WCZEŚNIEJSZY niż 2017 — odpowiedz dokładnie jednym słowem: stary (zamiast normalnej klasyfikacji typu). Jeśli nie potrafisz wiarygodnie oszacować roku, zignoruj tę zasadę i klasyfikuj normalnie.
+ROK PRODUKCJI: odpowiedz jednym słowem "stary" (zamiast typu) TYLKO wtedy, gdy tytuł/opis daje KONKRETNY dowód, że rower jest sprzed 2017: podany rok, koła 26" w rowerze enduro/trail/fullu (w dirtach 26" to standard — to NIE jest dowód wieku), napęd 3x/2x, hamulce V-Brake, nazwa wyraźnie starej generacji. Sama nazwa modelu (np. "Rose The Bruce", "NS Capital", "Trek Fuel EX") bez takiego dowodu to NIE powód — klasyfikuj normalnie; wiek oceni dokładniejsza analiza.
 
 Brak wystarczających informacji → odpowiedz: niepewne
 
@@ -1380,6 +1418,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
           const reasonLine = rawLines.length > 1 ? rawLines.slice(0, -1).join(" ").slice(0, 80) : "";
           const reasonNote = reasonLine ? ` — powód: "${reasonLine}"` : "";
           addLog(`${icon} Groq (${ms}ms): typ="${typ}"${rawNote}${reasonNote} — ${listing.title}`, "info");
+          listing._groqReason = reasonLine || null; // v5.12: powód pokazujemy w Wynikach przy odrzuceniu
           return typ;
         } catch (e) {
           const ms = Date.now() - startedAt;
@@ -1407,7 +1446,8 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     // Format zweryfikowany na realnych URL-ach Kleinanzeigen: /s-fahrraeder/{fraza}/k0c217+fahrraeder.type_s:mountainbike
     const url = bike.isCategory
       ? bike.categoryUrl
-      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:mountainbike`;
+      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
+    // v5.12: typ "Mountainbike" ORAZ "E-Bike" — sam Mountainbike gubił wszystkie e-MTB (np. Torque:ON, Heckler)
     const resp = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`, { signal: requestSignal(SCRAPE_TIMEOUT_MS, true) });
     if (!resp.ok) throw new Error(`Scrape HTTP ${resp.status}`);
     return resp.text();
@@ -1472,6 +1512,18 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
       return { ok: false, reason: `błąd sieci: ${e.message}` };
     }
     const doc = new DOMParser().parseFromString(html, "text/html");
+
+    // v5.12: usunięte ogłoszenie — Kleinanzeigen odpowiada 200 i pokazuje stronę kategorii z INNYMI ofertami
+    // (ich opisy są w JSON-LD, więc wcześniej program brał opis cudzego roweru). Rozpoznajemy po braku
+    // elementów strony ogłoszenia i adresie kanonicznym, który nie prowadzi do /s-anzeige/.
+    const canon = doc.querySelector('link[rel="canonical"]')?.getAttribute("href") || "";
+    const hasAdMarkup = !!doc.querySelector("#viewad-main, #viewad-title, #viewad-description-text");
+    if (!hasAdMarkup && !/\/s-anzeige\//.test(canon)) {
+      const bodyTxt = (doc.body?.textContent || "").toLowerCase();
+      if (/captcha|robot|zugriff verweigert|access denied/.test(bodyTxt)) return { ok: false, blocked: true, reason: "strona blokady/captcha" };
+      if (canon) return { ok: false, gone: true, reason: "ogłoszenie usunięte (Kleinanzeigen pokazuje inne oferty)" };
+      return { ok: false, reason: "nie rozpoznano strony ogłoszenia" };
+    }
 
     // Opis — warstwowo. Osobne zapytania zamiast jednej listy selektorów: querySelector z listą
     // zwraca PIERWSZY w kolejności dokumentu, a pusty <meta itemprop="description"> w <head>
@@ -1632,7 +1684,10 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
         const afterTitle = article.querySelector("h3 + p");
         if (afterTitle && !afterTitle.matches(".text-title3")) descEl = afterTitle;
       }
-      const desc = descEl?.textContent?.trim() || (typeof jsonLd?.description === "string" ? jsonLd.description.trim() : "");
+      // v5.12: <p> na karcie to ok. 100 znaków, JSON-LD karty ma ok. 300 — Groq dostaje dłuższy fragment
+      const descShort = descEl?.textContent?.trim() || "";
+      const descLd = typeof jsonLd?.description === "string" ? jsonLd.description.trim() : "";
+      const desc = descLd.length > descShort.replace(/(\.\.\.|…)\s*$/, "").length ? descLd : descShort;
       const locEl  = article.querySelector("[class*=locality], [class*=location], .aditem-main--top--left");
 
       items.push({
@@ -1725,7 +1780,7 @@ Do tej analizy dołączono do ${n} pierwszych zdjęć z galerii ogłoszenia (pie
 • ocenić widoczny stan: rdza, głębokie rysy, wgniecenia, pęknięcia, braki części, krzywe koło;
 • wykryć zdjęcia katalogowe / stockowe zamiast prawdziwych (studyjne, białe tło, identyczne jak u producenta) — wpisz to w "ostrzezenia" (NIE zmieniaj przez to decyzji — użytkownik sam weryfikuje sprzedawcę).
 Ze zdjęć NIE odczytasz pewnie drobnych napisów ani ukrytych wad (luzy łożysk, stan amortyzatora od środka) — nie zgaduj ich. Gdy zdjęcia przeczą opisowi (inny model lub generacja, alu zamiast karbonu, uszkodzenia), ufaj zdjęciom i napisz to w "powod_decyzji". Opis nadal jest głównym źródłem informacji — zdjęcia go uzupełniają.
-Dodaj do odpowiedzi JSON pole "zdjecia": krótko (max 25 słów), co widać na zdjęciach i czy zgadza się z opisem.`;
+Dodaj do odpowiedzi JSON pole "zdjecia": krótko PO POLSKU (max 25 słów), co widać na zdjęciach i czy zgadza się z opisem.`;
 
     const typeIsTrusted = ["full", "dirt", "elektryk_gorski"].includes(groqType);
 
@@ -1802,6 +1857,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "fakty": {
     "rocznik": liczba (rok modelowy) lub null,
     "rocznik_zrodlo": "podany" | "oszacowany" | "brak",
+    "rocznik_zakres": "TYLKO gdy rocznik_zrodlo = \"oszacowany\": zakres lat, które naprawdę pasują, np. \"2012–2016\" (pewny jeden rok → np. \"2019–2019\"); inaczej null",
     "e_bike": true | false,
     "sprzedawca": "prywatny" | "sklep" | "nieznany",
     "stan": "nowy" | "jak_nowy" | "uzywany" | "uszkodzony",
@@ -1814,7 +1870,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
   "przewidywany_zysk": liczba w EUR (sprzedaż − zakup − transport ${transportCostEur}€) lub 0,
   "niepewne_kategoria": "nisza_custom" | "za_malo_opisu" | "nieznany_model" | "inne" | null,
-  "ostrzezenia": "krótko (max 15 słów): podejrzenia do sprawdzenia przez użytkownika — np. cena podejrzanie niska, zdjęcia katalogowe, możliwe ukryte wady — albo null",
+  "ostrzezenia": "krótko PO POLSKU (max 15 słów, nie cytuj niemieckiego opisu): podejrzenia do sprawdzenia przez użytkownika — np. cena podejrzanie niska, zdjęcia katalogowe, możliwe ukryte wady — albo null",
   "rozmiar_ramy": "rozmiar ramy z tytułu/opisu, np. \"L\", \"M/L\", \"48 cm\" — albo null",
   "argumenty_negocjacji": "TYLKO gdy decyzja \"nie\" z powodu za małego zysku: 1–3 krótkie, PRAWDZIWE (wynikające z ogłoszenia lub rynku) powody niższej ceny, PO NIEMIECKU, rozdzielone średnikiem — np. \"Baujahr 2018; Kette und Bremsbeläge bald fällig; vergleichbare Räder werden günstiger angeboten\" — w pozostałych przypadkach null",
   "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": źródło ceny — pasmo z bazy (np. 'baza: Torque AL 2018–2021'), notatka użytkownika, wycena kategorii z bazy albo własna wiedza rynkowa."
@@ -1976,8 +2032,11 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           if (rocznik != null && (rocznik < 1980 || rocznik > new Date().getFullYear() + 1)) rocznik = null;
           if (rocznik != null) rocznik = Math.round(rocznik);
           const rocznikZrodlo = rocznik == null ? "brak" : (f.rocznik_zrodlo === "podany" ? "podany" : "oszacowany");
+          const zakresM = typeof f.rocznik_zakres === "string" ? f.rocznik_zakres.match(/^\s*(\d{4})\s*[–-]\s*(\d{4})\s*$/) : null;
           const fakty = {
             rocznik, rocznik_zrodlo: rocznikZrodlo,
+            rocznik_zakres: rocznikZrodlo === "oszacowany" && zakresM && +zakresM[1] <= +zakresM[2]
+              ? (zakresM[1] === zakresM[2] ? zakresM[1] : `${zakresM[1]}–${zakresM[2]}`) : null,
             e_bike: f.e_bike === true,
             sprzedawca: ["prywatny", "sklep"].includes(f.sprzedawca) ? f.sprzedawca : "nieznany",
             stan: ["nowy", "jak_nowy", "uzywany", "uszkodzony"].includes(f.stan) ? f.stan : null,
@@ -2105,6 +2164,15 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             }
           }
 
+          // ── v5.12: "NIEPEWNE" tylko dlatego, że wyszło blisko progu — liczby są kompletne, zysk < próg → "nie"
+          // (dzięki temu oferta trafia do "na granicy" z propozycją ceny, a nie do listy niepewnych)
+          if (parsed.decyzja === "niepewne" && (!parsed.niepewne_kategoria || parsed.niepewne_kategoria === "inne") && !parsed.odrzucenie
+            && typ !== "inny" && cenaNum > 0 && zyskLiczony != null && (zyskLiczony / cenaNum) * 100 < minProfit) {
+            addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: "niepewne", ale liczby są kompletne — zysk ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% < próg ${minProfit}% → "nie" (sprawdzę „na granicy”) — ${listing.title}`, "info");
+            parsed.decyzja = "nie";
+            parsed.niepewne_kategoria = null;
+          }
+
           // ── "NIE" przy zysku ≥ progu (bez twardego powodu): liczby decydują. W pierwszej analizie → "tak" (sprawdzi
           // weryfikacja); u weryfikatora → do niepewnych (sam sobie przeczy — niech oceni człowiek).
           if (parsed.decyzja === "nie" && !parsed.odrzucenie && typ !== "inny" && cenaNum > 0 && zyskLiczony != null
@@ -2140,7 +2208,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           const cena = parsed.cena_zakupu_eur;
           const sprzedaz = parsed.szacowana_sprzedaz_eur;
           const zysk = parsed.przewidywany_zysk;
-          const rokTxt = rocznik != null ? `rocznik ${rocznik}${rocznikZrodlo === "oszacowany" ? " (oszac.)" : ""}` : "rocznik ?";
+          const rokTxt = `rocznik ${fmtYear(fakty)}`;
           if (parsed.decyzja === "tak") {
             parsed.krotki_opis = `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ → zysk ~${zysk}€ po transporcie (${transport}€) · ${rokTxt}.`;
           } else if (parsed.decyzja === "niepewne") {
@@ -2164,6 +2232,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           if (parsed.powod_decyzji && parsed.decyzja !== "niepewne") {
             parsed.krotki_opis += ` (${parsed.powod_decyzji})`;
           }
+          parsed._summary = parsed.krotki_opis; // v5.12: wersja bez ⚠️/📷 — na Discordzie te informacje mają osobne pola
           // Ostrzeżenia do ręcznej weryfikacji (np. podejrzanie niska cena) — informacja, nie zmiana decyzji
           parsed.ostrzezenia = typeof parsed.ostrzezenia === "string" && parsed.ostrzezenia.trim() && !/^(null|brak|none|-)$/i.test(parsed.ostrzezenia.trim())
             ? parsed.ostrzezenia.trim().slice(0, 200) : null;
@@ -2394,16 +2463,16 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       fields: [
         { name: "🚴 Typ roweru",        value: `**${typLabel}**`, inline: true },
         { name: "💰 Cena z ogłoszenia", value: listing.price != null ? `**${listing.price}€**` : "brak", inline: true },
-        { name: "📅 Rocznik",           value: analysis.fakty?.rocznik ? `**${analysis.fakty.rocznik}**${analysis.fakty.rocznik_zrodlo === "oszacowany" ? " (oszac.)" : ""}` : "?", inline: true },
+        { name: "📅 Rocznik",           value: fmtYear(analysis.fakty), inline: true },
         { name: "🤑 Przewidywany zysk", value: `**~${analysis.przewidywany_zysk}€**${analysis.transport_eur ? ` (po transporcie ${analysis.transport_eur}€)` : ""}`, inline: true },
         ...(analysis.rozmiar_ramy ? [{ name: "📏 Rozmiar", value: String(analysis.rozmiar_ramy), inline: true }] : []),
         ...(listing.prevPrice != null && listing.price != null && listing.prevPrice > listing.price
           ? [{ name: "📉 Obniżka", value: `${listing.prevPrice}€ → **${listing.price}€** (−${Math.round((1 - listing.price / listing.prevPrice) * 100)}%)`, inline: true }] : []),
         ...(fmtAgo(listing.postedAt) ? [{ name: "🕒 Dodano", value: fmtAgo(listing.postedAt), inline: true }] : []),
-        { name: "📍 Lokalizacja",       value: listing.location || "–", inline: true },
+        ...(listing.location ? [{ name: "📍 Lokalizacja", value: listing.location, inline: true }] : []),
         { name: "🔎 Wyszukiwanie",      value: listing.bike, inline: true },
         { name: "🔗 Link do ogłoszenia",value: listing.href },
-        { name: "📝 Krótki opis",       value: String(analysis.krotki_opis || "–").slice(0, 1024) },
+        { name: "📝 Krótki opis",       value: String(analysis._summary || analysis.krotki_opis || "–").slice(0, 1024) },
         ...(analysis.zdjecia ? [{ name: `📷 Zdjęcia (AI, ${analysis._photos || "?"} szt.)`, value: String(analysis.zdjecia).slice(0, 1024) }] : []),
         ...(analysis._verifyMode ? [{ name: "🕵️ Weryfikacja", value: analysis._verifyMode, inline: true }] : []),
         ...(analysis.ostrzezenia ? [{ name: "⚠️ Do sprawdzenia", value: String(analysis.ostrzezenia).slice(0, 1024) }] : []),
@@ -2437,8 +2506,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (!(cena > 0) || !(sprzedaz > 0)) return null;
     const transport = Math.max(0, Number(a.transport_eur) || 0);
     const maxPrice = Math.floor((sprzedaz - transport) / (1 + minProfit / 100)); // najwyższa cena zakupu spełniająca próg
-    if (maxPrice < minListingPrice || cena <= maxPrice || cena > maxPrice * (1 + NEAR_DEAL_MAX_OVER)) return null;
-    const offer = Math.max(50, Math.floor((maxPrice * NEAR_DEAL_OFFER_SHARE) / 50) * 50);
+    // v5.12: tylko gdy cena musi spaść najwyżej o 20%; propozycja ok. 12% poniżej "opłaca się do"
+    if (maxPrice < minListingPrice || cena <= maxPrice || 1 - maxPrice / cena > NEAR_DEAL_MAX_DROP) return null;
+    const offer = Math.max(50, Math.floor((maxPrice * NEAR_DEAL_OFFER_SHARE) / 10) * 10);
     return { maxPrice, offer, profitAtOffer: Math.round(sprzedaz - offer - transport) };
   };
   const sellerMessage = (near, args) => [
@@ -2460,12 +2530,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         { name: "📈 Szac. sprzedaż PL", value: `${a.szacowana_sprzedaz_eur}€`, inline: true },
         { name: "✅ Opłaca się do", value: `**${near.maxPrice}€**`, inline: true },
         { name: "🤝 Proponuj", value: `**${near.offer}€** (zysk ~${near.profitAtOffer}€ po transporcie)`, inline: true },
-        { name: "📅 Rocznik", value: a.fakty?.rocznik ? `${a.fakty.rocznik}${a.fakty.rocznik_zrodlo === "oszacowany" ? " (oszac.)" : ""}` : "?", inline: true },
+        { name: "📅 Rocznik", value: fmtYear(a.fakty), inline: true },
         ...(a.rozmiar_ramy ? [{ name: "📏 Rozmiar", value: String(a.rozmiar_ramy), inline: true }] : []),
         ...(fmtAgo(listing.postedAt) ? [{ name: "🕒 Dodano", value: fmtAgo(listing.postedAt), inline: true }] : []),
-        { name: "📍 Lokalizacja", value: listing.location || "–", inline: true },
+        ...(listing.location ? [{ name: "📍 Lokalizacja", value: listing.location, inline: true }] : []),
         { name: "✉️ Wiadomość do sprzedawcy (skopiuj)", value: ("```\n" + msg + "\n```").slice(0, 1024) },
-        { name: "📝 Ocena AI", value: String(a.krotki_opis || "–").slice(0, 1024) },
+        { name: "📝 Ocena AI", value: String(a._summary || a.krotki_opis || "–").slice(0, 1024) },
+        ...(a.ostrzezenia ? [{ name: "⚠️ Do sprawdzenia", value: String(a.ostrzezenia).slice(0, 1024) }] : []),
       ],
       ...(listing.photo ? { image: { url: listing.photo } } : {}),
       footer: { text: `DirtDealFinder • ${new Date().toLocaleString("pl-PL")}` },
@@ -2720,6 +2791,16 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           await sleep(2500); // margines poniżej limitu 30 RPM darmowego Groqa
           if (["full", "dirt", "elektryk_gorski"].includes(typ)) updateSeenType(listing.listingId, typ);
         }
+        // v5.12: Groq odrzuca znany model ("Rose The Bruce" → "stary", dirt → "inny") — gdy tytuł to znany model,
+        // a nie sama część, decyzję zostawiamy analizie AI (pełny opis + zdjęcia + twarda reguła rocznika)
+        if (!cachedTrusted && (typ === "inny" || typ === "stary") && !PART_TITLE_RE.test(listing.title)) {
+          const known = knownModelInTitle(listing);
+          if (known) {
+            addLog(`↩️ Groq: "${typ}", ale tytuł to znany model (${known === "dirt" ? "dirt" : listing.bike}) — decyzję zostawiam analizie AI — ${listing.title}`, "info");
+            typ = known === "dirt" ? "dirt" : "niepewne";
+            job.knownModel = true;
+          }
+        }
         // Groq niedostępny (brak klucza, błąd, limit) to NIE to samo co niepewny typ — bez progu ceny, prosto do AI
         const classifierDown = typ === "niedostepny";
         if (classifierDown) { phase1Stats.classifierDown++; typ = "niepewne"; }
@@ -2727,18 +2808,18 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         if (typ === "stary") {
           phase1Stats.oldBike++;
           addLog(`🚫 Groq: rower oszacowany jako sprzed ${MIN_BIKE_YEAR} — odrzucono — ${listing.title}`, "info");
-          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Groq oszacował rok produkcji jako sprzed ${MIN_BIKE_YEAR} — odrzucone` });
+          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Groq oszacował rok produkcji jako sprzed ${MIN_BIKE_YEAR} — odrzucone${listing._groqReason ? ` (powód: „${listing._groqReason}”)` : ""}` });
           continue;
         }
         if (typ === "inny" || (typ === "elektryk_gorski" && excludeElektryk)) {
           phase1Stats.groqInny++;
           const label = typ === "elektryk_gorski" ? "elektryk górski (wykluczone w Ustawieniach)" : "inny";
           addLog(`🚫 Groq: typ "${label}" — odrzucono — ${listing.title}`, "info");
-          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: typ === "elektryk_gorski" ? "Odrzucone — e-MTB wykluczone w Ustawieniach" : "Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski" });
+          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: typ === "elektryk_gorski" ? "Odrzucone — e-MTB wykluczone w Ustawieniach" : `Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski${listing._groqReason ? ` (powód: „${listing._groqReason}”)` : ""}` });
           continue;
         }
         // ── Niepewny typ + niska cena → bez analizy (tylko przy PRAWDZIWEJ niepewności Groqa) ──
-        if (typ === "niepewne" && !classifierDown && listing.price < minUncertainPrice) {
+        if (typ === "niepewne" && !classifierDown && !job.knownModel && listing.price < minUncertainPrice) {
           phase1Stats.priceThreshold++;
           addLog(`🚫 Groq: niepewny typ + cena ${listing.price}€ < ${minUncertainPrice}€ próg — odrzucono — ${listing.title}`, "info");
           rejectJob(job, { typ_roweru: "?", decyzja: "nie", oplaca_sie: false, krotki_opis: `Niepewny typ, cena ${listing.price}€ poniżej progu ${minUncertainPrice}€ — odrzucone bez analizy AI` });
@@ -2865,7 +2946,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           continue;
         }
         // ── "Niepewne" z etapu 1: druga, tania próba Groqa — tym razem z pełnym opisem (raz na ofertę) ──
-        if (groqType === "niepewne" && listing.fullDesc && groqClassifierKey && !job.recheckedFull) {
+        if (groqType === "niepewne" && listing.fullDesc && groqClassifierKey && !job.recheckedFull && !job.knownModel) {
           const typ2 = await classifyWithGroq(listing);
           if (!runningRef.current) return;
           job.recheckedFull = true;
@@ -2991,7 +3072,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         if (Date.now() - stPre.lastNewAt > RARE_SEARCH_AFTER_MS && Date.now() - (stPre.lastScanAt || 0) < RARE_SEARCH_RESCAN_MS) { rareSkipped++; continue; }
       }
       // Odstęp między kolejnymi wyszukiwaniami — bez przerwy wygląda to dla Kleinanzeigen jak bot (captcha)
-      if (scannedCount > 0) await sleep(3000);
+      if (scannedCount > 0) await sleep(SEARCH_GAP_MS + Math.random() * 1500);
       scannedCount++;
       if (!runningRef.current) return;
       addLog(`🔍 ${bike.label}…`, "info");
@@ -3077,7 +3158,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       if (!st || !st.baselineAt) {
         fresh.forEach(l => saveSeenEntry(l, false));
         persistSeenMap();
-        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0 };
+        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, urlVersion: SEARCH_URL_VERSION };
         persistScanState();
         addLog(`📌 ${bike.label}: pierwsze skanowanie tego wyszukiwania — zapamiętano ${fresh.length} istniejących ogłoszeń (bez analizy)`, "info");
         await sleep(3000);
@@ -3091,18 +3172,20 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       // ── Po przerwie dłuższej niż 24 h: tylko oferty dodane w ostatnich 24 h (wg daty na karcie) ──
       const gapMs = now - (st.lastScanAt || 0);
       let toQueue = fresh;
-      if ((gapMs > RESUME_WINDOW_MS || emptyBurst) && fresh.length > 0) {
+      const urlChanged = !bike.isCategory && st.urlVersion !== SEARCH_URL_VERSION;
+      if ((gapMs > RESUME_WINDOW_MS || emptyBurst || urlChanged) && fresh.length > 0) {
         const recent = fresh.filter(l => l.postedAt != null && now - l.postedAt <= RESUME_WINDOW_MS);
         // Brak daty na karcie ≠ stara oferta: kilka pierwszych bez daty (lista jest od najnowszych) też analizujemy
         const undated = fresh.filter(l => l.postedAt == null).slice(0, RESUME_MAX_UNDATED);
         toQueue = [...recent, ...undated];
         const skipped = fresh.length - toQueue.length;
-        if (skipped > 0 || undated.length > 0 || emptyBurst) {
+        if (skipped > 0 || undated.length > 0 || emptyBurst || urlChanged) {
           phase1Stats.skippedOld += skipped;
-          addLog(`⏭ ${bike.label}: ${emptyBurst && gapMs <= RESUME_WINDOW_MS ? `wcześniej puste wyszukiwanie — nagle ${fresh.length} ofert` : `przerwa w skanowaniu ${st.lastScanAt ? `ok. ${Math.round(gapMs / 3600000)} h` : "o nieznanej długości"}`} — analizuję ${recent.length} ofert z ostatnich 24 h${undated.length > 0 ? ` + ${undated.length} bez daty` : ""}${skipped > 0 ? `, pomijam ${skipped} starszych (albo bez daty ponad limit ${RESUME_MAX_UNDATED})` : ""}`, "info");
+          addLog(`⏭ ${bike.label}: ${urlChanged ? "nowy filtr wyszukiwania (Mountainbike + E-Bike)" : emptyBurst && gapMs <= RESUME_WINDOW_MS ? `wcześniej puste wyszukiwanie — nagle ${fresh.length} ofert` : `przerwa w skanowaniu ${st.lastScanAt ? `ok. ${Math.round(gapMs / 3600000)} h` : "o nieznanej długości"}`} — analizuję ${recent.length} ofert z ostatnich 24 h${undated.length > 0 ? ` + ${undated.length} bez daty` : ""}${skipped > 0 ? `, pomijam ${skipped} starszych (albo bez daty ponad limit ${RESUME_MAX_UNDATED})` : ""}`, "info");
         }
       }
       st.lastScanAt = now;
+      st.urlVersion = SEARCH_URL_VERSION;
       persistScanState();
 
       // ── Spadki cen na JUŻ widzianych ogłoszeniach (spadek o co najmniej PRICE_DROP_THRESHOLD) ──
@@ -3182,6 +3265,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
     sessionAbortRef.current = typeof AbortController !== "undefined" ? new AbortController() : null;
     runningRef.current = true;
+    try { localStorage.setItem("ddf_autorun", "1"); } catch {} // v5.12: po odświeżeniu strony skaner wznowi się sam
     setRunning(true);
     setStopping(false);
     setStats({ scanned: 0, deals: 0, sent: 0 });
@@ -3223,11 +3307,29 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // Oferty w trakcie obsługi zostają w kolejce. Uwaga: przerwanie zapytania po naszej stronie nie zawsze
   // anuluje pracę (i koszt) po stronie dostawcy AI, jeśli zapytanie już do niego dotarło.
   const stopLoop = () => {
+    try { localStorage.removeItem("ddf_autorun"); } catch {} // świadomy STOP — bez autostartu po odświeżeniu
+    if (autostartTimerRef.current) { clearTimeout(autostartTimerRef.current); autostartTimerRef.current = null; addLog("⏹ Autostart anulowany", "info"); }
     if (!runningRef.current) return;
     runningRef.current = false;
     setStopping(true);
     try { sessionAbortRef.current?.abort(); } catch {}
   };
+
+  // v5.12: autostart — jeśli skaner działał przed odświeżeniem/zamknięciem karty, wznawiamy go po 5 s
+  const startLoopRef = useRef(null);
+  startLoopRef.current = startLoop;
+  const autostartTimerRef = useRef(null);
+  useEffect(() => {
+    let flag = null;
+    try { flag = localStorage.getItem("ddf_autorun"); } catch {}
+    if (flag !== "1") return;
+    addLog("🔁 Autostart: skaner działał przed odświeżeniem strony — wznawiam za 5 s", "info");
+    autostartTimerRef.current = setTimeout(() => {
+      autostartTimerRef.current = null;
+      if (!runningRef.current) startLoopRef.current?.();
+    }, 5000);
+    return () => { if (autostartTimerRef.current) clearTimeout(autostartTimerRef.current); };
+  }, []);
 
   // "Zacznij od zera": zapomnij widziane ogłoszenia, kolejkę i stan wyszukiwań. Następny start najpierw
   // zapamięta to, co jest teraz na Kleinanzeigen (bez analizy), a od kolejnego cyklu analizuje tylko nowe.
@@ -3415,6 +3517,25 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                     <span style={{ color: c, fontWeight: 600 }}>{v}</span>
                   </div>
                 ))}
+              <button onClick={() => setShowEvents(v => !v)} style={{
+                width: "100%", marginTop: 10, padding: "7px 0", borderRadius: 8,
+                border: "1px solid #1e293b", background: "transparent", color: "#94a3b8", fontSize: 11, fontWeight: 600,
+              }}>📒 Dziennik zdarzeń ({events.length}){showEvents ? " ▲" : " ▼"}</button>
+              {showEvents && (
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <button onClick={() => { try { navigator.clipboard.writeText(events.map(e => `${e.t} ${e.msg}`).join("\n")); addLog("📋 Dziennik skopiowany do schowka", "info"); } catch {} }} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "1px solid #1e293b", background: "transparent", color: "#64748b", fontSize: 11 }}>📋 Kopiuj</button>
+                    <button onClick={() => { setEvents([]); try { localStorage.removeItem("ddf_events"); } catch {} }} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "1px solid #1e293b", background: "transparent", color: "#64748b", fontSize: 11 }}>🗑 Wyczyść</button>
+                  </div>
+                  <div style={{ maxHeight: 260, overflowY: "auto", fontSize: 11, lineHeight: 1.5 }}>
+                    {events.length === 0 ? <div style={{ color: "#334155" }}>Brak zdarzeń.</div> : [...events].reverse().slice(0, 150).map((e, i) => (
+                      <div key={i} style={{ color: e.type === "error" ? "#f87171" : "#94a3b8", borderBottom: "1px solid #0f1f36", padding: "3px 0" }}>
+                        <span style={{ color: "#475569" }}>{e.t}</span> {e.msg}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button onClick={resetFromZero} disabled={running} title={running ? "Najpierw zatrzymaj skanowanie" : "Zapomnij widziane ogłoszenia i kolejkę — następny start zapamięta istniejące oferty bez analizy"} style={{
                 width: "100%", marginTop: 10, padding: "7px 0", borderRadius: 8,
                 border: "1px solid #1e293b", background: "transparent",
@@ -3824,7 +3945,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                 <input type="password" placeholder="https://discord.com/api/webhooks/..."
                   value={nearWebhook} onChange={e => setNearWebhook(e.target.value)} />
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  Oferty, w których przy obecnej cenie zysk jest za mały, ale cena jest najwyżej {Math.round(NEAR_DEAL_MAX_OVER * 100)}% powyżej kwoty, przy której zakup się opłaca. Każda z gotową wiadomością po niemiecku do sprzedawcy: propozycja ok. {Math.round(NEAR_DEAL_OFFER_SHARE * 100)}% tej kwoty (w dół do 50 €) i powody niższej ceny. Puste = tylko wpis w logu.
+                  Oferty, w których przy obecnej cenie zysk jest za mały, ale wystarczy obniżka ceny o najwyżej {Math.round(NEAR_DEAL_MAX_DROP * 100)}%, żeby zakup się opłacał. Każda z gotową wiadomością po niemiecku do sprzedawcy: propozycja ok. {Math.round((1 - NEAR_DEAL_OFFER_SHARE) * 100)}% poniżej kwoty „opłaca się do” (w dół do 10 €) i powody niższej ceny. Puste = tylko wpis w logu.
                 </div>
               </div>
 
