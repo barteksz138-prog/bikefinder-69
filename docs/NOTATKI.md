@@ -1,6 +1,6 @@
 # DirtDealFinder — notatki projektu
 
-Wiedza zebrana podczas budowy (stan: 12.11.2026, v5.14). Instrukcje pracy: `CLAUDE.md`.
+Wiedza zebrana podczas budowy (stan: 12.11.2026, v5.15). Instrukcje pracy: `CLAUDE.md`.
 
 ## 1. Jak działa jeden cykl
 1. Wyczyszczenie kolejek, wysłanie zaległych powiadomień (outbox), dokończenie zaległych ofert z etapu 1.
@@ -65,6 +65,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - Weryfikacja okazji i dokładna analiza niepewnych — wszystkie zdjęcia z ogłoszenia; okazja zweryfikowana tylko z opisu też jest wysyłana (z adnotacją).
 - Limit rocznika 2017 dotyczy też dirtów — ale w dircie tylko rocznik PODANY w ogłoszeniu (decyzja 12.11.2026: oszacowany rocznik dirta bywał losowy).
 - Dirt bez rocznika i ze słabszym widelcem → dolna granica pasma (ok. 530 €) — zostaje (decyzja 12.11.2026).
+- Przednia przerzutka (Umwerfer, 2x/3x, korba 36/26) w fullu / e-MTB = rower sprzed 2017 (decyzja 12.11.2026). Wyjątek tylko z dowodem w opisie: podany rocznik 2017+ albo — przy modelach z seryjnym 2x później (Fuel EX 9.8 2017–2018, XT 2x11) — wprost „Boost” / „130 mm”. Test 12.11.2026: Fuel EX 9.8 z nocy (przerzutka na zdjęciu) → 2016, Remedy 9 alu → 2012–2016.
 - Jeden ogólny link zamiast wyszukiwań modeli — testowany wcześniej, za dużo śmieci → zostają wyszukiwania modeli.
 - Dodatkowe dane sprzedawcy/wysyłki/stanu w alertach — na razie nie.
 - Widelce w dirtach (dokument „Ściąga: widelce w dirtach”, 11.11.2026): wysoka półka = Pike DJ (tylko 100 mm), Bomber DJ od 2020, Fox 36 831 (zawsze Kashima), Manitou Circus Pro; pasmo „słabszy widelec” = Fox 32 831 (lagi 32 mm, także z Kashimą — decyzja 12.11.2026), Circus Expert/Comp (srebrne lagi = Comp; mostek z tyłu = Manitou), X-Fusion Slant (średnia), Argyle, stare Marzocchi DJ 1–3, Suntour, RST, inne X-Fusion, Sektor/Recon/Judy; nierozpoznany = słabszy; sztywny widelec = rower do odrzucenia. Kashima tylko w Foxie — złote lagi RockShoxa to nie Kashima.
@@ -76,7 +77,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - Dane w alertach: lokalizacja, sprzedawca (prywatny/firma, konto od kiedy, liczba ogłoszeń), wysyłka/odbiór, stan (selektory w p. 2).
 - Przypominanie „prawie okazji”, gdy cena spadnie do kwoty „opłaca się do”; historia kupionych/sprzedanych rowerów → notatki cenowe.
 - Raport z ChatGPT (audyt v5.11) — przeczytany 12.11.2026; punkty 1–4, 6, 7 wdrożone w v5.14, pkt 5 (rezerwa budżetu) pominięty (budżet 400 zł, wydatki kilka zł). Z propozycji zostają: wycena zapamiętana z kontrolą treści przy spadku ceny, schemat JSON w API (dziś niepotrzebny).
-- Luki w bazie cen: Trek Remedy 9 alu, Fuel EX 9.8 karbon, Canyon Spectral 125 AL — czekają na ceny właściciela.
+- Wpisy bazy z 12.11.2026 (Remedy 9 alu, Fuel EX 9.8 karbon, Spectral 125 AL) mają „[niska pewność]” — zebrane z ofert zagranicznych (buycycle, finn.no, bikemarkt, velocorner) i cen Canyona; OLX nie był dostępny. Do poprawy własnymi transakcjami. Remedy 9 alu istnieje: 2012–2016 (rower sprzed 2017) + Remedy 9 RSL alu ok. 2018.
 - Repo prywatne; ostrzeżenie Node `DEP0169 url.parse()` w `/api/scrape` jest niegroźne (pochodzi ze środowiska Vercela).
 
 ## 6. Ryzyka i ograniczenia
@@ -94,5 +95,6 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - v5.10: brak ceny → odrzucone; podejrzenia → pole „ostrzeżenia” zamiast „niepewne”.
 - v5.11: numer ogłoszenia jako ID (+migracja), pamięć 15 000 ogłoszeń wg ostatniego widzenia, min. cena 200 €, bezpiecznik blokad, krytyczne błędy AI, analiza zaraz po wyszukiwaniu, rzadkie wyszukiwania, zdjęcie/rozmiar/„dodano”/obniżka w alercie, komunikaty o problemach, kanał „na granicy”, autozapis ustawień.
 - v5.13: ściąga widelców w dirtach, pole „widelec” (alert: 🔧 Widelec), sztywny widelec → odrzucone, wszystkie zdjęcia przy dirtach, poprawiona reguła Kashimy, nowe półki widelców w bazie dirtów, wróciło „📷 Zdjęcia” w „na granicy”.
+- v5.15: przednia przerzutka = rower sprzed 2017 (z wyjątkami tylko z dowodem w opisie), wpisy bazy: Trek Remedy 9 alu, Fuel EX 9.8 karbon (z bike checkami), Canyon Spectral 125 AL 5/6.
 - v5.14 (audyt 12.11.2026): Groq a kompletny rower w wyszukiwaniach marek, dirt rozpoznany przez AI → powtórka z bazą dirtów, widelec bez modelu, rocznik dirta tylko podany, „opłaca się do”, jedna próba na cykl + odstępy + przerwa po awarii AI, wznowienie od weryfikacji, zmiana treści zaległej okazji, brak ceny na stronie ogłoszenia, duplikaty alertów, lokalizacja z nowego układu, trwałe Wyniki, koszt każdego zapytania i podział na etapy, krótszy log, pełniejszy tekst awaryjny Discorda, STOP przy 400, Fox 32 831, przednia przerzutka = rocznik sprzed 2017, „absolut” tylko z „commencal”.
 - v5.12: odstęp 6 s, typ Mountainbike + E-Bike, usunięte ogłoszenia, poprawki Groqa (dirty, dłuższy opis, ostrożniej ze „stary”), nowe progi „na granicy”, alerty bez powtórzeń i po polsku, rocznik jako zakres, dziennik zdarzeń, autostart.
