@@ -1,4 +1,4 @@
-import { openApp, closeBrowser } from "./harness.mjs";
+import { openApp, closeBrowser, contentKeyOf } from "./harness.mjs";
 import assert from "node:assert/strict";
 const A = { id: "1000000001", title: "Canyon Torque AL alt", price: 1000 };
 const href = "https://www.kleinanzeigen.de/s-anzeige/x/2000000002-217-1234";
@@ -8,6 +8,7 @@ async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); }
 const oldDeal = (extra = {}) => ({ ddf_scan_state: { searches: {} }, ddf_outbox: [{ id: "o1", kind: "deal",
   listing: { listingId: href, title: "Canyon Torque AL 6 2021", price: 700, href },
   analysis: { typ_roweru: "full", przewidywany_zysk: 630, transport_eur: 70, cena_zakupu_eur: 700, szacowana_sprzedaz_eur: 1400, krotki_opis: "Zakup 700€ → 1400€", fakty: {} },
+  contentKey: contentKeyOf({ title: "Canyon Torque AL 6 2021", desc: GOOD }), // v6.1: bez odcisku zaległa okazja idzie do ponownej analizy
   addedAt: Date.now() - 2 * 3600e3, tries: 1, ...extra }] });
 const run = async (detail, check) => {
   const app = await openApp({ ls: oldDeal(), world: { search: () => [A], detail, ai: () => ({}) } });

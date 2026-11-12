@@ -1,0 +1,13 @@
+{
+  "name": "dirtdealfinder-tests",
+  "private": true,
+  "description": "Testy skanera (Playwright + atrapy Kleinanzeigen/AI/Discorda). Instalacja: npm run setup, uruchomienie: npm test",
+  "scripts": {
+    "setup": "npm install && npx playwright install chromium",
+    "test": "node run-all.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright": "^1.63.0"
+  }
+}

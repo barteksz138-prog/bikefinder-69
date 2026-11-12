@@ -16,13 +16,13 @@ Szczegółowa wiedza (HTML Kleinanzeigen, przebieg analizy, decyzje, historia we
 - `api/gemini.js` — pośrednik AI: Gemini, Groq, Anthropic (zamienia format Gemini ↔ Claude, pobiera zdjęcia z img.kleinanzeigen.de, cache 1 h).
 - `api/discord.js` — wysyłka na webhooki Discorda (tylko discord.com, zwraca status/retryAfter).
 - `api/scrape.js` — pobiera strony kleinanzeigen.de (tylko ta domena), zwraca prawdziwy status HTTP; strony wyników przycina do kart.
-- `tests/` — testy (Playwright + atrapy Kleinanzeigen/AI/Discorda). `node tests/run-all.mjs` albo pojedynczy plik: `node tests/run-all.mjs tests512.mjs`.
+- `tests/` — testy (Playwright + atrapy Kleinanzeigen/AI/Discorda). `node tests/run-all.mjs` albo pojedynczy plik: `node tests/run-all.mjs tests512.mjs`. Na nowym komputerze: `cd tests && npm run setup` (esbuild + playwright + Chromium), potem `npm test`.
 
 ## Stan w przeglądarce (localStorage — osobny dla każdej przeglądarki i adresu!)
-`ddf_cfg` (ustawienia, klucze API, webhooki), `ddf_seen` (widziane ogłoszenia po numerze, z `lastSeenAt`), `ddf_pending` (kolejka analiz),
+`ddf_cfg` (ustawienia, klucze API, webhooki), `ddf_seen` (widziane ogłoszenia po numerze, z `lastSeenAt`; od v6.1 `watchSale`/`watchT` — wycena do obserwacji spadku ceny), `ddf_pending` (kolejka analiz),
 `ddf_outbox` (niewysłane powiadomienia), `ddf_scan_state` (stan wyszukiwań, `urlVersion`), `ddf_price_knowledge` (notatki cenowe z czatu),
 `ddf_events` (dziennik zdarzeń), `ddf_autorun` (autostart po odświeżeniu), `ddf_ai_spend` (licznik kosztów, od v5.14 z `byStage`), `ddf_chat`,
-`ddf_results` (ostatnie 200 wyników, v5.14), `ddf_alert_keys` (tytuł+cena wysłanych alertów z 24 h — duplikaty, v5.14).
+`ddf_results` (ostatnie 200 wyników, v5.14), `ddf_dupes` (v6.1, zastąpił `ddf_alert_keys`: przeanalizowane ogłoszenia z 3 dni — tytuł+cena, sprzedawca, odcisk opisu — do wykrywania duplikatów).
 Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia; uruchomiona obok produkcji dublowałaby alerty.
 
 ## Dostęp i narzędzia
