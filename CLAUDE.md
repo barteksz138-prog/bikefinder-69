@@ -32,6 +32,6 @@ Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia;
 - Czytanie danych z karty skanera: `javascript_tool` + `console.log` w kawałkach po 3000 znaków + `read_console_messages` (duże wyniki są obcinane).
 
 ## Ustawienia właściciela (11.2026)
-Analiza: Claude Haiku 5.5 · weryfikacja okazji: Claude Sonnet 5.5 · Groq gpt-oss-120b (12 kluczy) jako etap 1 · minimalny zysk 35% (po transporcie) ·
+Analiza: Claude Haiku 5.5 · weryfikacja okazji: Claude Sonnet 5.5 · Groq gpt-oss-120b (12 kluczy) jako etap 1 · minimalny zysk po transporcie zależny od ceny zakupu — od v6 4 progi: 200–450 / 450–800 / 800–1100 / 1100–1400 € (`profitTiers` w `ddf_cfg`; start = dawne 35%) ·
 cena zakupu 200–1400 € · transport 70 € · budżet AI 400 zł/mies. (realnie kilka zł) · e-MTB analizowane · rowery sprzed 2017 odrzucane (dirty tylko przy roczniku podanym w ogłoszeniu) ·
 38 wyszukiwań modeli/marek + „Dirt” i „Dirtbike” ogólne · kanały Discord: okazje, niepewne, na granicy, problemy.
