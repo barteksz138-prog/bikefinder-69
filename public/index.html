@@ -372,6 +372,9 @@ const ECO_FROM_BUDGET_SHARE = 0.85;               // od 85% budżetu — tryb os
 // ── v5.11 ──
 const MIN_LISTING_PRICE_DEFAULT = 200;            // tańsze ogłoszenia odpadają bez AI (symboliczne ceny, części, "1 €")
 const SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;     // ogłoszenie niewidziane w wynikach przez 30 dni wypada z pamięci
+// v6: minimalny zysk (%) zależny od ceny zakupu — przedziały ceny ogłoszenia (od, do; „do” nie wlicza się)
+const PROFIT_TIERS = [{ from: 200, to: 450 }, { from: 450, to: 800 }, { from: 800, to: 1100 }, { from: 1100, to: 1400 }];
+const tierIndexFor = (price) => { const p = Number(price); if (!Number.isFinite(p)) return 0; let i = 0; while (i < PROFIT_TIERS.length - 1 && p >= PROFIT_TIERS[i].to) i++; return i; };
 const AI_FAIL_PAUSE_MS = 10 * 60 * 1000;          // v5.14: przerwa w analizach AI po 2 nieudanych pod rząd
 const ALERT_DEDUPE_MS = 24 * 60 * 60 * 1000;      // v5.14: ten sam tytuł + cena pod innym numerem ogłoszenia = duplikat przez 24 h
 const RESULTS_MAX = 200;                          // v5.14: tyle ostatnich wyników trzymamy w localStorage (ddf_results)
@@ -530,7 +533,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v5.15 (2026-11-12)";
+const APP_VERSION = "v6.0 (2026-11-12)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -609,7 +612,13 @@ function App() {
   const [strongModel,    setStrongModel]    = useState(() =>
     STRONG_MODELS.some(m => m.id === cfg.strongModel) ? cfg.strongModel : STRONG_GEMINI_MODEL);
   const [geminiChatName, setGeminiChatName] = useState(cfg.geminiChatName || "");
-  const [minProfit,      setMinProfit]      = useState(cfg.minProfit || 20);
+  const [minProfit] = useState(cfg.minProfit || 20); // v6: już tylko wartość startowa progów (stare ustawienia)
+  const [profitTiers, setProfitTiers] = useState(() => {
+    const t = Array.isArray(cfg.profitTiers) && cfg.profitTiers.length === PROFIT_TIERS.length && cfg.profitTiers.every(x => Number.isFinite(x) && x > 0) ? cfg.profitTiers : null;
+    return t || PROFIT_TIERS.map(() => cfg.minProfit || 20);
+  });
+  const minProfitFor = (price) => profitTiers[tierIndexFor(price)]; // próg zysku (%) dla danej ceny zakupu
+  const tiersTxt = () => PROFIT_TIERS.map((t, i) => `${t.from}–${t.to} € → ${profitTiers[i]}%`).join(", ");
   const [excludeElektryk, setExcludeElektryk] = useState(cfg.excludeElektryk !== false); // domyślnie WŁĄCZONE — odrzuca e-MTB od razu na Etapie 1, zero kosztu Gemini
   // Analiza zdjęć (Gemini): przy słabym opisie / "niepewne" i przy weryfikacji okazji. Domyślnie WŁĄCZONA.
   const [analyzePhotos, setAnalyzePhotos] = useState(cfg.analyzePhotos !== false);
@@ -914,7 +923,7 @@ function App() {
   }, [results]);
 
   const saveSettings = (silent = false) => {
-    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, filterMigratedV56: true };
+    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, filterMigratedV56: true };
     try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
     if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
@@ -924,7 +933,7 @@ function App() {
     if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
     const t = setTimeout(() => saveSettings(true), 600);
     return () => clearTimeout(t);
-  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur]);
+  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -1944,7 +1953,7 @@ ${typeInstructions}=== OCENA OPŁACALNOŚCI ===
   - Sprawdź cenę ogłoszenia (w EUR).
   - Na podstawie modelu, roku produkcji, wyposażenia i stanu (opisanego w tytule/opisie) oszacuj realną cenę sprzedaży w Polsce (w PLN i EUR).
   - Oblicz przewidywany zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia minus koszt transportu do Polski ${transportCostEur}€ (stały koszt sprowadzenia jednego roweru — odejmij go dokładnie raz).
-  - decyzja: "tak" TYLKO jeśli zysk (już po odjęciu transportu) wynosi minimum ${minProfit}% ceny zakupu I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
+  - decyzja: "tak" TYLKO jeśli zysk (już po odjęciu transportu) wynosi co najmniej MINIMALNY ZYSK podany przy ogłoszeniu (zależy od ceny zakupu) I jesteś wystarczająco pewny oceny (masz cenę, model jest rozpoznawalny, opis daje wystarczająco informacji o stanie).
   - decyzja: "niepewne" gdy NAPRAWDĘ brakuje kluczowych informacji — np. opis faktycznie nie zawiera ŻADNYCH informacji o stanie/wyposażeniu/roku, marka/model jest Ci kompletnie nieznana (egzotyczna/no-name), lub niejasny rok produkcji którego nie da się oszacować. NIE oznaczaj jako "niepewne" tylko dlatego, że modelu nie ma w bazie — jeśli rozpoznajesz markę i segment (nawet bez dokładnej ceny w pamięci), OSZACUJ z wyceny kategorii z części ogólnej bazy i ogólnej wiedzy rynkowej (patrz "MODELE SPOZA BAZY" wyżej), nawet z szerszym marginesem błędu. NIE odrzucaj automatycznie jako "nie" gdy czegoś brakuje — oznacz jako "niepewne", żeby człowiek mógł ręcznie sprawdzić.
   - decyzja: "nie" gdy masz wystarczająco danych żeby stwierdzić że zysk jest za mały lub transakcja się nie opłaca.
   - BĄDŹ OSTROŻNY: rower używany w złym stanie, po kraksie, z tanim wyposażeniem jest wart mniej. Uwzględniaj rok produkcji. Dla e-MTB uwzględnij też stan baterii/silnika jeśli opisany.
@@ -1990,6 +1999,7 @@ ${typeHint}
 === OGŁOSZENIE DO OCENY ===
 Tytuł: ${listing.title}
 Cena z ogłoszenia: ${listing.price != null ? listing.price + "€" : "BRAK CENY"}
+Minimalny zysk dla tej ceny zakupu: ${minProfitFor(listing.price)}% ceny zakupu, po odjęciu transportu (progi: ${tiersTxt()})
 Lokalizacja: ${listing.location}
 ${listing.fullDesc
   ? `Opis (PEŁNY, ze strony ogłoszenia${listing.fullDescTruncated ? ` — bardzo długi, przycięty do ${DESC_MAX_CHARS} znaków` : ""} — główne źródło informacji o stanie, osprzęcie i roczniku):\n${listing.fullDesc}`
@@ -2201,6 +2211,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             parsed.cena_zakupu_eur = listing.price;
           }
           const cenaNum = typeof parsed.cena_zakupu_eur === "number" ? parsed.cena_zakupu_eur : null;
+          const progZysku = minProfitFor(cenaNum ?? listing.price); // v6: próg zależny od ceny zakupu
           let sprzedazNum = toNum(parsed.szacowana_sprzedaz_eur);
 
           // ── "CENA NOWEGO" Z OPISU: regex (pewniejszy) albo fakt od modelu ──
@@ -2273,7 +2284,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // przechodzi potem weryfikację). Bez liczb — to po prostu za mało informacji w opisie.
           if (parsed.decyzja === "niepewne" && rawUncertainCat === "brak_rocznika") {
             if (cenaNum != null && cenaNum > 0 && zyskLiczony != null) {
-              parsed.decyzja = (zyskLiczony / cenaNum) * 100 >= minProfit ? "tak" : "nie";
+              parsed.decyzja = (zyskLiczony / cenaNum) * 100 >= progZysku ? "tak" : "nie";
               addLog(`ℹ️ Gemini: "niepewne" tylko z powodu braku rocznika — decyduję z liczb: "${parsed.decyzja}" — ${listing.title}`, "info");
             } else {
               parsed.niepewne_kategoria = "za_malo_opisu";
@@ -2283,8 +2294,8 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // ── v5.12: "NIEPEWNE" tylko dlatego, że wyszło blisko progu — liczby są kompletne, zysk < próg → "nie"
           // (dzięki temu oferta trafia do "na granicy" z propozycją ceny, a nie do listy niepewnych)
           if (parsed.decyzja === "niepewne" && (!parsed.niepewne_kategoria || parsed.niepewne_kategoria === "inne") && !parsed.odrzucenie
-            && typ !== "inny" && cenaNum > 0 && zyskLiczony != null && (zyskLiczony / cenaNum) * 100 < minProfit) {
-            addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: "niepewne", ale liczby są kompletne — zysk ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% < próg ${minProfit}% → "nie" (sprawdzę „na granicy”) — ${listing.title}`, "info");
+            && typ !== "inny" && cenaNum > 0 && zyskLiczony != null && (zyskLiczony / cenaNum) * 100 < progZysku) {
+            addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: "niepewne", ale liczby są kompletne — zysk ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% < próg ${progZysku}% → "nie" (sprawdzę „na granicy”) — ${listing.title}`, "info");
             parsed.decyzja = "nie";
             parsed.niepewne_kategoria = null;
           }
@@ -2292,13 +2303,13 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // ── "NIE" przy zysku ≥ progu (bez twardego powodu): liczby decydują. W pierwszej analizie → "tak" (sprawdzi
           // weryfikacja); u weryfikatora → do niepewnych (sam sobie przeczy — niech oceni człowiek).
           if (parsed.decyzja === "nie" && !parsed.odrzucenie && typ !== "inny" && cenaNum > 0 && zyskLiczony != null
-            && (zyskLiczony / cenaNum) * 100 >= minProfit) {
+            && (zyskLiczony / cenaNum) * 100 >= progZysku) {
             const pctTxt = ((zyskLiczony / cenaNum) * 100).toFixed(1);
             if (opts.verify) {
-              addLog(`⚠️ Weryfikator: "nie", ale z jego własnej wyceny zysk ${pctTxt}% (próg ${minProfit}%) — do ręcznego sprawdzenia — ${listing.title}`, "error");
+              addLog(`⚠️ Weryfikator: "nie", ale z jego własnej wyceny zysk ${pctTxt}% (próg ${progZysku}%) — do ręcznego sprawdzenia — ${listing.title}`, "error");
               markUncertain("inne", `weryfikator napisał „nie”, ale z jego wyceny zysk ~${zyskLiczony}€ (${pctTxt}%)${parsed.powod_decyzji ? ` — ${parsed.powod_decyzji}` : ""}`.slice(0, 220));
             } else {
-              addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: decyzja "nie", ale z liczb wychodzi zysk ${pctTxt}% (próg ${minProfit}%) — liczby decydują: "tak", sprawdzi weryfikacja — ${listing.title}`, "info");
+              addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: decyzja "nie", ale z liczb wychodzi zysk ${pctTxt}% (próg ${progZysku}%) — liczby decydują: "tak", sprawdzi weryfikacja — ${listing.title}`, "info");
               parsed.decyzja = "tak";
             }
           }
@@ -2308,8 +2319,8 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             if (cenaNum == null || sprzedazNum == null || cenaNum <= 0) {
               addLog(`⚠️ Gemini: decyzja "tak" bez kompletnych liczb (zakup/sprzedaż) — zmieniam na "niepewne" — ${listing.title}`, "error");
               markUncertain("inne", "brak kompletnych liczb do policzenia zysku");
-            } else if ((zyskLiczony / cenaNum) * 100 < minProfit) {
-              addLog(`⚠️ Gemini: decyzja "tak" ale policzony zysk to tylko ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% (próg ${minProfit}%) — zmieniam na "nie" — ${listing.title}`, "error");
+            } else if ((zyskLiczony / cenaNum) * 100 < progZysku) {
+              addLog(`⚠️ Gemini: decyzja "tak" ale policzony zysk to tylko ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% (próg ${progZysku}%) — zmieniam na "nie" — ${listing.title}`, "error");
               parsed.decyzja = "nie";
             }
           }
@@ -2344,7 +2355,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
           } else {
             parsed.krotki_opis = sprzedaz != null
-              ? `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€ po transporcie ${transport}€, próg ${minProfit}%) · ${rokTxt}.`
+              ? `Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€ po transporcie ${transport}€, próg ${progZysku}%) · ${rokTxt}.`
               : `Zakup ${cena ?? "?"}€ — zysk za mały lub transakcja się nie opłaca.`;
           }
           if (parsed.powod_decyzji && parsed.decyzja !== "niepewne") {
@@ -2513,14 +2524,14 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     const profitPctOf = (r) => (r.cena_zakupu_eur > 0 && r.przewidywany_zysk != null) ? (r.przewidywany_zysk / r.cena_zakupu_eur) * 100 : null;
     const pct1 = profitPctOf(current);
     const borderlineNo = current.decyzja === "nie" && !current.odrzucenie && current.typ_roweru !== "inny"
-      && pct1 != null && Math.abs(pct1 - minProfit) <= BORDERLINE_PROFIT_MARGIN_PCT;
+      && pct1 != null && Math.abs(pct1 - minProfitFor(current.cena_zakupu_eur)) <= BORDERLINE_PROFIT_MARGIN_PCT;
     // v5.14: dirt, który widział już wszystkie zdjęcia ze ściągą — druga analiza na tych samych danych daje ten sam wynik (i kosztuje)
     const sameDataAgain = borderlineNo && dirtGuide && photosSeen >= allPhotos.length;
-    if (sameDataAgain) addLog(`ℹ️ Wynik graniczny (zysk ~${pct1.toFixed(1)}% vs próg ${minProfit}%), ale dirt był już oceniony ze wszystkimi zdjęciami — bez drugiej analizy — ${listing.title}`, "info");
+    if (sameDataAgain) addLog(`ℹ️ Wynik graniczny (zysk ~${pct1.toFixed(1)}% vs próg ${minProfitFor(current.cena_zakupu_eur)}%), ale dirt był już oceniony ze wszystkimi zdjęciami — bez drugiej analizy — ${listing.title}`, "info");
     if (current.decyzja === "niepewne" || (borderlineNo && !sameDataAgain)) {
       const why = current.decyzja === "niepewne"
         ? `niepewne (${UNCERTAIN_LABELS[current.niepewne_kategoria] || "?"})`
-        : `wynik graniczny (zysk ~${pct1.toFixed(1)}% vs próg ${minProfit}%)`;
+        : `wynik graniczny (zysk ~${pct1.toFixed(1)}% vs próg ${minProfitFor(current.cena_zakupu_eur)}%)`;
       const escImages = current.decyzja === "niepewne" ? allPhotos : photoUrls;
       const escNote = current.decyzja === "niepewne" && allPhotos.length > photosSeen
         ? `=== WSZYSTKIE ZDJĘCIA ===\nPoprzednia analiza z ${photosSeen} zdjęciami dała "niepewne" (${UNCERTAIN_LABELS[current.niepewne_kategoria] || "?"}${current.powod_decyzji ? `: ${current.powod_decyzji}` : ""}). Teraz dołączono wszystkie zdjęcia z ogłoszenia (${allPhotos.length}) — dalsze zwykle pokazują zbliżenia osprzętu i stanu. Sprawdź, czy rozstrzygają tę wątpliwość. Jeśli nadal nie — zostaw "niepewne".`
@@ -2668,7 +2679,14 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const sprzedaz = Number(a.szacowana_sprzedaz_eur);
     if (!(sprzedaz > 0)) return null;
     const transport = Math.max(0, Number(a.transport_eur) || 0);
-    return Math.floor((sprzedaz - transport) / (1 + minProfit / 100));
+    // v6: w każdym przedziale ceny najwyższa cena spełniająca JEGO próg; wynik = najwyższa z nich
+    let best = null;
+    PROFIT_TIERS.forEach((t, i) => {
+      const lo = i === 0 ? 0 : t.from, hi = i === PROFIT_TIERS.length - 1 ? Infinity : t.to - 1;
+      const p = Math.min(hi, Math.floor((sprzedaz - transport) / (1 + profitTiers[i] / 100)));
+      if (p >= lo && (best == null || p > best)) best = p;
+    });
+    return best;
   };
   const nearDealOf = (a) => {
     const maxPrice = profitMaxPrice(a);
@@ -2849,7 +2867,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             } else {
               const zysk = Math.round((sprzedaz - det.price - transport) * 100) / 100;
               const pct = det.price > 0 ? (zysk / det.price) * 100 : 0;
-              if (pct < minProfit) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — zysk po transporcie ~${zysk}€ (${pct.toFixed(0)}%) poniżej progu ${minProfit}%`); continue; }
+              if (pct < minProfitFor(det.price)) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — zysk po transporcie ~${zysk}€ (${pct.toFixed(0)}%) poniżej progu ${minProfitFor(det.price)}%`); continue; }
               item.analysis = { ...item.analysis, przewidywany_zysk: zysk, cena_zakupu_eur: det.price };
             }
             addLog(`💶 Zaległa okazja: cena ${oldPrice ?? "?"}€ → ${det.price}€ — zysk przeliczony, nadal okazja: ${item.listing.title}`, "info");
@@ -4369,21 +4387,23 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
               <div>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  Minimalny zysk (%)
+                  Minimalny zysk (%) — zależny od ceny zakupu
                 </label>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <input
-                    type="range" min="5" max="100" step="5"
-                    value={minProfit}
-                    onChange={e => setMinProfit(Number(e.target.value))}
-                    style={{ flex: 1, accentColor: "#f59e0b", padding: 0, border: "none", background: "transparent" }}
-                  />
-                  <div style={{
-                    minWidth: 64, textAlign: "center", fontWeight: 800, fontSize: 22, color: "#f59e0b",
-                  }}>{minProfit}%</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+                  {PROFIT_TIERS.map((t, i) => (
+                    <div key={i}>
+                      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>{t.from}–{t.to} €</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input type="number" min="5" max="200" step="1" value={profitTiers[i]}
+                          onChange={e => { const v = Math.max(1, Math.min(200, Number(e.target.value) || 0)); setProfitTiers(prev => prev.map((x, k) => k === i ? v : x)); }}
+                          style={{ width: "100%" }} />
+                        <span style={{ fontWeight: 800, color: "#f59e0b" }}>%</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 4 }}>
-                  AI powie TAK tylko gdy szacowany zysk wynosi minimum {minProfit}% ceny zakupu — zysk liczony już po odjęciu transportu ({transportCostEur}€)
+                  AI powie TAK tylko gdy szacowany zysk (już po odjęciu transportu {transportCostEur}€) wynosi co najmniej próg dla przedziału, do którego należy cena zakupu (np. 450 € liczy się do 450–800 €). Ceny poza przedziałami — próg najbliższego przedziału.
                 </div>
               </div>
 

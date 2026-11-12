@@ -1,6 +1,6 @@
 # DirtDealFinder — notatki projektu
 
-Wiedza zebrana podczas budowy (stan: 12.11.2026, v5.15). Instrukcje pracy: `CLAUDE.md`.
+Wiedza zebrana podczas budowy (stan: 12.11.2026, v6.0). Instrukcje pracy: `CLAUDE.md`.
 
 ## 1. Jak działa jeden cykl
 1. Wyczyszczenie kolejek, wysłanie zaległych powiadomień (outbox), dokończenie zaległych ofert z etapu 1.
@@ -65,6 +65,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - Weryfikacja okazji i dokładna analiza niepewnych — wszystkie zdjęcia z ogłoszenia; okazja zweryfikowana tylko z opisu też jest wysyłana (z adnotacją).
 - Limit rocznika 2017 dotyczy też dirtów — ale w dircie tylko rocznik PODANY w ogłoszeniu (decyzja 12.11.2026: oszacowany rocznik dirta bywał losowy).
 - Dirt bez rocznika i ze słabszym widelcem → dolna granica pasma (ok. 530 €) — zostaje (decyzja 12.11.2026).
+- Minimalny zysk zależny od ceny zakupu (decyzja 12.11.2026, v6): 4 progi w Ustawieniach — 200–450, 450–800, 800–1100, 1100–1400 € (granica należy do wyższego przedziału, np. 450 € → 450–800). Próg trafia do części dynamicznej promptu („Minimalny zysk dla tej ceny zakupu”), część stała jest bez liczb (cache). „Opłaca się do” liczone osobno w każdym przedziale (najwyższa cena spełniająca próg SWOJEGO przedziału).
 - Przednia przerzutka (Umwerfer, 2x/3x, korba 36/26) w fullu / e-MTB = rower sprzed 2017 (decyzja 12.11.2026). Wyjątek tylko z dowodem w opisie: podany rocznik 2017+ albo — przy modelach z seryjnym 2x później (Fuel EX 9.8 2017–2018, XT 2x11) — wprost „Boost” / „130 mm”. Test 12.11.2026: Fuel EX 9.8 z nocy (przerzutka na zdjęciu) → 2016, Remedy 9 alu → 2012–2016.
 - Jeden ogólny link zamiast wyszukiwań modeli — testowany wcześniej, za dużo śmieci → zostają wyszukiwania modeli.
 - Dodatkowe dane sprzedawcy/wysyłki/stanu w alertach — na razie nie.
@@ -95,6 +96,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - v5.10: brak ceny → odrzucone; podejrzenia → pole „ostrzeżenia” zamiast „niepewne”.
 - v5.11: numer ogłoszenia jako ID (+migracja), pamięć 15 000 ogłoszeń wg ostatniego widzenia, min. cena 200 €, bezpiecznik blokad, krytyczne błędy AI, analiza zaraz po wyszukiwaniu, rzadkie wyszukiwania, zdjęcie/rozmiar/„dodano”/obniżka w alercie, komunikaty o problemach, kanał „na granicy”, autozapis ustawień.
 - v5.13: ściąga widelców w dirtach, pole „widelec” (alert: 🔧 Widelec), sztywny widelec → odrzucone, wszystkie zdjęcia przy dirtach, poprawiona reguła Kashimy, nowe półki widelców w bazie dirtów, wróciło „📷 Zdjęcia” w „na granicy”.
+- v6.0: minimalny zysk (%) w 4 przedziałach ceny zakupu (Ustawienia → Strategia), migracja z jednego progu.
 - v5.15: przednia przerzutka = rower sprzed 2017 (z wyjątkami tylko z dowodem w opisie), wpisy bazy: Trek Remedy 9 alu, Fuel EX 9.8 karbon (z bike checkami), Canyon Spectral 125 AL 5/6.
 - v5.14 (audyt 12.11.2026): Groq a kompletny rower w wyszukiwaniach marek, dirt rozpoznany przez AI → powtórka z bazą dirtów, widelec bez modelu, rocznik dirta tylko podany, „opłaca się do”, jedna próba na cykl + odstępy + przerwa po awarii AI, wznowienie od weryfikacji, zmiana treści zaległej okazji, brak ceny na stronie ogłoszenia, duplikaty alertów, lokalizacja z nowego układu, trwałe Wyniki, koszt każdego zapytania i podział na etapy, krótszy log, pełniejszy tekst awaryjny Discorda, STOP przy 400, Fox 32 831, przednia przerzutka = rocznik sprzed 2017, „absolut” tylko z „commencal”.
 - v5.12: odstęp 6 s, typ Mountainbike + E-Bike, usunięte ogłoszenia, poprawki Groqa (dirty, dłuższy opis, ostrożniej ze „stary”), nowe progi „na granicy”, alerty bez powtórzeń i po polsku, rocznik jako zakres, dziennik zdarzeń, autostart.
