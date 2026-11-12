@@ -98,6 +98,7 @@ await test("Okazja: zdjęcie, rozmiar i „dodano” w alercie; analiza zaraz po
   assert.ok(e.image?.url?.startsWith("https://img.kleinanzeigen.de/"), "zdjęcie");
   assert.equal(e.fields.find(f => f.name.includes("Rozmiar")).value, "L");
   assert.ok(e.fields.find(f => f.name.includes("Dodano")).value.includes("temu"));
+  await app.waitUntil(() => discordAtSlash != null, 15000, "kolejne wyszukiwanie (Trek Slash)"); // v6.1: bez wyścigu z pętlą
   assert.equal(discordAtSlash, 1, `okazja wysłana przed kolejnym wyszukiwaniem (alertów przy wyszukiwaniu Trek Slash: ${discordAtSlash})`);
   await app.stop(); await app.waitStopped(); await app.close();
 });

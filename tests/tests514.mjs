@@ -113,9 +113,11 @@ await test("Cena spadła do „opłaca się do” (spadek < 20%) → ponowna ana
     await app.waitLog(/Cykl #2 zakończony/);
     assert.equal(genReqs(app.st).filter(b => !isVer(b)).length, 1);
     const seen = JSON.parse(await app.ls("ddf_seen")).find(e => e.id === "2000000408");
-    assert.equal(seen.nearMax, 614, "zapamiętane „opłaca się do” = floor((900 − 70) / 1,35)");
+    // v6.1: zamiast jednej kwoty „opłaca się do” zapamiętana wycena (sprzedaż + transport) — próg liczony dla nowej ceny
+    assert.equal(seen.watchSale, 900, "zapamiętana szacowana sprzedaż");
+    assert.equal(seen.watchT, 70, "zapamiętany transport");
     next();
-    await app.waitLog(/Cena spadła do kwoty „opłaca się do” \(614€\)/, 20000);
+    await app.waitLog(/według wcześniejszej wyceny zakup spełnia próg zysku: Canyon Torque AL 6 → 610€/, 20000);
     await app.waitUntil(() => genReqs(app.st).filter(b => !isVer(b)).length >= 2, 15000, "druga analiza");
   });
 });
@@ -190,13 +192,14 @@ await test("Discord odrzuca embed → tekst awaryjny z weryfikacją, widelcem i 
   });
 });
 
-await test("Ten sam rower pod dwoma numerami (tytuł + cena) → jeden alert", async () => {
+await test("Ten sam rower pod dwoma numerami (tytuł + cena + identyczny opis) → jeden alert, jedna analiza", async () => {
   const B1 = { id: "2000000415", title: "Canyon Torque CF 9", price: 900 };
   const B2 = { id: "2000000416", title: "Canyon Torque CF 9", price: 900 };
   await run({ phases: [(k) => k === "torque" ? [A, B1, B2] : []], world: { ai: ai() } }, async (app) => {
-    await app.waitLog(/pomijam duplikat/, 25000);
+    await app.waitLog(/Duplikat ogłoszenia 200000041[56] \(identyczny opis/, 25000);
     await app.waitLog(/Cykl #2 zakończony/);
     assert.equal(deals(app.st).length, 1);
+    assert.equal(genReqs(app.st).filter(b => !isVer(b)).length, 1, "v6.1: duplikat bez analizy AI");
   });
 });
 

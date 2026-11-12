@@ -1,6 +1,6 @@
 # DirtDealFinder — notatki projektu
 
-Wiedza zebrana podczas budowy (stan: 12.11.2026, v6.0). Instrukcje pracy: `CLAUDE.md`.
+Wiedza zebrana podczas budowy (stan: 12.11.2026, v6.1). Instrukcje pracy: `CLAUDE.md`.
 
 ## 1. Jak działa jeden cykl
 1. Wyczyszczenie kolejek, wysłanie zaległych powiadomień (outbox), dokończenie zaległych ofert z etapu 1.
@@ -29,8 +29,10 @@ Wiedza zebrana podczas budowy (stan: 12.11.2026, v6.0). Instrukcje pracy: `CLAUD
 5. **Wysyłka:** okazja (zaległa > 30 min → najpierw sprawdzenie strony ogłoszenia: usunięte / zmiana ceny), „na granicy” (cena musi spaść ≤ 20%, propozycja ≈ 88% kwoty „opłaca się do”, wiadomość po niemiecku z powodami od AI), lista niepewnych na koniec cyklu, komunikaty o problemach (ten sam rodzaj najwyżej co 6 h).
 6. Krytyczny błąd AI (brak środków, zły klucz) → analizy wstrzymane, oferty czekają w kolejce, komunikat na Discord. v5.14: gdy przerwał weryfikację (albo STOP) — wynik pierwszej analizy zapisany w kolejce (`firstResult` + odcisk opisu/zdjęć/ceny), następne podejście zaczyna od weryfikacji.
 7. Ponawianie (v5.14): jedna próba na ofertę na cykl (także pobranie strony), po nieudanej analizie następna za 10 min, potem za 30 min (3. nieudana → niepewne); 2 nieudane analizy pod rząd → 10 min przerwy w analizach AI + komunikat.
-8. Aktualność (v5.14): zaległa okazja (> 30 min) — gdy opis lub zdjęcia zmieniły się od analizy, nie jest wysyłana, wraca do analizy. Strona ogłoszenia bez ceny → za 1. razem czekamy do następnego cyklu, za 2. analiza, ale okazja idzie do niepewnych.
-9. „Opłaca się do” (v5.14): po „nie” z kompletnymi liczbami kwota zapisywana w `ddf_seen` (`nearMax`); spadek ceny do niej → ponowna analiza (nawet przy spadku < 20%). Ten sam tytuł + cena pod innym numerem w ciągu 24 h → drugi alert pomijany (`ddf_alert_keys`).
+8. Aktualność (v5.14): zaległa okazja (> 30 min) — gdy opis lub zdjęcia (od v6.1 także tytuł) zmieniły się od analizy, nie jest wysyłana, wraca do analizy; pozycja bez odcisku treści (sprzed v5.14) też wraca do analizy. Po zmianie ceny przeliczany jest zysk i oba opisy (`krotki_opis` i `_summary`, który pokazuje Discord). Oferta w kolejce ze zmienionym tytułem → ocena od początku (etap 1, bez zapisanej pierwszej analizy i opisu). Strona ogłoszenia bez ceny → za 1. razem czekamy do następnego cyklu, za 2. analiza, ale okazja idzie do niepewnych.
+9. Reguła zysku (v6.1, jedna dla wszystkiego): `meetsProfit(sprzedaż, transport, cena)` (próg z przedziału TEJ ceny) i `bestPriceAtMost(…, limit)` — najwyższa cena ≤ limit spełniająca próg, liczona w każdym przedziale osobno. „Opłaca się do” = najlepsza cena poniżej obecnej; propozycja 88% też sprawdzana progiem (np. progi 60/40/30/20, sprzedaż 770 €, cena 600 € → opłaca się do 500 €, propozycja 430 €, nie 440 €). Po „nie” z kompletnymi liczbami `ddf_seen` zapamiętuje wycenę (`watchSale`, `watchT`); spadek ceny, przy którym próg jest spełniony → ponowna analiza (nawet < 20%). Stare wpisy `nearMax` działają dalej.
+10. Duplikaty (v6.1): sam tytuł + cena to tylko podejrzenie. Duplikat = ten sam tytuł i cena ORAZ ten sam sprzedawca (`userId` z `#viewad-contact a[href*="s-bestandsliste.html?userId="]`) albo identyczny opis. Sprawdzane po pobraniu strony ogłoszenia, przed AI → wynik pierwszego ogłoszenia, bez kosztu i bez alertu. Indeks `ddf_dupes` (po każdej zakończonej analizie, 3 dni, max 600; zastąpił `ddf_alert_keys`).
+11. Linia stanu w nagłówku (v6.1): „Wyszukiwanie 17/38: …” / „Strona ogłoszenia: …” / „Analiza AI: …” / „przerwa — następny cykl za N s” + „ostatnia aktywność N s temu”; opóźniona przerwa albo > 3 min bez aktywności → podpowiedź o usypianiu karty przez Chrome. Bez dodatkowych linii w logu.
 
 ## 2. HTML Kleinanzeigen (sprawdzone na żywo 11.11.2026)
 **Lista wyników** (nowy układ Astro/Tailwind od ~09.2026):
@@ -45,7 +47,7 @@ Wiedza zebrana podczas budowy (stan: 12.11.2026, v6.0). Instrukcje pracy: `CLAUD
 - `meta[itemprop=price]` (np. „1100.00”), `og:image`;
 - galeria: `.galleryimage-element img#viewad-image` (pełne zdjęcia `$_59`), miniatury `imagebox-thumbnail` (`$_1`) — nie dublować;
 - `.addetailslist--detail`: „Art Herren”, „Typ Mountainbikes”, „Zustand Sehr Gut”; „Nur Abholung” / wysyłka;
-- `#viewad-contact` / `#viewad-profile-box`: „Privater Nutzer”, „Aktiv seit dd.mm.rrrr”, „N Anzeigen online”, „TOP Zufriedenheit”.
+- `#viewad-contact` / `#viewad-profile-box`: „Privater Nutzer”, „Aktiv seit dd.mm.rrrr”, „N Anzeigen online”, „TOP Zufriedenheit”; numer sprzedawcy w linku `/s-bestandsliste.html?userId=NNN` (sprawdzone 12.11.2026).
 
 **Usunięte ogłoszenie:** HTTP 200 + strona kategorii z INNYMI ofertami (ich opisy w JSON-LD), `link[rel=canonical]` → `/s-fahrraeder/<miasto>/c217l…`, brak `#viewad-main`.
 
@@ -96,6 +98,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - v5.10: brak ceny → odrzucone; podejrzenia → pole „ostrzeżenia” zamiast „niepewne”.
 - v5.11: numer ogłoszenia jako ID (+migracja), pamięć 15 000 ogłoszeń wg ostatniego widzenia, min. cena 200 €, bezpiecznik blokad, krytyczne błędy AI, analiza zaraz po wyszukiwaniu, rzadkie wyszukiwania, zdjęcie/rozmiar/„dodano”/obniżka w alercie, komunikaty o problemach, kanał „na granicy”, autozapis ustawień.
 - v5.13: ściąga widelców w dirtach, pole „widelec” (alert: 🔧 Widelec), sztywny widelec → odrzucone, wszystkie zdjęcia przy dirtach, poprawiona reguła Kashimy, nowe półki widelców w bazie dirtów, wróciło „📷 Zdjęcia” w „na granicy”.
+- v6.1 (audyt v6.0): wspólna reguła zysku dla „opłaca się do”, propozycji i obserwacji spadku ceny; duplikaty po sprzedawcy/opisie przed AI; zmiana tytułu w kolejce; przeliczony opis zaległej okazji; zaległe okazje bez odcisku → ponowna analiza; `tests/package.json`; linia stanu skanera.
 - v6.0: minimalny zysk (%) w 4 przedziałach ceny zakupu (Ustawienia → Strategia), migracja z jednego progu.
 - v5.15: przednia przerzutka = rower sprzed 2017 (z wyjątkami tylko z dowodem w opisie), wpisy bazy: Trek Remedy 9 alu, Fuel EX 9.8 karbon (z bike checkami), Canyon Spectral 125 AL 5/6.
 - v5.14 (audyt 12.11.2026): Groq a kompletny rower w wyszukiwaniach marek, dirt rozpoznany przez AI → powtórka z bazą dirtów, widelec bez modelu, rocznik dirta tylko podany, „opłaca się do”, jedna próba na cykl + odstępy + przerwa po awarii AI, wznowienie od weryfikacji, zmiana treści zaległej okazji, brak ceny na stronie ogłoszenia, duplikaty alertów, lokalizacja z nowego układu, trwałe Wyniki, koszt każdego zapytania i podział na etapy, krótszy log, pełniejszy tekst awaryjny Discorda, STOP przy 400, Fox 32 831, przednia przerzutka = rocznik sprzed 2017, „absolut” tylko z „commencal”.

@@ -376,7 +376,8 @@ const SEEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;     // ogłoszenie niewidziane w w
 const PROFIT_TIERS = [{ from: 200, to: 450 }, { from: 450, to: 800 }, { from: 800, to: 1100 }, { from: 1100, to: 1400 }];
 const tierIndexFor = (price) => { const p = Number(price); if (!Number.isFinite(p)) return 0; let i = 0; while (i < PROFIT_TIERS.length - 1 && p >= PROFIT_TIERS[i].to) i++; return i; };
 const AI_FAIL_PAUSE_MS = 10 * 60 * 1000;          // v5.14: przerwa w analizach AI po 2 nieudanych pod rząd
-const ALERT_DEDUPE_MS = 24 * 60 * 60 * 1000;      // v5.14: ten sam tytuł + cena pod innym numerem ogłoszenia = duplikat przez 24 h
+const DUPE_TTL_MS = 3 * 24 * 60 * 60 * 1000;      // v6.1: indeks przeanalizowanych ogłoszeń do wykrywania duplikatów (ten sam rower pod innym numerem)
+const DUPE_MAX = 600;
 const RESULTS_MAX = 200;                          // v5.14: tyle ostatnich wyników trzymamy w localStorage (ddf_results)
 const STATUS_NOTIFY_COOLDOWN_MS = 6 * 60 * 60 * 1000; // ten sam problem zgłaszamy na Discord najwyżej co 6 h
 const SCRAPE_BLOCK_PAUSE_MS = 20 * 60 * 1000;     // 2 zablokowane wyszukiwania pod rząd → 20 min przerwy w odpytywaniu Kleinanzeigen
@@ -533,7 +534,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.0 (2026-11-12)";
+const APP_VERSION = "v6.1 (2026-11-12)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -587,6 +588,33 @@ function Badge({ status }) {
       borderRadius: 6, padding: "2px 10px", fontSize: 11, fontWeight: 700, letterSpacing: 0.4 }}>
       {s.label}
     </span>
+  );
+}
+
+// v6.1: linia stanu skanera w nagłówku — co robi teraz i kiedy ostatnio coś się działo.
+// Osobny komponent z własnym zegarem (1 s), żeby co sekundę nie przerysowywać całej aplikacji.
+function ScanStatus({ statusRef, activityRef }) {
+  const [, setTick] = useState(0);
+  useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, []);
+  const st = statusRef.current || {};
+  const now = Date.now();
+  const ago = activityRef.current ? Math.max(0, Math.round((now - activityRef.current) / 1000)) : null;
+  let main = "aktywne skanowanie";
+  if (st.phase === "start") main = "początek cyklu — zaległe powiadomienia i kolejka";
+  else if (st.phase === "search") main = `Wyszukiwanie ${st.i}/${st.n}: ${st.label}`;
+  else if (st.phase === "detail") main = `Strona ogłoszenia: ${st.title}`;
+  else if (st.phase === "ai") main = `Analiza AI: ${st.title}`;
+  else if (st.phase === "pause") {
+    const left = Math.round((st.until - now) / 1000);
+    main = left >= 0 ? `przerwa — następny cykl za ${left} s` : `przerwa przedłuża się o ${-left} s`;
+  }
+  const late = (st.phase === "pause" && now - st.until > 20000) || (ago != null && ago > 180);
+  return (
+    <div style={{ fontSize: 10, color: "#64748b", maxWidth: 280, textAlign: "left", lineHeight: 1.4 }}>
+      <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={main} data-testid="scan-status">{main}</div>
+      {ago != null && <div>ostatnia aktywność {ago} s temu</div>}
+      {late && <div style={{ color: "#f59e0b" }}>⚠️ opóźnienie — Chrome może spowalniać kartę w tle (Ustawienia → Wydajność → zawsze aktywna)</div>}
+    </div>
   );
 }
 
@@ -750,6 +778,10 @@ function App() {
   const detailBlockedUntilRef = useRef(0);  // bezpiecznik: do kiedy NIE pobieramy stron ogłoszeń (po blokadzie)
   const scrapeBlockedUntilRef = useRef(0);  // v5.11: do kiedy NIE odpytujemy wyszukiwań (po 2 blokadach pod rząd)
   const aiFailStreakRef = useRef(0);        // v5.14: nieudane analizy AI pod rząd (awaria dostawcy)
+  const scanStatusRef = useRef({ phase: "idle" }); // v6.1: co skaner robi teraz (linia stanu w nagłówku)
+  const lastActivityRef = useRef(0);               // v6.1: ostatnie zapytanie / odpowiedź (Kleinanzeigen, AI)
+  const setScanStatus = (st) => { scanStatusRef.current = st; lastActivityRef.current = Date.now(); };
+  const touchActivity = () => { lastActivityRef.current = Date.now(); };
   const aiPauseUntilRef = useRef(0);        // v5.14: do kiedy nie próbujemy analiz AI po serii błędów
 
   // Zapamiętaj widziane ogłoszenia między restartami — ID + historia ceny (do wykrywania spadków).
@@ -773,7 +805,8 @@ function App() {
         const e = typeof item === "string"
           ? { price: null, lowest: null, notifiedAt: null, type: null }
           : { price: item.price ?? null, lowest: item.lowest ?? null, notifiedAt: item.notifiedAt ?? null, type: item.type ?? null,
-              overMax: item.overMax === true, noPrice: item.noPrice === true, nearMax: Number.isFinite(item.nearMax) ? item.nearMax : null };
+              overMax: item.overMax === true, noPrice: item.noPrice === true, nearMax: Number.isFinite(item.nearMax) ? item.nearMax : null,
+              watchSale: Number.isFinite(item.watchSale) ? item.watchSale : null, watchT: Number.isFinite(item.watchT) ? item.watchT : null };
         e.lastSeenAt = Number.isFinite(item?.lastSeenAt) ? item.lastSeenAt : now;
         const prev = map.get(id);
         if (prev) { // ten sam rower zapamiętany pod dwoma linkami (sprzedawca zmienił tytuł) — scalamy
@@ -887,7 +920,7 @@ function App() {
       }
       const arr = [...m.entries()].map(([id, d]) => {
         const o = { id };
-        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt", "nearMax"]) if (d[k] != null) o[k] = d[k];
+        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt", "nearMax", "watchSale", "watchT"]) if (d[k] != null) o[k] = d[k];
         if (d.overMax) o.overMax = true;
         if (d.noPrice) o.noPrice = true;
         return o;
@@ -1054,6 +1087,7 @@ function App() {
   // Gemini/Groq dostają ją sklejoną z resztą; Claude jako osobny blok ze znacznikiem cache.
   // cacheable=false — stała część bez znacznika cache Claude (rzadko używany model weryfikacji: zapis do cache kosztuje 2× i zwykle się nie zwraca)
   const callGemini = async (prompt, overrides = {}, cachedContent = null, modelOverride = null, imageUrls = null, cachePrefix = null, cacheable = true, stage = "analiza") => {
+    touchActivity(); // v6.1: linia stanu — każdy etap analizy (pierwsza, dokładna, weryfikacja) to aktywność
     const model = modelOverride || geminiModel;
     const prov = providerFor(model);
     const apiKey = keyFor(model);
@@ -1663,7 +1697,16 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
       fullLength: desc.length,
       price: priceFromDetailDoc(doc),
       images: extractListingImages(doc),
+      // v6.1: tytuł ze strony (porównanie zaległych okazji) i numer sprzedawcy (wykrywanie duplikatów)
+      title: (doc.querySelector("#viewad-title")?.textContent || "").replace(/\s+/g, " ").trim(),
+      sellerId: sellerIdFromDoc(doc),
     };
+  };
+  // v6.1: numer sprzedawcy z bloku kontaktu — link „wszystkie ogłoszenia” /s-bestandsliste.html?userId=NNN
+  const sellerIdFromDoc = (doc) => {
+    const a = doc.querySelector('#viewad-contact a[href*="userId="]') || doc.querySelector('a[href*="s-bestandsliste.html?userId="]');
+    const m = String(a?.getAttribute("href") || "").match(/userId=(\d+)/);
+    return m ? m[1] : null;
   };
 
   // ── Zdjęcia z galerii ogłoszenia ───────────────────────────────────────
@@ -2673,31 +2716,43 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   };
 
   // ── D: oferta "na granicy okazji" — przy obecnej cenie zysk za mały, przy niższej by się opłacało ──
-  // Najwyższa cena zakupu, przy której ta wycena spełnia próg zysku (null, gdy brak liczb albo twarde odrzucenie)
-  const profitMaxPrice = (a) => {
-    if (!a || a.decyzja !== "nie" || a.odrzucenie || !["full", "dirt", "elektryk_gorski"].includes(a.typ_roweru)) return null;
-    const sprzedaz = Number(a.szacowana_sprzedaz_eur);
-    if (!(sprzedaz > 0)) return null;
-    const transport = Math.max(0, Number(a.transport_eur) || 0);
-    // v6: w każdym przedziale ceny najwyższa cena spełniająca JEGO próg; wynik = najwyższa z nich
+  // v6.1: JEDNA reguła zysku dla wszystkiego (decyzja po zmianie ceny, „opłaca się do”, propozycja, obserwacja spadku).
+  // Próg zależy od ceny zakupu, więc „najwyższa cena, przy której się opłaca” liczymy w każdym przedziale osobno
+  // i bierzemy najwyższą nie większą niż podany limit (np. obecna cena) — nie globalne maksimum z dowolnego przedziału.
+  const meetsProfit = (sale, transport, price) => {
+    const S = Number(sale), T = Math.max(0, Number(transport) || 0), p = Number(price);
+    if (!(S > 0) || !(p > 0)) return false;
+    return (S - p - T) * 100 >= minProfitFor(p) * p - 1e-6; // bez dzielenia — brak błędów zaokrągleń na granicy
+  };
+  const bestPriceAtMost = (sale, transport, limit = Infinity) => {
+    const S = Number(sale), T = Math.max(0, Number(transport) || 0), L = Math.floor(Number(limit));
+    if (!(S > 0) || Number.isNaN(L)) return null;
     let best = null;
     PROFIT_TIERS.forEach((t, i) => {
-      const lo = i === 0 ? 0 : t.from, hi = i === PROFIT_TIERS.length - 1 ? Infinity : t.to - 1;
-      const p = Math.min(hi, Math.floor((sprzedaz - transport) / (1 + profitTiers[i] / 100)));
+      const lo = i === 0 ? 1 : t.from, hi = i === PROFIT_TIERS.length - 1 ? Infinity : t.to - 1;
+      const p = Math.min(hi, L, Math.floor(((S - T) * 100) / (100 + profitTiers[i]) + 1e-6));
       if (p >= lo && (best == null || p > best)) best = p;
     });
     return best;
   };
+  // Liczby z analizy, z których da się liczyć zysk (null, gdy brak wyceny albo twarde odrzucenie)
+  const profitInputs = (a) => {
+    if (!a || a.decyzja !== "nie" || a.odrzucenie || !["full", "dirt", "elektryk_gorski"].includes(a.typ_roweru)) return null;
+    const sale = Number(a.szacowana_sprzedaz_eur);
+    if (!(sale > 0)) return null;
+    return { sale, transport: Math.max(0, Number(a.transport_eur) || 0), price: Number(a.cena_zakupu_eur) };
+  };
   const nearDealOf = (a) => {
-    const maxPrice = profitMaxPrice(a);
-    if (maxPrice == null) return null;
-    const cena = Number(a.cena_zakupu_eur), sprzedaz = Number(a.szacowana_sprzedaz_eur);
-    if (!(cena > 0)) return null;
-    const transport = Math.max(0, Number(a.transport_eur) || 0);
+    const pi = profitInputs(a);
+    if (!pi || !(pi.price > 0) || meetsProfit(pi.sale, pi.transport, pi.price)) return null;
+    const maxPrice = bestPriceAtMost(pi.sale, pi.transport, pi.price - 1);
     // v5.12: tylko gdy cena musi spaść najwyżej o 20%; propozycja ok. 12% poniżej "opłaca się do"
-    if (maxPrice < minListingPrice || cena <= maxPrice || 1 - maxPrice / cena > NEAR_DEAL_MAX_DROP) return null;
-    const offer = Math.max(50, Math.floor((maxPrice * NEAR_DEAL_OFFER_SHARE) / 10) * 10);
-    return { maxPrice, offer, profitAtOffer: Math.round(sprzedaz - offer - transport) };
+    if (maxPrice == null || maxPrice < minListingPrice || 1 - maxPrice / pi.price > NEAR_DEAL_MAX_DROP) return null;
+    // v6.1: propozycję też sprawdzamy progiem — po zejściu do niższego przedziału próg bywa wyższy
+    const okRaw = bestPriceAtMost(pi.sale, pi.transport, Math.floor(maxPrice * NEAR_DEAL_OFFER_SHARE));
+    let offer = okRaw != null ? Math.floor(okRaw / 10) * 10 : null;
+    if (offer == null || offer < 50 || !meetsProfit(pi.sale, pi.transport, offer)) offer = maxPrice;
+    return { maxPrice, offer, profitAtOffer: Math.round(pi.sale - offer - pi.transport) };
   };
   const sellerMessage = (near, args) => [
     "Hallo,",
@@ -2744,20 +2799,47 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36);
   };
-  // v5.14: odcisk treści ogłoszenia (opis + zdjęcia, opcjonalnie cena) — czy wynik analizy jest nadal aktualny
-  const contentKey = (l, withPrice = true) => hashStr(`${withPrice ? l.price ?? "" : ""}|${l.fullDesc || ""}|${(l.images || []).join(",")}`);
-  // v5.14: ten sam rower wystawiony 2× (inne numery ogłoszeń, ten sam tytuł i cena) — drugi alert w ciągu 24 h pomijamy
-  const alertDedupeKey = (l) => `${String(l.title || "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, " ").trim()}|${l.price ?? ""}`;
-  const isDuplicateAlert = (l) => {
+  // v6.1: tytuł do porównań — bez wielkości liter, znaków i dopisków „Reserviert •” / „Gelöscht •”
+  const normTitle = (t) => String(t || "").toLowerCase().replace(/^\s*(reserviert|gelöscht)\s*[•·|-]\s*/g, "").replace(/[^a-z0-9äöüß]+/g, " ").trim();
+  // v5.14: odcisk treści ogłoszenia (opis + zdjęcia, opcjonalnie cena) — czy wynik analizy jest nadal aktualny; v6.1: także tytuł
+  const contentKey = (l, withPrice = true) => hashStr(`${normTitle(l.title)}|${withPrice ? l.price ?? "" : ""}|${l.fullDesc || ""}|${(l.images || []).join(",")}`);
+
+  // ── v6.1: duplikaty — ten sam rower pod innym numerem ogłoszenia ──
+  // Sam tytuł + cena to tylko podejrzenie (dwa takie same modele w tej samej cenie to normalna rzecz).
+  // Duplikat = ten sam tytuł i cena ORAZ ten sam sprzedawca albo identyczny opis. Sprawdzamy po pobraniu strony
+  // ogłoszenia, PRZED analizą AI — duplikat dostaje wynik pierwszego ogłoszenia, bez kosztu AI i bez drugiego alertu.
+  const titlePriceKey = (l) => `${normTitle(l.title)}|${l.price ?? ""}`;
+  const descKey = (desc) => { const d = String(desc || "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, ""); return d.length >= 40 ? hashStr(d) : null; };
+  const loadDupes = () => {
     let map = {};
-    try { map = JSON.parse(localStorage.getItem("ddf_alert_keys") || "{}") || {}; } catch {}
+    try { map = JSON.parse(localStorage.getItem("ddf_dupes") || "{}") || {}; } catch {}
     const now = Date.now();
-    for (const k of Object.keys(map)) if (!(now - (map[k]?.t || 0) < ALERT_DEDUPE_MS)) delete map[k];
-    const key = alertDedupeKey(l);
-    const hit = map[key] && map[key].id !== l.listingId;
-    if (!hit) map[key] = { id: l.listingId, t: now };
-    try { localStorage.setItem("ddf_alert_keys", JSON.stringify(map)); } catch {}
-    return hit;
+    for (const k of Object.keys(map)) if (!(now - (map[k]?.t || 0) < DUPE_TTL_MS)) delete map[k];
+    return map;
+  };
+  const saveDupes = (map) => {
+    const ids = Object.keys(map);
+    if (ids.length > DUPE_MAX) ids.sort((a, b) => map[a].t - map[b].t).slice(0, ids.length - DUPE_MAX).forEach(k => delete map[k]);
+    try { localStorage.setItem("ddf_dupes", JSON.stringify(map)); localStorage.removeItem("ddf_alert_keys"); } catch {}
+  };
+  const findDuplicate = (l) => {
+    const map = loadDupes();
+    const tp = titlePriceKey(l), dk = descKey(l.fullDesc);
+    for (const [id, e] of Object.entries(map)) {
+      if (id === String(l.listingId) || e.tp !== tp) continue;
+      if (l.sellerId && e.seller === l.sellerId) return { id, e, why: "ten sam sprzedawca" };
+      if (dk && e.dk === dk) return { id, e, why: "identyczny opis" };
+    }
+    return null;
+  };
+  const recordAnalyzed = (l, a, kind) => {
+    if (!l?.listingId || !l.fullDesc) return;
+    const map = loadDupes();
+    map[l.listingId] = {
+      tp: titlePriceKey(l), seller: l.sellerId || null, dk: descKey(l.fullDesc), t: Date.now(), kind,
+      typ: a?.typ_roweru || "?", dec: a?.decyzja || "nie", opis: String(a?._summary || a?.krotki_opis || "").slice(0, 300),
+    };
+    saveDupes(map);
   };
 
   // ── Wspólne pomocnicze dla pętli ───────────────────────────────────────
@@ -2820,6 +2902,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
           item.lastRefreshTryAt = Date.now();
           const det = await fetchListingDetails(item.listing);
+          touchActivity();
           if (!runningRef.current) return;
           if (det.blocked) detailBlockedUntilRef.current = Date.now() + DETAIL_BLOCK_PAUSE_MS;
           if (det.gone) {
@@ -2840,19 +2923,23 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
           delete item.refreshFailedSince;
           // v5.14: opis albo zdjęcia zmieniły się od analizy (np. dopisane uszkodzenie) — stara ocena nieaktualna → analiza od nowa
-          if (item.contentKey && contentKey({ fullDesc: det.desc, images: det.images || [] }, false) !== item.contentKey) {
+          // v6.1: także tytuł; pozycja bez odcisku (sprzed v5.14) — nie da się sprawdzić, więc też analiza od nowa
+          const nowKey = contentKey({ title: det.title || item.listing.title, fullDesc: det.desc, images: det.images || [] }, false);
+          if (!item.contentKey || nowKey !== item.contentKey) {
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
             persistOutbox();
             const id = item.listing.listingId;
             if (!pendingRef.current.has(id)) {
               pendingRef.current.set(id, {
-                listing: { ...item.listing, price: det.price }, source: "content_changed", cachedType: null, stage: "analyze",
+                listing: { ...item.listing, price: det.price, ...(det.title ? { title: det.title } : {}) }, source: "content_changed", cachedType: null, stage: "analyze",
                 groqType: ["full", "dirt", "elektryk_gorski"].includes(item.analysis?.typ_roweru) ? item.analysis.typ_roweru : "niepewne",
                 classifierDown: false, attempts: 0, addedAt: Date.now(),
               });
               persistPending();
             }
-            addLog(`📝 Zaległa okazja: opis lub zdjęcia zmieniły się od analizy — nie wysyłam, analizuję ponownie: ${item.listing.title}`, "info");
+            addLog(item.contentKey
+              ? `📝 Zaległa okazja: tytuł, opis lub zdjęcia zmieniły się od analizy — nie wysyłam, analizuję ponownie: ${item.listing.title}`
+              : `📝 Zaległa okazja z poprzedniej wersji (bez zapisu treści) — nie da się sprawdzić, czy ogłoszenie się nie zmieniło; analizuję ponownie: ${item.listing.title}`, "info");
             continue;
           }
           item.checkedAt = Date.now();
@@ -2872,7 +2959,14 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             }
             addLog(`💶 Zaległa okazja: cena ${oldPrice ?? "?"}€ → ${det.price}€ — zysk przeliczony, nadal okazja: ${item.listing.title}`, "info");
             item.listing.price = det.price;
-            item.analysis = { ...item.analysis, krotki_opis: `💶 Cena zmieniła się od analizy: ${oldPrice ?? "?"}€ → ${det.price}€ (zysk przeliczony). ${item.analysis.krotki_opis || ""}` };
+            // v6.1: opisy z nowymi liczbami — Discord pokazuje _summary, więc stare „Zakup X€ … zysk ~Y€” nie może tam zostać
+            const note = `💶 Cena zmieniła się od analizy: ${oldPrice ?? "?"}€ → ${det.price}€ (zysk przeliczony).`;
+            const reprice = (t) => t ? String(t).replace(/Zakup [\d.,]+ ?€/, `Zakup ${det.price}€`).replace(/zysk ~-?[\d.,]+ ?€/, (m) => sprzedaz > 0 ? `zysk ~${item.analysis.przewidywany_zysk}€` : m) : t;
+            item.analysis = {
+              ...item.analysis,
+              krotki_opis: `${note} ${reprice(item.analysis.krotki_opis) || ""}`.trim(),
+              _summary: `${note} ${reprice(item.analysis._summary) || ""}`.trim(),
+            };
           }
           persistOutbox();
         }
@@ -2963,7 +3057,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const listing = job.listing;
         if (job.source === "price_drop") {
           phase1Stats.priceDrops++;
-          addLog(listing._hitNearMax != null
+          addLog(listing._hitWatch
+            ? `📉 Cena spadła tak, że według wcześniejszej wyceny zakup spełnia próg zysku: ${listing.title} → ${listing.price}€ — analizuję ponownie`
+            : listing._hitNearMax != null
             ? `📉 Cena spadła do kwoty „opłaca się do” (${listing._hitNearMax}€): ${listing.title} → ${listing.price}€ — analizuję ponownie`
             : `📉 Spadek ceny: ${listing.title} → ${listing.price}€`, "info");
         } else if (job.source === "price_added") {
@@ -3094,6 +3190,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       addLog(`⚖️ ${candidates.length} ofert czeka na analizę AI, w tym cyklu zostało ${Math.max(0, maxGeminiPerCycle - cb.analyses)} z ${maxGeminiPerCycle} — reszta poczeka na następny cykl (najpierw pewne typy i najnowsze)`, "info");
     }
     let deferred = 0;
+    const statusBefore = scanStatusRef.current; // v6.1: po analizach wraca linia stanu wyszukiwania
     try {
       for (const job of candidates) {
         if (!runningRef.current) return;
@@ -3125,13 +3222,16 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           if (!runningRef.current) return;
           cb.lastDetailFetchAt = Date.now();
           cb.detailFetches++;
+          setScanStatus({ phase: "detail", title: listing.title });
           const det = await fetchListingDetails(listing);
+          touchActivity();
           if (!runningRef.current) return;
           if (det.ok) {
             listing.fullDesc = det.desc;
             listing.fullDescTruncated = det.truncated === true;
             listing.images = det.images || [];
             listing.detailsFetchedAt = Date.now();
+            if (det.sellerId) listing.sellerId = det.sellerId; // v6.1: do wykrywania duplikatów
             delete job.detailsMissingSince;
             if (job.priceUnconfirmed) {
               delete job.priceUnconfirmed;
@@ -3218,13 +3318,28 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
         }
 
+        // ── v6.1: duplikat (ten sam tytuł i cena + ten sam sprzedawca albo identyczny opis) — wynik pierwszego ogłoszenia, bez AI i bez alertu ──
+        const dup = listing.fullDesc ? findDuplicate(listing) : null;
+        if (dup) {
+          const { e } = dup;
+          addLog(`🔁 Duplikat ogłoszenia ${dup.id} (${dup.why}, ten sam tytuł i cena) — bez analizy AI i bez alertu, wynik jak wcześniej (${e.dec}): ${listing.title}`, "info");
+          if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
+          removeJob(listing.listingId);
+          persistPending();
+          pushResult(listing, { typ_roweru: e.typ || "?", decyzja: e.dec === "tak" ? "nie" : e.dec, oplaca_sie: false,
+            krotki_opis: `🔁 Duplikat ogłoszenia ${dup.id} (${dup.why}) — ${e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej"}: ${e.opis || "–"}` }, "skip");
+          continue;
+        }
+
         cb.analyses++;
         cb.attempted.add(listing.listingId);
         // v5.14: wznowienie od weryfikacji, gdy pierwsza analiza jest zapisana, a opis / zdjęcia / cena się nie zmieniły
         const cKey = contentKey(listing);
         const resume = job.firstResult && job.firstResultKey === cKey ? job.firstResult : null;
         if (job.firstResult && !resume) { delete job.firstResult; delete job.firstResultKey; }
+        setScanStatus({ phase: "ai", title: listing.title });
         const analysis = await analyzeWithGemini(listing, groqType, resume);
+        touchActivity();
         if ((analysis?._aborted || analysis?._fatal) && analysis._first) {
           job.firstResult = analysis._first; job.firstResultKey = cKey; persistPending();
         }
@@ -3269,6 +3384,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         // Analiza zakończona — oferta schodzi z kolejki; okazje i niepewne idą do listy "do wysłania"
         removeJob(listing.listingId);
         persistPending();
+        recordAnalyzed(listing, analysis, analysis.decyzja === "tak" && !job.detailNoPrice ? "deal" : analysis.decyzja); // v6.1: indeks do wykrywania duplikatów
         if (analysis.decyzja === "tak" && job.detailNoPrice) {
           const why = `wyglądało na okazję (zysk ~${analysis.przewidywany_zysk}€), ale strona ogłoszenia nie pokazała ceny — cena z listy ${listing.price ?? "?"}€ niepotwierdzona`;
           addLog(`❓ ${why}: ${listing.title}`, "info");
@@ -3278,12 +3394,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           addLog(`✅ OKAZJA! [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€ | zysk po transporcie: ~${analysis.przewidywany_zysk}€`, "success");
           setStats(st => ({ ...st, deals: st.deals + 1 }));
           const resultId = pushResult(listing, analysis, "deal");
-          if (isDuplicateAlert(listing)) {
-            addLog(`🔁 Ta sama oferta (tytuł i cena) była już wysłana w ciągu 24 h — pomijam duplikat: ${listing.title}`, "info");
-          } else {
-            addToOutbox({ kind: "deal", listing: slimListing(listing), analysis: dealSnapshot(analysis), resultId, contentKey: contentKey(listing, false) });
-            await flushOutbox({ uncertain: false });
-          }
+          addToOutbox({ kind: "deal", listing: slimListing(listing), analysis: dealSnapshot(analysis), resultId, contentKey: contentKey(listing, false) });
+          await flushOutbox({ uncertain: false });
         } else if (analysis.decyzja === "niepewne") {
           addLog(`❓ Niepewne [${analysis.typ_roweru}] — ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ — ${analysis.krotki_opis || "za mało informacji"}`, "info");
           addToOutbox({ kind: "uncertain", listing: slimListing(listing), reason: analysis.krotki_opis || "za mało informacji" });
@@ -3297,17 +3409,24 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             : analysis.typ_roweru === "inny" ? `typ: inny — odrzucone automatycznie`
             : `zysk za mały`;
           addLog(`⏭ ${aiName(geminiModel)}: NIE opłaca się (${reason}) — [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€`, "info");
-          // v5.14: zapamiętaj „opłaca się do” — gdy cena spadnie do tej kwoty, ogłoszenie wróci do analizy (nawet przy spadku < 20%)
-          const maxOk = profitMaxPrice(analysis);
+          // v6.1: zapamiętaj wycenę (sprzedaż + transport) — gdy po spadku ceny zysk spełni próg dla NOWEJ ceny,
+          // ogłoszenie wróci do analizy (nawet przy spadku < 20%). Zamiast jednej kwoty „opłaca się do” (v5.14),
+          // która przy progach zależnych od ceny bywała zła w obie strony.
+          const pi = profitInputs(analysis);
           const seenE = seenIdsRef.current.get(listing.listingId);
-          if (seenE) { seenE.nearMax = maxOk != null && maxOk >= minListingPrice && maxOk < (listing.price ?? Infinity) ? maxOk : null; persistSeenMap(); }
+          if (seenE) {
+            const lower = pi ? bestPriceAtMost(pi.sale, pi.transport, (listing.price ?? Infinity) - 1) : null;
+            const watch = lower != null && lower >= minListingPrice;
+            seenE.watchSale = watch ? pi.sale : null;
+            seenE.watchT = watch ? pi.transport : null;
+            seenE.nearMax = null;
+            persistSeenMap();
+          }
           const near = nearDealOf(analysis);
           if (near) {
             analysis.krotki_opis = `${analysis.krotki_opis || ""} 🤏 Na granicy: opłaca się do ${near.maxPrice}€ — proponuj ${near.offer}€.`;
             addLog(`🤏 Na granicy okazji: ${listing.title} — ${listing.price}€, opłaca się do ${near.maxPrice}€, proponuj ${near.offer}€${nearWebhook ? "" : " (ustaw webhook „Na granicy okazji”, żeby dostawać to na Discord)"}`, "info");
-            if (nearWebhook && isDuplicateAlert(listing)) {
-              addLog(`🔁 Ta sama oferta (tytuł i cena) była już wysłana w ciągu 24 h — pomijam duplikat „na granicy”: ${listing.title}`, "info");
-            } else if (nearWebhook) {
+            if (nearWebhook) {
               addToOutbox({ kind: "near", listing: slimListing(listing), analysis: dealSnapshot(analysis), near });
               await flushOutbox({ uncertain: false });
             }
@@ -3317,6 +3436,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         await sleep(5000);
       }
     } finally {
+      scanStatusRef.current = statusBefore;
       persistPending();
       if (final && deferred > 0) addLog(`⏳ ${deferred} ofert czeka w kolejce na następny cykl (limit ${maxGeminiPerCycle} analiz i ${MAX_DETAIL_FETCHES_PER_CYCLE} stron ogłoszeń na cykl)`, "info");
     }
@@ -3339,6 +3459,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       const tierNow = getAiTier();
       addLog(`💰 AI (Gemini/Claude) w tym miesiącu: ${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} zł z ${aiBudgetPln} zł — tryb: ${TIER_LABELS[tierNow]}`, tierNow === "eco" || tierNow === "stop" ? "error" : "info");
     }
+    setScanStatus({ phase: "start" });
     cleanupQueues();
     if (pendingRef.current.size > 0 || outboxRef.current.length > 0) {
       addLog(`📥 Z poprzednich cykli: ${pendingRef.current.size} ofert w kolejce, ${outboxRef.current.length} powiadomień do wysłania`, "info");
@@ -3367,11 +3488,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       scannedCount++;
       if (!runningRef.current) return;
       // v5.14: bez rutynowych linii na każde wyszukiwanie (log trzymał przez nie tylko ok. 25 min) — podsumowanie na końcu fazy 1
+      setScanStatus({ phase: "search", i: bikeIdx + 1, n: activeBikes.length, label: bike.label });
 
       let listings = [];
       let scrapeOk = false, blocked = false, priceBroken = false;
       try {
         const html = await scrapeKleinanzeigen(bike);
+        touchActivity();
         listings = parseListings(html, bike.label);
         blocked = listings.blocked === true; // sprawdzić PRZED kopiowaniem tablicy (kopia gubi flagi)
         priceBroken = listings.priceParseBroken === true;
@@ -3416,6 +3539,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       let pricesUpdated = 0;
       for (const l of listings) {
         const j = pendingRef.current.get(l.listingId);
+        // v6.1: zmieniony tytuł (np. dopisane „defekt”, inny model) — wynik etapu 1 i zapisana pierwsza analiza nieaktualne
+        if (j && l.title && normTitle(l.title) !== normTitle(j.listing.title)) {
+          addLog(`✏️ Kolejka: zmiana tytułu „${j.listing.title}” → „${l.title}” — oceniam od początku`, "info");
+          j.listing.title = l.title;
+          j.stage = "new"; j.groqType = null; j.cachedType = null; j.classifierDown = false;
+          delete j.knownModel; delete j.recheckedFull; delete j.firstResult; delete j.firstResultKey;
+          delete j.listing.fullDesc; j.listing.images = [];
+          pricesUpdated++;
+        }
         if (j && l.price != null && j.listing.price !== l.price) {
           addLog(`💶 Kolejka: zmiana ceny ${j.listing.price ?? "?"}€ → ${l.price}€ — ${l.title}`, "info");
           j.listing.price = l.price;
@@ -3487,7 +3619,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const entry = seenIdsRef.current.get(l.listingId);
         if (!entry) return false;
         if (entry.overMax && l.price <= maxBuyPrice) return true; // wcześniej za drogie, teraz mieści się w limicie
-        if (entry.nearMax != null && l.price <= entry.nearMax && l.price < (entry.price ?? Infinity)) return true; // v5.14: spadła do „opłaca się do”
+        if (entry.watchSale != null && l.price < (entry.price ?? Infinity) && meetsProfit(entry.watchSale, entry.watchT, l.price)) return true; // v6.1: przy nowej cenie wycena spełnia próg
+        if (entry.nearMax != null && l.price <= entry.nearMax && l.price < (entry.price ?? Infinity)) return true; // v5.14 (stare wpisy): spadła do „opłaca się do”
         if (entry.lowest == null) return false;
         if (l.price > dropLimit(entry.lowest)) return false;
         if (entry.notifiedAt != null && l.price > dropLimit(entry.notifiedAt)) return false;
@@ -3498,10 +3631,12 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const before = e.notifiedAt ?? e.price ?? e.lowest; // ostatnia znana cena — pokazujemy ją w alercie ("1200€ → 950€")
         if (before != null && before > l.price) l.prevPrice = before;
         e.lowest = e.lowest == null ? l.price : Math.min(e.lowest, l.price);
-        if (e.nearMax != null && l.price <= e.nearMax) l._hitNearMax = e.nearMax;
+        if (e.watchSale != null && meetsProfit(e.watchSale, e.watchT, l.price)) l._hitWatch = true;
+        else if (e.nearMax != null && l.price <= e.nearMax) l._hitNearMax = e.nearMax;
         e.notifiedAt = l.price; // ten poziom ceny jest już "obsłużony" — oferta i tak czeka w kolejce do skutku
         e.overMax = false;
-        e.nearMax = null;       // v5.14: nowa analiza ustawi nową kwotę „opłaca się do”
+        e.nearMax = null;       // nowa analiza ustawi nową wycenę do obserwacji
+        e.watchSale = null; e.watchT = null;
         e.price = l.price;
       }
 
@@ -3584,6 +3719,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
         }
         if (!runningRef.current) break;
+        setScanStatus({ phase: "pause", until: Date.now() + 60000 });
         for (let i = 60; i > 0 && runningRef.current; i--) {
           await sleep(1000);
         }
@@ -3687,7 +3823,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   animation: "pulse 1.2s infinite" }} />
                 Cykl #{cycleNum}
               </div>
-              <div style={{ fontSize: 10, color: "#475569" }}>aktywne skanowanie</div>
+              <ScanStatus statusRef={scanStatusRef} activityRef={lastActivityRef} />
             </div>
           )}
         </div>
