@@ -61,8 +61,8 @@ await test("F02 oferta ponad limit wraca w kolejnym cyklu", async () => {
   await app.close();
 });
 
-// ── F03: błąd AI — oferta zostaje w kolejce, po 3 nieudanych cyklach trafia do niepewnych ──
-await test("F03 błąd AI: ponowienia i przeniesienie do niepewnych", async () => {
+// ── F03: błąd AI — oferta zostaje w kolejce; v5.14: jedna próba na cykl i odstęp 10 min przed kolejną ──
+await test("F03 błąd AI: oferta zostaje w kolejce, bez ponawiania w tym samym cyklu", async () => {
   let phase = 1;
   const app = await openApp({ world: {
     search: () => [A, ...(phase >= 2 ? [B] : [])],
@@ -71,10 +71,12 @@ await test("F03 błąd AI: ponowienia i przeniesienie do niepewnych", async () =
   await app.start();
   await app.waitLog(/Cykl #1 zakończony/);
   phase = 2;
-  await app.waitLog(/zostaje w kolejce \(próba 1\/3\)/);
-  await app.waitLog(/zostaje w kolejce \(próba 2\/3\)/, 20000);
-  await app.waitLog(/nie powiodła się 3× — przenoszę do niepewnych/, 20000);
-  await app.waitUntil(() => app.st.discord.some(d => d.webhookUrl.includes("/2/") && d.payload.content.includes(B.title)), 15000, "lista niepewnych z B");
+  await app.waitLog(/zostaje w kolejce \(próba 1\/3, następna za 10 min\)/);
+  await app.waitLog(/Cykl #3 zakończony/, 30000);
+  assert.equal(app.st.aiReqs.filter(b => !b.action).length, 1, "tylko jedno zapytanie AI w 2 cyklach");
+  assert.equal(await app.countLogs(/próba 2\/3/), 0, "druga próba dopiero po 10 min");
+  const pend = JSON.parse(await app.ls("ddf_pending"));
+  assert.equal(pend.length, 1); assert.equal(pend[0].attempts, 1); assert.ok(pend[0].nextAttemptAt > Date.now());
   await app.stop(); await app.waitStopped();
   await app.close();
 });

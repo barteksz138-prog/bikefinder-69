@@ -34,7 +34,7 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
   const b = await getBrowser();
   const ctx = keepContext || await b.newContext({ viewport: { width: 1300, height: 900 } });
   const page = await ctx.newPage();
-  const st = { searchCalls: {}, aiReqs: [], discord: [], detailCalls: [], errors: [], groqReqs: [] };
+  const st = { searchCalls: {}, aiReqs: [], discord: [], detailCalls: [], errors: [], groqReqs: [], cardPrices: {} };
   page.on("pageerror", e => { st.errors.push(e.message); console.log("PAGEERROR", e.message); });
   await page.route("**/*", async (route) => {
     const req = route.request();
@@ -49,11 +49,13 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
         st.detailCalls.push(id);
         const d = world.detail ? world.detail(id, st) : { desc: "Sehr gepflegtes Bike, Fox 38, SRAM GX, Größe L, regelmäßig gewartet, Rechnung vorhanden, kleine Kratzer am Rahmen, sonst top. Abholung." };
         if (d.status) return route.fulfill({ status: d.status, body: d.body || "", contentType: "text/html" });
-        return route.fulfill({ body: detailHtml(d), contentType: "text/html" });
+        const withPrice = d.price === undefined && st.cardPrices[id] != null ? { ...d, price: st.cardPrices[id] } : d; // price: null → strona bez ceny
+        return route.fulfill({ body: detailHtml(withPrice), contentType: "text/html" });
       }
       const key = /Trek%20Slash|Trek Slash/.test(target) ? "slash" : /Canyon%20Torque|Canyon Torque/.test(target) ? "torque" : "other";
       st.searchCalls[key] = (st.searchCalls[key] || 0) + 1;
       const cards = world.search(key, st.searchCalls[key], st);
+      for (const c of cards) st.cardPrices[c.id] = c.price; // v5.14: strona ogłoszenia pokazuje tę samą cenę co karta (jak na prawdziwym Kleinanzeigen)
       return route.fulfill({ body: `<html><body>${cards.map(card).join("")}</body></html>`, contentType: "text/html" });
     }
     if (url.startsWith("http://app.test/api/gemini")) {
