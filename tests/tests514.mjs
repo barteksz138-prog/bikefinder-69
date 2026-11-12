@@ -12,7 +12,7 @@ const GOOD = "Sehr gepflegtes Bike, Gabel und Bremsen top, regelmäßig gewartet
 const A = { id: "1000000001", title: "Canyon Torque AL alt", price: 1000 };
 const HREF = (id) => `https://www.kleinanzeigen.de/s-anzeige/x/${id}-217-1234`;
 const results = [];
-async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${e.message}`); } }
+async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${String(e.message).replace(/\s+/g, " ").slice(0, 300)}`); } }
 const ai = (o = {}) => (b) => b.action ? {} : geminiResp(analysisJson(o), { imagesAttached: b.imageUrls?.length || 0 });
 const deals = (st) => st.discord.filter(d => d.payload.embeds && /OKAZJA/.test(d.payload.embeds[0].title));
 const field = (e, s) => e.fields.find(x => x.name.includes(s))?.value;
@@ -21,8 +21,8 @@ const DIRT = { typ_roweru: "dirt", cena_zakupu_eur: 600, szacowana_sprzedaz_eur:
 // phases: tablica funkcji (k) => karty dla fazy 2, 3, …; faza 1 = sama oferta A (zapamiętanie)
 async function run(opts, after) {
   let phase = 1;
-  const pick = (k) => phase === 1 ? (k === "torque" ? [A] : []) : (opts.phases[Math.min(phase - 2, opts.phases.length - 1)](k) || []);
-  const app = await openApp({ cfg: opts.cfg, ls: opts.ls, world: { detail: () => ({ desc: GOOD, images: 8 }), ...opts.world, search: (k) => pick(k) } });
+  const pick = (k, url) => phase === 1 ? (k === "torque" ? [A] : []) : (opts.phases[Math.min(phase - 2, opts.phases.length - 1)](k, url) || []);
+  const app = await openApp({ cfg: opts.cfg, ls: opts.ls, world: { detail: () => ({ desc: GOOD, images: 8 }), ...opts.world, search: (k, n, st, url) => pick(k, url) } });
   const next = () => { phase++; };
   await app.start(); await app.waitLog(/Cykl #1 zakończony/); phase = 2;
   try { await after(app, next); } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
@@ -44,7 +44,7 @@ await test("Groq „inny” (uznał za ramę) przy tytule bez słowa o części 
 
 await test("Dirt rozpoznany dopiero przez AI → powtórka z wpisem bazy o dirtach, ściągą i wszystkimi zdjęciami; koszt w logu", async () => {
   const B = { id: "2000000402", title: "Dartmoor Hornet Custom Aufbau 26 Zoll", price: 600 };
-  await run({ cfg: { selectedBikes: ["dartmoor"] }, phases: [(k) => k === "other" ? [B] : []],
+  await run({ cfg: { selectedBikes: ["dartmoor"] }, phases: [(k, url) => k === "other" && /dartmoor/i.test(url || "") ? [B] : []], // v6.3: tylko wyszukiwanie marki (kolejność wyszukiwań się zmienia)
     world: { ai: ai({ ...DIRT, decyzja: "nie", szacowana_sprzedaz_eur: 700 }) } }, async (app) => {
     await app.waitUntil(() => genReqs(app.st).length >= 2, 15000, "2 analizy");
     const [r1, r2] = genReqs(app.st);
@@ -111,6 +111,7 @@ await test("Cena spadła do „opłaca się do” (spadek < 20%) → ponowna ana
   await run({ cfg: { minProfit: 35 }, phases: [(k) => k === "torque" ? [A, B(700)] : [], (k) => k === "torque" ? [A, B(610)] : []],
     world: { ai: ai({ decyzja: "nie", cena_zakupu_eur: 700, szacowana_sprzedaz_eur: 900 }) } }, async (app, next) => {
     await app.waitLog(/Cykl #2 zakończony/);
+    await app.waitQueueEmpty(); // v6.3: analiza w tle
     assert.equal(genReqs(app.st).filter(b => !isVer(b)).length, 1);
     const seen = JSON.parse(await app.ls("ddf_seen")).find(e => e.id === "2000000408");
     // v6.1: zamiast jednej kwoty „opłaca się do” zapamiętana wycena (sprzedaż + transport) — próg liczony dla nowej ceny

@@ -9,7 +9,7 @@ const GOOD = "Sehr gepflegtes Canyon Torque AL 6, Fox 38 Performance, Float X2, 
 const NEAR_HOOK = "https://discord.com/api/webhooks/3/near";
 const STATUS_HOOK = "https://discord.com/api/webhooks/4/status";
 const results = [];
-async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${e.message}`); } }
+async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${String(e.message).replace(/\s+/g, " ").slice(0, 300)}`); } }
 const twoPhase = async (opts, after) => {
   let phase = 1;
   const app = await openApp({ ...opts, world: { detail: () => ({ desc: GOOD, images: 3 }), ...opts.world, search: (k, n, st) => k !== "torque" ? [] : [A, ...(phase >= 2 ? (opts.newOnes || [B]) : [])] } });
@@ -98,8 +98,7 @@ await test("Okazja: zdjęcie, rozmiar i „dodano” w alercie; analiza zaraz po
   assert.ok(e.image?.url?.startsWith("https://img.kleinanzeigen.de/"), "zdjęcie");
   assert.equal(e.fields.find(f => f.name.includes("Rozmiar")).value, "L");
   assert.ok(e.fields.find(f => f.name.includes("Dodano")).value.includes("temu"));
-  await app.waitUntil(() => discordAtSlash != null, 15000, "kolejne wyszukiwanie (Trek Slash)"); // v6.1: bez wyścigu z pętlą
-  assert.equal(discordAtSlash, 1, `okazja wysłana przed kolejnym wyszukiwaniem (alertów przy wyszukiwaniu Trek Slash: ${discordAtSlash})`);
+  // v6.3: analiza idzie w tle (wykonawca AI), więc kolejne wyszukiwanie NIE czeka na alert — kolejności już nie sprawdzamy
   await app.stop(); await app.waitStopped(); await app.close();
 });
 

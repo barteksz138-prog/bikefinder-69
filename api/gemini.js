@@ -11,8 +11,36 @@ const IMAGE_TIMEOUT_MS = 8000;
 const MAX_TOTAL_BASE64 = 16 * 1024 * 1024; // Google przyjmuje do ok. 20 MB w jednym zapytaniu
 const ALLOWED_IMAGE_TYPES = { "image/jpeg": "image/jpeg", "image/jpg": "image/jpeg", "image/png": "image/png", "image/webp": "image/webp" };
 
+// v6.3: krótki cache pobranych zdjęć w pamięci instancji (np. pierwsza analiza z 4 zdjęciami, potem weryfikacja z 8 —
+// te same 4 nie są pobierane drugi raz) + łączenie równoczesnych pobrań tego samego adresu. W serverless pamięć jednej
+// instancji nie jest gwarantowana między wywołaniami — to tylko oszczędność pobrań, nie źródło danych. Rozdzielczość bez zmian.
+const IMAGE_CACHE_TTL_MS = 10 * 60 * 1000;
+const IMAGE_CACHE_MAX_BYTES = 48 * 1024 * 1024; // base64
+const imageCache = new Map();   // url → { part, at, size } (kolejność wstawienia = od najstarszego)
+const imageInflight = new Map(); // url → Promise<part|null>
+export const __imageCacheStats = { fetches: 0, hits: 0 };
+export const __clearImageCache = () => { imageCache.clear(); imageInflight.clear(); __imageCacheStats.fetches = 0; __imageCacheStats.hits = 0; };
+const cacheImage = (url, part) => {
+  const size = part.inlineData.data.length;
+  if (size > IMAGE_CACHE_MAX_BYTES / 4) return;
+  imageCache.delete(url);
+  imageCache.set(url, { part, at: Date.now(), size });
+  let total = 0;
+  for (const e of imageCache.values()) total += e.size;
+  for (const [k, e] of imageCache) { if (total <= IMAGE_CACHE_MAX_BYTES) break; imageCache.delete(k); total -= e.size; }
+};
 const fetchImagePart = async (url) => {
   if (typeof url !== "string" || !IMG_URL_RE.test(url)) return null;
+  const hit = imageCache.get(url);
+  if (hit && Date.now() - hit.at < IMAGE_CACHE_TTL_MS) { __imageCacheStats.hits++; return hit.part; }
+  if (hit) imageCache.delete(url);
+  if (imageInflight.has(url)) { __imageCacheStats.hits++; return imageInflight.get(url); }
+  const p = fetchImagePartNow(url).then(part => { if (part) cacheImage(url, part); return part; }).finally(() => imageInflight.delete(url));
+  imageInflight.set(url, p);
+  return p;
+};
+const fetchImagePartNow = async (url) => {
+  __imageCacheStats.fetches++;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), IMAGE_TIMEOUT_MS);
   try {

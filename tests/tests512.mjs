@@ -104,9 +104,10 @@ await test("Nowy filtr wyszukiwania: stare, nowo widoczne oferty nie idą do ana
   const app = await openApp({ ls: { ddf_seen: [{ id: A.id, price: 1000, lowest: 1000, lastSeenAt: Date.now() }], ddf_scan_state: { searches: { canyon_torque: { baselineAt: Date.now() - 3600e3, lastScanAt: Date.now() - 120e3, lastNewAt: Date.now() } } } },
     world: { search: () => [A, OLD, NEW], detail: () => ({ desc: GOOD, images: 2 }), ai: okAi({ decyzja: "nie", szacowana_sprzedaz_eur: 950 }) } });
   await app.start(); await app.waitLog(/Cykl #1 zakończony/, 30000);
-  await app.waitLog(/nowy filtr wyszukiwania \(Mountainbike \+ E-Bike\) — analizuję 1 ofert z ostatnich 24 h, pomijam 1 starszych/);
+  await app.waitLog(/nowy filtr wyszukiwania \(zakres cen \/ typ roweru\) — analizuję 1 ofert z ostatnich 24 h, pomijam 1 starszych/);
   const st = JSON.parse(await app.ls("ddf_scan_state"));
-  assert.equal(st.searches.canyon_torque.urlVersion, 2);
+  assert.equal(st.searches.canyon_torque.urlVersion, 3); // v6.3: wersja 3 = zakres cen w linku
+  assert.equal(st.searches.canyon_torque.priceRange, "200:1400");
   await app.stop(); await app.waitStopped(); await app.close();
 });
 

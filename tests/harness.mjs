@@ -59,7 +59,7 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
       }
       const key = /Trek%20Slash|Trek Slash/.test(target) ? "slash" : /Canyon%20Torque|Canyon Torque/.test(target) ? "torque" : "other";
       st.searchCalls[key] = (st.searchCalls[key] || 0) + 1;
-      const cards = world.search(key, st.searchCalls[key], st);
+      const cards = world.search(key, st.searchCalls[key], st, decodeURIComponent(target)); // v6.3: + adres wyszukiwania
       for (const c of cards) st.cardPrices[c.id] = c.price; // v5.14: strona ogłoszenia pokazuje tę samą cenę co karta (jak na prawdziwym Kleinanzeigen)
       return route.fulfill({ body: `<html><body>${cards.map(card).join("")}</body></html>`, contentType: "text/html" });
     }
@@ -118,6 +118,11 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
     },
     waitStopped: async (timeout = 15000) => api.waitLog(/⏹ Zatrzymano/, timeout),
     ls: (k) => page.evaluate((k) => localStorage.getItem(k), k),
+    // v6.3: analizy idą w tle — czekamy, aż kolejka będzie pusta i wykonawca AI nic nie robi
+    waitQueueEmpty: async (timeout = 20000) => api.waitUntil(async () => {
+      const p = JSON.parse((await page.evaluate(() => localStorage.getItem("ddf_pending"))) || "[]");
+      return p.length === 0 && !(await page.evaluate(() => !!document.querySelector("[data-testid=ai-status]")));
+    }, timeout, "pusta kolejka analiz"),
     close: async () => { await page.close(); if (!keepContext) await ctx.close(); },
   };
   return api;

@@ -64,10 +64,10 @@ await test("B2: nowy numer tego samego roweru przejmuje obserwację ceny — spa
   const detail = (id) => ({ desc: GOOD, images: 4, imgSet: id === L1.id ? "e1" : "e2", seller: "444" });
   await run({ cfg: { profitTiers: TIERS }, phases: [(k) => k === "torque" ? [A, L1] : [], (k) => k === "torque" ? [A, L2(445)] : [], (k) => k === "torque" ? [A, L2(437)] : []],
     world: { detail, ai: ai({ decyzja: "nie", cena_zakupu_eur: 445, szacowana_sprzedaz_eur: 770 }) } }, async (app, next) => {
-    await app.waitLog(/Cykl #2 zakończony/);
+    await app.waitLog(/Cykl #2 zakończony/); await app.waitQueueEmpty(); // v6.3: analiza w tle
     next();
     await app.waitLog(/Duplikat ogłoszenia 2000000627 \(ten sam sprzedawca i opis/, 20000);
-    await app.waitLog(/Cykl #3 zakończony/);
+    await app.waitLog(/Cykl #3 zakończony/); await app.waitQueueEmpty();
     const seen = JSON.parse(await app.ls("ddf_seen")).find(e => e.id === "2000000628");
     assert.equal(seen.watchSale, 770, "nowy numer ma wycenę do obserwacji");
     const before = genReqs(app.st).length;
