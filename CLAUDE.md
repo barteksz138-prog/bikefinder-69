@@ -21,7 +21,8 @@ Szczegółowa wiedza (HTML Kleinanzeigen, przebieg analizy, decyzje, historia we
 ## Stan w przeglądarce (localStorage — osobny dla każdej przeglądarki i adresu!)
 `ddf_cfg` (ustawienia, klucze API, webhooki), `ddf_seen` (widziane ogłoszenia po numerze, z `lastSeenAt`), `ddf_pending` (kolejka analiz),
 `ddf_outbox` (niewysłane powiadomienia), `ddf_scan_state` (stan wyszukiwań, `urlVersion`), `ddf_price_knowledge` (notatki cenowe z czatu),
-`ddf_events` (dziennik zdarzeń), `ddf_autorun` (autostart po odświeżeniu), `ddf_ai_spend` (licznik kosztów), `ddf_chat`.
+`ddf_events` (dziennik zdarzeń), `ddf_autorun` (autostart po odświeżeniu), `ddf_ai_spend` (licznik kosztów, od v5.14 z `byStage`), `ddf_chat`,
+`ddf_results` (ostatnie 200 wyników, v5.14), `ddf_alert_keys` (tytuł+cena wysłanych alertów z 24 h — duplikaty, v5.14).
 Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia; uruchomiona obok produkcji dublowałaby alerty.
 
 ## Dostęp i narzędzia
@@ -32,5 +33,5 @@ Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia;
 
 ## Ustawienia właściciela (11.2026)
 Analiza: Claude Haiku 5.5 · weryfikacja okazji: Claude Sonnet 5.5 · Groq gpt-oss-120b (12 kluczy) jako etap 1 · minimalny zysk 35% (po transporcie) ·
-cena zakupu 200–1400 € · transport 70 € · budżet AI 400 zł/mies. (realnie kilka zł) · e-MTB analizowane · rowery sprzed 2017 odrzucane (także dirty) ·
+cena zakupu 200–1400 € · transport 70 € · budżet AI 400 zł/mies. (realnie kilka zł) · e-MTB analizowane · rowery sprzed 2017 odrzucane (dirty tylko przy roczniku podanym w ogłoszeniu) ·
 38 wyszukiwań modeli/marek + „Dirt” i „Dirtbike” ogólne · kanały Discord: okazje, niepewne, na granicy, problemy.

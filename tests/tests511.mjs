@@ -89,19 +89,16 @@ await test("AI „nie”, ale z liczb zysk ≥ progu → weryfikacja → okazja"
 
 await test("Okazja: zdjęcie, rozmiar i „dodano” w alercie; analiza zaraz po wyszukiwaniu", async () => {
   let phase = 1;
+  let discordAtSlash = null; // v5.14: rutynowych linii „🔍 Trek Slash…” już nie ma w logu — kolejność sprawdzamy po zapytaniach
   const app = await openApp({ cfg: { selectedBikes: ["canyon_torque", "trek_slash"] }, world: { detail: () => ({ desc: GOOD, images: 3 }), ai: okAi({ rozmiar_ramy: "L" }),
-    search: (k) => k === "torque" ? [A, ...(phase >= 2 ? [B] : [])] : [] } });
+    search: (k, n, st) => { if (k === "slash" && phase >= 2 && discordAtSlash == null) discordAtSlash = st.discord.filter(d => d.payload.embeds).length; return k === "torque" ? [A, ...(phase >= 2 ? [B] : [])] : []; } } });
   await app.start(); await app.waitLog(/Cykl #1 zakończony/); phase = 2;
   await app.waitUntil(() => app.st.discord.some(d => d.payload.embeds), 20000, "okazja");
   const e = app.st.discord.find(d => d.payload.embeds).payload.embeds[0];
   assert.ok(e.image?.url?.startsWith("https://img.kleinanzeigen.de/"), "zdjęcie");
   assert.equal(e.fields.find(f => f.name.includes("Rozmiar")).value, "L");
   assert.ok(e.fields.find(f => f.name.includes("Dodano")).value.includes("temu"));
-  const logs = await app.logs();
-  const c2 = logs.findIndex(l => /Cykl #2 —/.test(l));
-  const sent = logs.findIndex((l, i) => i > c2 && /Wysłano na Discord/.test(l));
-  const slash2 = logs.findIndex((l, i) => i > c2 && /Trek Slash…/.test(l));
-  assert.ok(sent > c2 && slash2 > sent, `okazja wysłana przed kolejnym wyszukiwaniem (sent=${sent}, slash=${slash2})`);
+  assert.equal(discordAtSlash, 1, `okazja wysłana przed kolejnym wyszukiwaniem (alertów przy wyszukiwaniu Trek Slash: ${discordAtSlash})`);
   await app.stop(); await app.waitStopped(); await app.close();
 });
 
