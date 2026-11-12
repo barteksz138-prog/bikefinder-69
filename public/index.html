@@ -534,7 +534,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.1 (2026-11-12)";
+const APP_VERSION = "v6.2 (2026-11-12)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -2804,12 +2804,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // v5.14: odcisk treści ogłoszenia (opis + zdjęcia, opcjonalnie cena) — czy wynik analizy jest nadal aktualny; v6.1: także tytuł
   const contentKey = (l, withPrice = true) => hashStr(`${normTitle(l.title)}|${withPrice ? l.price ?? "" : ""}|${l.fullDesc || ""}|${(l.images || []).join(",")}`);
 
-  // ── v6.1: duplikaty — ten sam rower pod innym numerem ogłoszenia ──
+  // ── Duplikaty — ten sam rower pod innym numerem ogłoszenia (v6.1, przebudowane w v6.2) ──
   // Sam tytuł + cena to tylko podejrzenie (dwa takie same modele w tej samej cenie to normalna rzecz).
-  // Duplikat = ten sam tytuł i cena ORAZ ten sam sprzedawca albo identyczny opis. Sprawdzamy po pobraniu strony
-  // ogłoszenia, PRZED analizą AI — duplikat dostaje wynik pierwszego ogłoszenia, bez kosztu AI i bez drugiego alertu.
+  // PEWNY duplikat (bez AI): ten sam tytuł i cena, sprzedawcy nie są różni, ORAZ ten sam sprzedawca z identycznym
+  // opisem albo identyczne zdjęcia. Różni (znani) sprzedawcy = zawsze osobne rowery. Ten sam sprzedawca z innym opisem
+  // i zdjęciami (może mieć dwa egzemplarze) albo identyczny opis bez numeru sprzedawcy → MOŻLIWY duplikat: normalna
+  // analiza z ostrzeżeniem. Wpis = rekord roweru: numery ogłoszeń, aktywny link, wycena do obserwacji, stan alertu.
   const titlePriceKey = (l) => `${normTitle(l.title)}|${l.price ?? ""}`;
   const descKey = (desc) => { const d = String(desc || "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, ""); return d.length >= 40 ? hashStr(d) : null; };
+  const imgKey = (images) => (images || []).length >= 2 ? hashStr(images.join(",")) : null;
   const loadDupes = () => {
     let map = {};
     try { map = JSON.parse(localStorage.getItem("ddf_dupes") || "{}") || {}; } catch {}
@@ -2822,24 +2825,63 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (ids.length > DUPE_MAX) ids.sort((a, b) => map[a].t - map[b].t).slice(0, ids.length - DUPE_MAX).forEach(k => delete map[k]);
     try { localStorage.setItem("ddf_dupes", JSON.stringify(map)); localStorage.removeItem("ddf_alert_keys"); } catch {}
   };
+  const dupeKeyFor = (map, id) => {
+    id = String(id);
+    if (map[id]) return id;
+    return Object.keys(map).find(k => (map[k].ids || []).includes(id)) || null;
+  };
   const findDuplicate = (l) => {
     const map = loadDupes();
-    const tp = titlePriceKey(l), dk = descKey(l.fullDesc);
-    for (const [id, e] of Object.entries(map)) {
-      if (id === String(l.listingId) || e.tp !== tp) continue;
-      if (l.sellerId && e.seller === l.sellerId) return { id, e, why: "ten sam sprzedawca" };
-      if (dk && e.dk === dk) return { id, e, why: "identyczny opis" };
+    const tp = titlePriceKey(l), dk = descKey(l.fullDesc), ik = imgKey(l.images);
+    let maybe = null;
+    for (const [key, e] of Object.entries(map)) {
+      const id = String(l.listingId);
+      if (key === id || (e.ids || []).includes(id) || e.tp !== tp) continue;
+      if (l.sellerId && e.seller && e.seller !== l.sellerId) continue; // różni sprzedawcy — różne rowery
+      const sameSeller = !!(l.sellerId && e.seller === l.sellerId);
+      if (ik && e.ik === ik) return { key, e, sure: true, why: "identyczne zdjęcia" };
+      if (sameSeller && dk && e.dk === dk) return { key, e, sure: true, why: "ten sam sprzedawca i opis" };
+      if (!maybe && (sameSeller || (dk && e.dk === dk))) maybe = { key, e, sure: false, why: sameSeller ? "ten sam sprzedawca, inny opis i zdjęcia" : "identyczny opis, sprzedawca nieznany" };
     }
-    return null;
+    return maybe;
+  };
+  // Wycena do obserwacji spadku ceny (v6.1): tylko gdy jakaś niższa cena spełniłaby próg
+  const watchOf = (a, price) => {
+    const pi = profitInputs(a);
+    const lower = pi ? bestPriceAtMost(pi.sale, pi.transport, (price ?? Infinity) - 1) : null;
+    return lower != null && lower >= minListingPrice ? { watchSale: pi.sale, watchT: pi.transport } : null;
   };
   const recordAnalyzed = (l, a, kind) => {
     if (!l?.listingId || !l.fullDesc) return;
     const map = loadDupes();
+    const old = map[dupeKeyFor(map, l.listingId)];
+    const w = watchOf(a, l.price);
     map[l.listingId] = {
-      tp: titlePriceKey(l), seller: l.sellerId || null, dk: descKey(l.fullDesc), t: Date.now(), kind,
+      tp: titlePriceKey(l), seller: l.sellerId || null, dk: descKey(l.fullDesc), ik: imgKey(l.images), t: Date.now(), kind,
       typ: a?.typ_roweru || "?", dec: a?.decyzja || "nie", opis: String(a?._summary || a?.krotki_opis || "").slice(0, 300),
+      ids: old?.ids || [], href: l.href || null, watchSale: w?.watchSale ?? null, watchT: w?.watchT ?? null,
+      alert: kind === "deal" ? "pending" : null, // v6.2: stan alertu okazji — oczekuje / wysłany / utracony
     };
     saveDupes(map);
+  };
+  // v6.2: stan alertu okazji w rekordzie roweru (szukany po dowolnym z jego numerów)
+  const setAlertState = (id, state) => {
+    const map = loadDupes();
+    const key = dupeKeyFor(map, id);
+    if (!key || map[key].kind !== "deal") return;
+    map[key].alert = state; map[key].t = Date.now();
+    saveDupes(map);
+  };
+  // v6.2: nowy numer tego samego roweru dołącza do rekordu — przejmuje obserwację ceny i aktywny link
+  const linkDuplicate = (dup, l) => {
+    const map = loadDupes();
+    const e = map[dup.key];
+    if (!e) return;
+    e.ids = [...new Set([...(e.ids || []), String(l.listingId)])].slice(-10);
+    e.href = l.href || e.href; e.t = Date.now();
+    saveDupes(map);
+    const seenE = seenIdsRef.current.get(l.listingId);
+    if (seenE && e.watchSale != null) { seenE.watchSale = e.watchSale; seenE.watchT = e.watchT; persistSeenMap(); }
   };
 
   // ── Wspólne pomocnicze dla pętli ───────────────────────────────────────
@@ -2890,6 +2932,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         if (Date.now() - (item.addedAt || 0) > DETAILS_MAX_AGE_MS && !(item.checkedAt && Date.now() - item.checkedAt <= DETAILS_MAX_AGE_MS)) {
           const toUncertain = (reason) => {
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            setAlertState(item.listing.listingId, "lost"); // v6.2: alert okazji nie dotarł (ponowne wystawienie → nowa analiza)
             addToOutbox({ kind: "uncertain", listing: item.listing, reason });
             addLog(`❓ Zaległa okazja → do niepewnych (${reason}): ${item.listing.title}`, "info");
           };
@@ -2908,6 +2951,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           if (det.gone) {
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
             persistOutbox();
+            setAlertState(item.listing.listingId, "lost");
             addLog(`🗑 Zaległa okazja nie wysłana — ogłoszenie zostało usunięte: ${item.listing.title}`, "info");
             continue;
           }
@@ -2931,7 +2975,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             const id = item.listing.listingId;
             if (!pendingRef.current.has(id)) {
               pendingRef.current.set(id, {
-                listing: { ...item.listing, price: det.price, ...(det.title ? { title: det.title } : {}) }, source: "content_changed", cachedType: null, stage: "analyze",
+                listing: { ...item.listing, price: det.price, ...(det.title ? { title: det.title, cardTitle: item.listing.cardTitle ?? item.listing.title } : {}) }, source: "content_changed", cachedType: null, stage: "analyze",
                 groqType: ["full", "dirt", "elektryk_gorski"].includes(item.analysis?.typ_roweru) ? item.analysis.typ_roweru : "niepewne",
                 classifierDown: false, attempts: 0, addedAt: Date.now(),
               });
@@ -2973,6 +3017,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const r = await sendToDiscord(item.listing, item.analysis);
         if (r.ok) {
           outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+          setAlertState(item.listing.listingId, "sent"); // v6.2: dopiero teraz „okazja już zgłoszona”
           setStats(st => ({ ...st, sent: st.sent + 1 }));
           if (item.resultId != null) setResults(prev => prev.map(x => x.id === item.resultId ? { ...x, status: "sent" } : x));
           addLog(`📨 Wysłano na Discord: ${item.listing.title} — ${item.listing.href}`, "success");
@@ -2983,6 +3028,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           persistOutbox();
           if (r.status === 400) { // odrzucona także wersja tekstowa — ponawianie nic nie da
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            setAlertState(item.listing.listingId, "lost");
             persistOutbox();
             addLog(`⚠️ Discord odrzuca tę wiadomość (${describeDiscordError(r)}) — usuwam z kolejki: ${item.listing.title} — ${item.listing.href}`, "error");
             continue;
@@ -3171,6 +3217,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // (do 3 prób), po STOP albo po wyczerpaniu budżetu — czeka na następny cykl.
   // v5.11 (A): wołane po KAŻDYM wyszukiwaniu (okazja idzie na Discord od razu, a nie po przejrzeniu wszystkich 44)
   // i raz na końcu cyklu (final). cb = wspólny licznik cyklu: analizy, pobrane strony ogłoszeń, zatrzymanie.
+  // v6.2: nowy tytuł oferty w kolejce → ocena od początku (etap 1 + analiza, bez zapisanej pierwszej analizy)
+  const resetJobForTitle = (j, title, keepDetails = false) => {
+    j.listing.title = title;
+    j.stage = "new"; j.groqType = null; j.cachedType = null; j.classifierDown = false;
+    delete j.knownModel; delete j.recheckedFull; delete j.firstResult; delete j.firstResultKey;
+    if (!keepDetails) { delete j.listing.fullDesc; j.listing.images = []; }
+  };
   const runStage2 = async (cb, { final = false } = {}) => {
     if (cb.halted) return; // brak środków / zły klucz / budżet — w tym cyklu już nie próbujemy
     if (!cb.attempted) cb.attempted = new Set();
@@ -3233,6 +3286,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             listing.detailsFetchedAt = Date.now();
             if (det.sellerId) listing.sellerId = det.sellerId; // v6.1: do wykrywania duplikatów
             delete job.detailsMissingSince;
+            // v6.2 (B4): strona ogłoszenia ma inny tytuł niż karta (zmiana po pobraniu listy albo nieaktualna karta) —
+            // liczy się tytuł ze strony: filtry, etap 1 i analiza od początku (świeży opis i zdjęcia zostają)
+            if (det.title && normTitle(det.title) !== normTitle(listing.title)) {
+              addLog(`✏️ Strona ogłoszenia ma inny tytuł niż lista: „${listing.title}” → „${det.title}” — oceniam od początku`, "info");
+              if (listing.cardTitle == null) listing.cardTitle = listing.title;
+              resetJobForTitle(job, det.title, true);
+              persistPending();
+              continue;
+            }
             if (job.priceUnconfirmed) {
               delete job.priceUnconfirmed;
               if (det.price == null) {
@@ -3318,17 +3380,37 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
         }
 
-        // ── v6.1: duplikat (ten sam tytuł i cena + ten sam sprzedawca albo identyczny opis) — wynik pierwszego ogłoszenia, bez AI i bez alertu ──
+        // ── Duplikat (v6.1, v6.2): pewny → wynik pierwszego ogłoszenia, bez AI; możliwy → normalna analiza z ostrzeżeniem ──
         const dup = listing.fullDesc ? findDuplicate(listing) : null;
-        if (dup) {
+        delete listing._maybeDup;
+        if (dup && !dup.sure) {
+          listing._maybeDup = `możliwy duplikat ogłoszenia ${dup.key} (${dup.why})`;
+        } else if (dup) {
           const { e } = dup;
-          addLog(`🔁 Duplikat ogłoszenia ${dup.id} (${dup.why}, ten sam tytuł i cena) — bez analizy AI i bez alertu, wynik jak wcześniej (${e.dec}): ${listing.title}`, "info");
-          if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
-          removeJob(listing.listingId);
-          persistPending();
-          pushResult(listing, { typ_roweru: e.typ || "?", decyzja: e.dec === "tak" ? "nie" : e.dec, oplaca_sie: false,
-            krotki_opis: `🔁 Duplikat ogłoszenia ${dup.id} (${dup.why}) — ${e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej"}: ${e.opis || "–"}` }, "skip");
-          continue;
+          linkDuplicate(dup, listing); // przejmuje obserwację ceny i aktywny link (B2)
+          const outIds = new Set([dup.key, ...(e.ids || [])].map(String));
+          const pendingAlert = e.dec === "tak" ? outboxRef.current.find(o => o.kind === "deal" && outIds.has(String(o.listing?.listingId))) : null;
+          // v6.2 (B3): „okazja już zgłoszona” tylko przy potwierdzonej wysyłce; alert w kolejce dostaje nowy link;
+          // alert utracony (np. stare ogłoszenie usunięte przed wysyłką) → nowy numer idzie do normalnej analizy
+          if (e.dec === "tak" && e.alert !== "sent" && !pendingAlert) {
+            addLog(`🔁 Ponowne wystawienie ogłoszenia ${dup.key} (${dup.why}) — wcześniejszy alert nie dotarł, analizuję nowy numer: ${listing.title}`, "info");
+          } else {
+            let what;
+            if (pendingAlert) {
+              const oldHref = pendingAlert.listing.href;
+              pendingAlert.listing = { ...pendingAlert.listing, listingId: listing.listingId, href: listing.href, price: listing.price ?? pendingAlert.listing.price };
+              persistOutbox();
+              what = "okazja czeka na wysłanie — podmieniam link na nowy";
+              addLog(`🔗 Oczekujący alert: link ${oldHref} → ${listing.href}`, "info");
+            } else what = e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej";
+            addLog(`🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}, ten sam tytuł i cena) — bez analizy AI, ${what} (${e.dec}): ${listing.title}`, "info");
+            if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
+            removeJob(listing.listingId);
+            persistPending();
+            pushResult(listing, { typ_roweru: e.typ || "?", decyzja: e.dec === "tak" ? "nie" : e.dec, oplaca_sie: false,
+              krotki_opis: `🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}) — ${what}: ${e.opis || "–"}` }, "skip");
+            continue;
+          }
         }
 
         cb.analyses++;
@@ -3384,6 +3466,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         // Analiza zakończona — oferta schodzi z kolejki; okazje i niepewne idą do listy "do wysłania"
         removeJob(listing.listingId);
         persistPending();
+        if (listing._maybeDup) analysis.ostrzezenia = [analysis.ostrzezenia, listing._maybeDup].filter(Boolean).join("; ").slice(0, 300); // v6.2
         recordAnalyzed(listing, analysis, analysis.decyzja === "tak" && !job.detailNoPrice ? "deal" : analysis.decyzja); // v6.1: indeks do wykrywania duplikatów
         if (analysis.decyzja === "tak" && job.detailNoPrice) {
           const why = `wyglądało na okazję (zysk ~${analysis.przewidywany_zysk}€), ale strona ogłoszenia nie pokazała ceny — cena z listy ${listing.price ?? "?"}€ niepotwierdzona`;
@@ -3412,13 +3495,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           // v6.1: zapamiętaj wycenę (sprzedaż + transport) — gdy po spadku ceny zysk spełni próg dla NOWEJ ceny,
           // ogłoszenie wróci do analizy (nawet przy spadku < 20%). Zamiast jednej kwoty „opłaca się do” (v5.14),
           // która przy progach zależnych od ceny bywała zła w obie strony.
-          const pi = profitInputs(analysis);
           const seenE = seenIdsRef.current.get(listing.listingId);
           if (seenE) {
-            const lower = pi ? bestPriceAtMost(pi.sale, pi.transport, (listing.price ?? Infinity) - 1) : null;
-            const watch = lower != null && lower >= minListingPrice;
-            seenE.watchSale = watch ? pi.sale : null;
-            seenE.watchT = watch ? pi.transport : null;
+            const w = watchOf(analysis, listing.price);
+            seenE.watchSale = w?.watchSale ?? null;
+            seenE.watchT = w?.watchT ?? null;
             seenE.nearMax = null;
             persistSeenMap();
           }
@@ -3539,13 +3620,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       let pricesUpdated = 0;
       for (const l of listings) {
         const j = pendingRef.current.get(l.listingId);
-        // v6.1: zmieniony tytuł (np. dopisane „defekt”, inny model) — wynik etapu 1 i zapisana pierwsza analiza nieaktualne
-        if (j && l.title && normTitle(l.title) !== normTitle(j.listing.title)) {
-          addLog(`✏️ Kolejka: zmiana tytułu „${j.listing.title}” → „${l.title}” — oceniam od początku`, "info");
-          j.listing.title = l.title;
-          j.stage = "new"; j.groqType = null; j.cachedType = null; j.classifierDown = false;
-          delete j.knownModel; delete j.recheckedFull; delete j.firstResult; delete j.firstResultKey;
-          delete j.listing.fullDesc; j.listing.images = [];
+        // v6.1: zmieniony tytuł (np. dopisane „defekt”, inny model) — wynik etapu 1 i zapisana pierwsza analiza nieaktualne.
+        // v6.2: porównujemy z tytułem z OSTATNIEJ KARTY (cardTitle), bo tytuł oferty mógł już przyjść ze strony ogłoszenia
+        // (nowszy niż nieodświeżona karta) — inaczej tytuł przeskakiwałby tam i z powrotem co cykl
+        if (j && l.title && normTitle(l.title) !== normTitle(j.listing.cardTitle ?? j.listing.title)) {
+          addLog(`✏️ Kolejka: zmiana tytułu „${j.listing.cardTitle ?? j.listing.title}” → „${l.title}” — oceniam od początku`, "info");
+          resetJobForTitle(j, l.title);
+          j.listing.cardTitle = l.title;
           pricesUpdated++;
         }
         if (j && l.price != null && j.listing.price !== l.price) {
@@ -3687,13 +3768,49 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   };
   runCycleRef.current = runOneCycle;
 
+  // ── v6.2: jedna aktywna karta skanera (Web Locks) ──
+  // Blokada „ddf-scanner” trzymana przez cały czas pracy. Druga karta tego samego adresu w tej samej przeglądarce
+  // nie wystartuje (też z autostartu) i zostaje podglądem. Nie chroni przed innym komputerem / przeglądarką / wersją testową.
+  const lockReleaseRef = useRef(null);
+  const startingRef = useRef(false);
+  const [otherTabActive, setOtherTabActive] = useState(false);
+  const acquireScanLock = () => new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.locks?.request) { resolve(true); return; } // brak Web Locks — jak dawniej
+    navigator.locks.request("ddf-scanner", { ifAvailable: true }, (lock) => {
+      if (!lock) { resolve(false); return; }
+      resolve(true);
+      return new Promise(rel => { lockReleaseRef.current = rel; });
+    }).catch(() => resolve(true));
+  });
+  const releaseScanLock = () => { try { lockReleaseRef.current?.(); } catch {} lockReleaseRef.current = null; };
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.locks?.query) return;
+    const check = () => {
+      if (runningRef.current) { setOtherTabActive(false); return; }
+      navigator.locks.query().then(st => setOtherTabActive((st.held || []).some(l => l.name === "ddf-scanner"))).catch(() => {});
+    };
+    check();
+    const t = setInterval(check, 5000);
+    return () => clearInterval(t);
+  }, []);
+
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
     if (!keyFor(geminiModel)) { addLog(`❌ Brak klucza API (${provider === "groq" ? "Groq" : aiName(geminiModel)}) dla modelu ${geminiModel}`, "error"); setTab("settings"); return; }
     // Model weryfikacji okazji (Gemini/Claude) potrzebuje własnego klucza — bez niego każda okazja kończyłaby jako "niepewne"
     if (provider !== "groq" && !keyFor(strongModel)) { addLog(`❌ Brak klucza ${aiName(strongModel)} — wybrany model weryfikacji okazji to ${strongModel} (Ustawienia)`, "error"); setTab("settings"); return; }
     if (!discordWebhook) { addLog("❌ Brak Discord Webhook",    "error"); setTab("settings"); return; }
-    if (runningRef.current) return;
+    if (runningRef.current || startingRef.current) return;
+    startingRef.current = true;
+    const gotLock = await acquireScanLock();
+    startingRef.current = false;
+    if (!gotLock) {
+      setOtherTabActive(true);
+      addLog("⛔ Skaner już działa w innej karcie tej przeglądarki — tu nie uruchamiam (ta karta jest tylko podglądem). Żeby skanować tutaj, zatrzymaj albo zamknij tamtą kartę.", "error");
+      return;
+    }
+    if (runningRef.current) { releaseScanLock(); return; }
+    setOtherTabActive(false);
 
     sessionAbortRef.current = typeof AbortController !== "undefined" ? new AbortController() : null;
     runningRef.current = true;
@@ -3727,6 +3844,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       }
     } finally {
       runningRef.current = false;
+      releaseScanLock();
       sessionAbortRef.current = null;
       persistPending();
       persistOutbox();
@@ -3816,6 +3934,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               <div style={{ fontSize: 10, color: "#475569", textTransform: "uppercase" }}>{lbl}</div>
             </div>
           ))}
+          {!running && otherTabActive && (
+            <div data-testid="other-tab" style={{ background: "#1a1408", border: "1px solid #f59e0b55", borderRadius: 8, padding: "6px 14px", fontSize: 11, color: "#f59e0b", maxWidth: 260 }}>
+              ⚠️ Skaner działa w innej karcie tej przeglądarki — ta karta jest tylko podglądem
+            </div>
+          )}
           {running && (
             <div style={{ background: "#0a1520", border: "1px solid #22c55e44", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#22c55e", display: "flex", alignItems: "center", gap: 6 }}>

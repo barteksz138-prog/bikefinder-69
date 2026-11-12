@@ -69,12 +69,12 @@ await test("Ten sam tytuł i cena, ale inny sprzedawca i inny opis → dwa róż
   });
 });
 
-await test("Ten sam tytuł, cena i sprzedawca (inny opis) → duplikat: bez analizy AI i bez drugiego alertu", async () => {
+await test("Ten sam tytuł, cena, sprzedawca i opis (nowe zdjęcia) → duplikat: bez analizy AI i bez drugiego alertu", async () => {
   const B1 = { id: "2000000616", title: "Canyon Torque CF 9 Dup", price: 900 };
   const B2 = { id: "2000000617", title: "Canyon Torque CF 9 Dup", price: 900 };
-  const detail = (id) => ({ desc: id === B1.id ? GOOD : GOOD + " Neu eingestellt.", images: 4, seller: "164360590" });
+  const detail = (id) => ({ desc: GOOD, images: 4, imgSet: id === B1.id ? "a1" : "a2", seller: "164360590" });
   await run({ phases: [(k) => k === "torque" ? [A, B1, B2] : []], world: { detail, ai: ai() } }, async (app) => {
-    await app.waitLog(/Duplikat ogłoszenia 200000061[67] \(ten sam sprzedawca, ten sam tytuł i cena\)/, 25000);
+    await app.waitLog(/Duplikat ogłoszenia 200000061[67] \(ten sam sprzedawca i opis, ten sam tytuł i cena\)/, 25000);
     await app.waitLog(/Cykl #2 zakończony/);
     assert.equal(deals(app.st).length, 1);
     assert.equal(genReqs(app.st).filter(b => !isVer(b)).length, 1, "druga oferta bez analizy AI");
