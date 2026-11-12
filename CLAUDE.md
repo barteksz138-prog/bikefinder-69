@@ -22,7 +22,8 @@ Szczegółowa wiedza (HTML Kleinanzeigen, przebieg analizy, decyzje, historia we
 `ddf_cfg` (ustawienia, klucze API, webhooki), `ddf_seen` (widziane ogłoszenia po numerze, z `lastSeenAt`; od v6.1 `watchSale`/`watchT` — wycena do obserwacji spadku ceny), `ddf_pending` (kolejka analiz),
 `ddf_outbox` (niewysłane powiadomienia), `ddf_scan_state` (stan wyszukiwań, `urlVersion`), `ddf_price_knowledge` (notatki cenowe z czatu),
 `ddf_events` (dziennik zdarzeń), `ddf_autorun` (autostart po odświeżeniu), `ddf_ai_spend` (licznik kosztów, od v5.14 z `byStage`), `ddf_chat`,
-`ddf_results` (ostatnie 200 wyników, v5.14), `ddf_dupes` (v6.1, zastąpił `ddf_alert_keys`: przeanalizowane ogłoszenia z 3 dni — tytuł+cena, sprzedawca, odcisk opisu — do wykrywania duplikatów).
+`ddf_results` (ostatnie 200 wyników, v5.14), `ddf_dupes` (v6.1, zastąpił `ddf_alert_keys`; od v6.2 rekord roweru: tytuł+cena, sprzedawca, odciski opisu i zdjęć, powiązane numery, wycena do obserwacji, stan alertu pending/sent/lost).
+Tylko jedna karta skanuje (v6.2, Web Locks `ddf-scanner`) — druga karta tego samego adresu jest podglądem.
 Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia; uruchomiona obok produkcji dublowałaby alerty.
 
 ## Dostęp i narzędzia

@@ -55,7 +55,7 @@ await test("F02 oferta ponad limit wraca w kolejnym cyklu", async () => {
   phase = 2;
   await app.waitUntil(() => titlesAnalyzed(app.st).length >= 2, 20000, "obie oferty przeanalizowane");
   assert.equal(new Set(titlesAnalyzed(app.st)).size, 2);
-  await app.waitLog(/czeka w kolejce na następny cykl/);
+  await app.waitLog(/W kolejce do analizy AI: \d/); // v6.3: analizy w tle — stan kolejki na końcu cyklu
   await app.stop(); await app.waitStopped();
   assert.equal(JSON.parse(await app.ls("ddf_pending")).length, 0, "kolejka pusta");
   await app.close();

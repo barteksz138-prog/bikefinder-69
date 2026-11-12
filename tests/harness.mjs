@@ -7,13 +7,13 @@ const ROOT = path.resolve(HERE, "..");
 const { chromium } = pw;
 import fs from "node:fs";
 
-export const IMG = (n) => `https://img.kleinanzeigen.de/api/v1/prod-ads/images/ab/1234567${n}-1234-1234-1234-123456789abc?rule=$_59.JPG`;
+export const IMG = (n, set = "ab") => `https://img.kleinanzeigen.de/api/v1/prod-ads/images/${set}/1234567${n}-1234-1234-1234-123456789abc?rule=$_59.JPG`;
 const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 export const card = (l) => `<article class="aditem" data-adid="${l.id}"><a href="/s-anzeige/x/${l.id}-217-1234">${esc(l.title)}</a><div class="aditem-main--top--left">10115 Berlin</div>${l.date ? `<div class="aditem-main--top--right"><i class="icon"></i> ${esc(l.date)}</div>` : ""}<h2>${esc(l.title)}</h2><p class="aditem-main--middle--description">${esc(l.desc || "Gepflegtes Bike")}</p><p class="aditem-main--middle--price-shipping--price">${l.price} €</p></article>`;
-export const detailHtml = (d) => { const n = d.images ?? 2; const gal = Array.from({ length: Math.max(0, n - 1) }, (_, i) => `<div class="galleryimage-element"><img src="${IMG(i + 2)}"></div>`).join(""); return `<html><head>${n > 0 ? `<meta property="og:image" content="${IMG(1)}">` : ""}</head><body>${d.title ? `<h1 id="viewad-title">${esc(d.title)}</h1>` : ""}${d.seller ? `<div id="viewad-contact"><a href="/s-bestandsliste.html?userId=${d.seller}">Alle Anzeigen</a></div>` : ""}<div id="viewad-description-text">${esc(d.desc)}</div>${gal}${d.foreign ? `<section class="recommendations"><img src="${IMG(9)}"></section><img src="${IMG(8)}">` : ""}${d.price ? `<h2 id="viewad-price">${d.price} €</h2>` : ""}</body></html>`; };
+export const detailHtml = (d) => { const n = d.images ?? 2, set = d.imgSet || "ab"; const gal = Array.from({ length: Math.max(0, n - 1) }, (_, i) => `<div class="galleryimage-element"><img src="${IMG(i + 2, set)}"></div>`).join(""); return `<html><head>${n > 0 ? `<meta property="og:image" content="${IMG(1, set)}">` : ""}</head><body>${d.title ? `<h1 id="viewad-title">${esc(d.title)}</h1>` : ""}${d.seller ? `<div id="viewad-contact"><a href="/s-bestandsliste.html?userId=${d.seller}">Alle Anzeigen</a></div>` : ""}<div id="viewad-description-text">${esc(d.desc)}</div>${gal}${d.foreign ? `<section class="recommendations"><img src="${IMG(9)}"></section><img src="${IMG(8)}">` : ""}${d.price ? `<h2 id="viewad-price">${d.price} €</h2>` : ""}</body></html>`; };
 // v6.1: ten sam odcisk treści co contentKey(l, false) w aplikacji (tytuł + opis + zdjęcia ze strony ogłoszenia z detailHtml)
-const hashStr = (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
-const normTitle = (t) => String(t || "").toLowerCase().replace(/^\s*(reserviert|gelöscht)\s*[•·|-]\s*/g, "").replace(/[^a-z0-9äöüß]+/g, " ").trim();
+export const hashStr = (str) => { let h = 5381; for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+export const normTitle = (t) => String(t || "").toLowerCase().replace(/^\s*(reserviert|gelöscht)\s*[•·|-]\s*/g, "").replace(/[^a-z0-9äöüß]+/g, " ").trim();
 export const contentKeyOf = ({ title, desc, images = 2 }) => hashStr(`${normTitle(title)}||${String(desc).replace(/[ \t]+/g, " ").trim()}|${Array.from({ length: images }, (_, i) => IMG(i + 1)).join(",")}`);
 export const analysisJson = (o = {}) => JSON.stringify({
   typ_roweru: "full", decyzja: "tak", niepewne_kategoria: null, cena_zakupu_eur: 900, szacowana_sprzedaz_eur: 1500, przewidywany_zysk: 600, oplaca_sie: true,
@@ -30,6 +30,7 @@ const html = html0.replace(/<script type="text\/babel"[^>]*>[\s\S]*?<\/script>/,
 const shim = fs.readFileSync(path.join(HERE, "react-shim.js"), "utf8");
 
 let browser;
+// v6.2: adres app.localhost jest „bezpieczny” dla przeglądarki (jak https) — potrzebne do Web Locks (blokada jednej karty)
 export const getBrowser = async () => (browser ||= await chromium.launch());
 export const closeBrowser = async () => { if (browser) await browser.close(); };
 
@@ -45,8 +46,8 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
     const url = req.url();
     if (url.includes("cdnjs") && url.includes("react") && !url.includes("react-dom")) return route.fulfill({ body: shim, contentType: "text/javascript" });
     if (url.includes("cdnjs")) return route.fulfill({ body: "", contentType: "text/javascript" });
-    if (url === "http://app.test/") return route.fulfill({ body: html, contentType: "text/html" });
-    if (url.startsWith("http://app.test/api/scrape")) {
+    if (url === "http://app.localhost/") return route.fulfill({ body: html, contentType: "text/html" });
+    if (url.startsWith("http://app.localhost/api/scrape")) {
       const target = decodeURIComponent(new URL(url).searchParams.get("url"));
       if (target.includes("/s-anzeige/")) {
         const id = (target.match(/\/(\d{7,})-/) || [])[1];
@@ -58,11 +59,11 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
       }
       const key = /Trek%20Slash|Trek Slash/.test(target) ? "slash" : /Canyon%20Torque|Canyon Torque/.test(target) ? "torque" : "other";
       st.searchCalls[key] = (st.searchCalls[key] || 0) + 1;
-      const cards = world.search(key, st.searchCalls[key], st);
+      const cards = world.search(key, st.searchCalls[key], st, decodeURIComponent(target)); // v6.3: + adres wyszukiwania
       for (const c of cards) st.cardPrices[c.id] = c.price; // v5.14: strona ogłoszenia pokazuje tę samą cenę co karta (jak na prawdziwym Kleinanzeigen)
       return route.fulfill({ body: `<html><body>${cards.map(card).join("")}</body></html>`, contentType: "text/html" });
     }
-    if (url.startsWith("http://app.test/api/gemini")) {
+    if (url.startsWith("http://app.localhost/api/gemini")) {
       const body = JSON.parse(req.postData());
       if (body.provider === "groq") { st.groqReqs.push(body); return route.fulfill({ contentType: "application/json", body: JSON.stringify(world.groq ? world.groq(body, st) : groqResp("full")) }); }
       st.aiReqs.push(body);
@@ -71,7 +72,7 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
       const json = r && r.__json !== undefined ? r.__json : r;
       return route.fulfill({ status: (r && r.__status) || 200, contentType: "application/json", body: JSON.stringify(json) }).catch(() => {});
     }
-    if (url.startsWith("http://app.test/api/discord")) {
+    if (url.startsWith("http://app.localhost/api/discord")) {
       const body = JSON.parse(req.postData());
       st.discord.push(body);
       const r = world.discord ? world.discord(body, st) : { ok: true, status: 204, retryAfter: null, error: null };
@@ -91,7 +92,7 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
       }
     }, { c: fullCfg, extra: ls });
   }
-  await page.goto("http://app.test/");
+  await page.goto("http://app.localhost/");
   await page.waitForTimeout(300);
   const api = {
     page, st, ctx,
@@ -117,6 +118,11 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
     },
     waitStopped: async (timeout = 15000) => api.waitLog(/⏹ Zatrzymano/, timeout),
     ls: (k) => page.evaluate((k) => localStorage.getItem(k), k),
+    // v6.3: analizy idą w tle — czekamy, aż kolejka będzie pusta i wykonawca AI nic nie robi
+    waitQueueEmpty: async (timeout = 20000) => api.waitUntil(async () => {
+      const p = JSON.parse((await page.evaluate(() => localStorage.getItem("ddf_pending"))) || "[]");
+      return p.length === 0 && !(await page.evaluate(() => !!document.querySelector("[data-testid=ai-status]")));
+    }, timeout, "pusta kolejka analiz"),
     close: async () => { await page.close(); if (!keepContext) await ctx.close(); },
   };
   return api;

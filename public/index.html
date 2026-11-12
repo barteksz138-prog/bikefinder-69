@@ -388,7 +388,10 @@ const NEAR_DEAL_MAX_DROP = 0.20;                  // v5.12 "na granicy": cena mu
 const NEAR_DEAL_OFFER_SHARE = 0.88;               // propozycja dla sprzedawcy: ok. 12% poniżej kwoty „opłaca się do”, w dół do 10 €
 // v5.12: wersja linków wyszukiwań. Po zmianie filtra (np. dodany typ E-Bike) nowo widoczne STARE oferty nie są
 // "nowe" — przy pierwszym skanie po zmianie analizujemy tylko te z ostatnich 24 h (jak po długiej przerwie).
-const SEARCH_URL_VERSION = 2;
+const SEARCH_URL_VERSION = 3;                     // v6.3: zakres cen (preis:min:max) w linkach wyszukiwań modeli/marek
+const KA_MIN_GAP_MS = 4000;                       // v6.3: min. odstęp między DOWOLNYMI zapytaniami do Kleinanzeigen (+ losowo do 2 s) — wyszukiwania i strony ogłoszeń idą równolegle
+const JOB_AGING_MS = 15 * 60 * 1000;
+const EMPTY_SUSPICIOUS_MIN_CARDS = 5;             // v6.3: pusta lista tam, gdzie ostatnio było ≥ 5 ogłoszeń = podejrzana (powtórka na końcu cyklu)              // v6.3: oferta czekająca dłużej w kolejce wyprzedza nowsze (najstarsze najpierw)
 const SEARCH_GAP_MS = 6000;                       // v5.12: odstęp między wyszukiwaniami (+ losowo do 1,5 s); w v5.11 było 3 s — za szybko (blokady)
 const EVENTS_MAX = 300;                           // dziennik ważnych zdarzeń (Status → Dziennik) — trwały, przeżywa odświeżenie
 // Ważne zdarzenia do dziennika (oprócz wszystkich błędów): start/stop, wysłane alerty, blokady, budżet, autostart
@@ -467,6 +470,32 @@ const parseCardDate = (article, jsonLd) => {
   return Number.isFinite(ts) ? ts : null;
 };
 
+// v6.3: naprawa typowych błędów składni JSON od modelu — cudzysłów w tekście bez \ (np. „27,5"”), znak nowej linii
+// w tekście, brakujący przecinek między polami, przecinek przed } lub ]. Cudzysłów zamyka tekst tylko wtedy, gdy
+// po nim (pomijając spacje) stoi , } ] albo : — w przeciwnym razie traktujemy go jako znak w tekście.
+const repairJsonText = (src) => {
+  let out = "", inStr = false;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (!inStr) { out += c; if (c === '"') inStr = true; continue; }
+    if (c === "\\") { out += c + (src[i + 1] ?? ""); i++; continue; }
+    if (c === "\n") { out += "\\n"; continue; }
+    if (c === "\r") continue;
+    if (c === "\t") { out += "\\t"; continue; }
+    if (c === '"') {
+      let j = i + 1;
+      while (j < src.length && /[ \t\r\n]/.test(src[j])) j++;
+      const newField = src[j] === '"' && /\n/.test(src.slice(i + 1, j)); // „"x"⏎"b": …” — brakujący przecinek, nie cudzysłów w tekście
+      if (j >= src.length || ",}]:".includes(src[j]) || newField) { out += c; inStr = false; }
+      else out += '\\"';
+      continue;
+    }
+    out += c;
+  }
+  return out
+    .replace(/("|\d|true|false|null|\}|\])(\s*\n\s*)(")/g, "$1,$2$3") // brakujący przecinek przed kolejnym polem
+    .replace(/,(\s*[}\]])/g, "$1");                                     // przecinek przed } / ]
+};
 const fmtDuration = (ms) => {
   const s = Math.round(ms / 1000);
   return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s` : `${s} s`;
@@ -534,7 +563,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.1 (2026-11-12)";
+const APP_VERSION = "v6.3 (2026-11-12)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -593,7 +622,7 @@ function Badge({ status }) {
 
 // v6.1: linia stanu skanera w nagłówku — co robi teraz i kiedy ostatnio coś się działo.
 // Osobny komponent z własnym zegarem (1 s), żeby co sekundę nie przerysowywać całej aplikacji.
-function ScanStatus({ statusRef, activityRef }) {
+function ScanStatus({ statusRef, activityRef, aiRef }) {
   const [, setTick] = useState(0);
   useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, []);
   const st = statusRef.current || {};
@@ -608,10 +637,13 @@ function ScanStatus({ statusRef, activityRef }) {
     const left = Math.round((st.until - now) / 1000);
     main = left >= 0 ? `przerwa — następny cykl za ${left} s` : `przerwa przedłuża się o ${-left} s`;
   }
+  const ai = aiRef?.current; // v6.3: wykonawca AI pracuje równolegle z wyszukiwaniami
+  const aiTxt = ai?.phase === "ai" ? `Analiza AI: ${ai.title}` : ai?.phase === "detail" ? `Strona ogłoszenia: ${ai.title}` : null;
   const late = (st.phase === "pause" && now - st.until > 20000) || (ago != null && ago > 180);
   return (
     <div style={{ fontSize: 10, color: "#64748b", maxWidth: 280, textAlign: "left", lineHeight: 1.4 }}>
       <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={main} data-testid="scan-status">{main}</div>
+      {aiTxt && <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={aiTxt} data-testid="ai-status">{aiTxt}</div>}
       {ago != null && <div>ostatnia aktywność {ago} s temu</div>}
       {late && <div style={{ color: "#f59e0b" }}>⚠️ opóźnienie — Chrome może spowalniać kartę w tle (Ustawienia → Wydajność → zawsze aktywna)</div>}
     </div>
@@ -778,9 +810,12 @@ function App() {
   const detailBlockedUntilRef = useRef(0);  // bezpiecznik: do kiedy NIE pobieramy stron ogłoszeń (po blokadzie)
   const scrapeBlockedUntilRef = useRef(0);  // v5.11: do kiedy NIE odpytujemy wyszukiwań (po 2 blokadach pod rząd)
   const aiFailStreakRef = useRef(0);        // v5.14: nieudane analizy AI pod rząd (awaria dostawcy)
+  const alertDelaysRef = useRef([]); // v6.3: ostatnie czasy „wykrycie → alert” (podsumowanie cyklu)
   const scanStatusRef = useRef({ phase: "idle" }); // v6.1: co skaner robi teraz (linia stanu w nagłówku)
   const lastActivityRef = useRef(0);               // v6.1: ostatnie zapytanie / odpowiedź (Kleinanzeigen, AI)
   const setScanStatus = (st) => { scanStatusRef.current = st; lastActivityRef.current = Date.now(); };
+  const aiStatusRef = useRef(null); // v6.3: osobna linia — co robi wykonawca AI (działa równolegle z wyszukiwaniami)
+  const setAiStatus = (st) => { aiStatusRef.current = st; if (st) lastActivityRef.current = Date.now(); };
   const touchActivity = () => { lastActivityRef.current = Date.now(); };
   const aiPauseUntilRef = useRef(0);        // v5.14: do kiedy nie próbujemy analiz AI po serii błędów
 
@@ -1567,6 +1602,23 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     return "niedostepny";
   };
 
+  // v6.3: wspólna kolejka zapytań do Kleinanzeigen — wyszukiwania (pętla zbierania) i strony ogłoszeń (wykonawca AI,
+  // zaległe okazje) biegną równolegle, ale do portalu idą po kolei, z odstępem KA_MIN_GAP_MS + losowo do 2 s
+  const kaNextAtRef = useRef(0);
+  const kaChainRef = useRef(Promise.resolve());
+  const kaSlot = () => {
+    const p = kaChainRef.current.then(async () => {
+      const wait = kaNextAtRef.current - Date.now();
+      if (wait > 0) await sleep(wait);
+      kaNextAtRef.current = Date.now() + KA_MIN_GAP_MS + Math.random() * 2000;
+    });
+    kaChainRef.current = p.catch(() => {});
+    return p;
+  };
+  const searchUrlFor = (bike) => bike.isCategory
+    ? bike.categoryUrl
+    // v6.3: zakres cen po stronie portalu — pierwsza strona wyników mieści więcej ofert, które i tak nas interesują
+    : `https://www.kleinanzeigen.de/s-fahrraeder/preis:${minListingPrice}:${maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
   const scrapeKleinanzeigen = async (bike) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
     // Modele/marki konkretne używają wyszukiwania po frazie + DOPIĘTEGO filtra
@@ -1574,10 +1626,10 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     // przez sprzedającego jako rower górski, więc np. "Giant"/"Marin"/"Norco" (marki które
     // robią też szosówki/miejskie) nie zaśmiecają wyników niezwiązanymi typami rowerów.
     // Format zweryfikowany na realnych URL-ach Kleinanzeigen: /s-fahrraeder/{fraza}/k0c217+fahrraeder.type_s:mountainbike
-    const url = bike.isCategory
-      ? bike.categoryUrl
-      : `https://www.kleinanzeigen.de/s-fahrraeder/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
+    const url = searchUrlFor(bike);
     // v5.12: typ "Mountainbike" ORAZ "E-Bike" — sam Mountainbike gubił wszystkie e-MTB (np. Torque:ON, Heckler)
+    await kaSlot();
+    if (!runningRef.current) throw new Error("zatrzymano");
     const resp = await fetch(`/api/scrape?url=${encodeURIComponent(url)}`, { signal: requestSignal(SCRAPE_TIMEOUT_MS, true) });
     if (!resp.ok) throw new Error(`Scrape HTTP ${resp.status}`);
     return resp.text();
@@ -1631,6 +1683,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     if (!/^https:\/\/(www\.)?kleinanzeigen\.de\//.test(listing.href || "")) {
       return { ok: false, reason: "link spoza Kleinanzeigen" };
     }
+    await kaSlot(); // v6.3: wspólny odstęp z wyszukiwaniami
     let resp, html;
     try {
       resp = await fetch(`/api/scrape?url=${encodeURIComponent(listing.href)}`, { signal: requestSignal(SCRAPE_TIMEOUT_MS, true) });
@@ -1862,6 +1915,8 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
       }
     }
 
+    // v6.3: nagłówek strony — przy pustej liście w logu widać, czy to „Es wurden keine Ergebnisse … gefunden”, czy coś innego
+    items.pageHeading = (doc.querySelector("h1")?.textContent || doc.title || "").replace(/\s+/g, " ").trim().slice(0, 140);
     return items;
   };
 
@@ -2134,6 +2189,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
       // ponownie przy każdej z 3 prób w razie błędu przejściowego (patrz cooldown w getCachedContentName).
       let cachedContentName = modelForCall ? null : await getCachedContentName();
       let photoLogged = false; // log o zdjęciach raz na analizę (przy pierwszej odpowiedzi bez błędu)
+      let badJsonRetried = false; // v6.3: jedna natychmiastowa powtórka przy zepsutej składni JSON
       for (let attempt = 1; attempt <= 3; attempt++) {
         if (!runningRef.current) return { _aborted: true }; // STOP — oferta zostaje w kolejce
         try {
@@ -2185,7 +2241,20 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           let clean = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
           const jsonMatch = clean.match(/\{[\s\S]*\}/);
           if (jsonMatch) clean = jsonMatch[0];
-          const parsed = JSON.parse(clean);
+          // v6.3: model czasem psuje składnię (np. cudzysłów cala w „27,5"” bez \\) — próbujemy naprawić, zanim uznamy porażkę
+          let parsed;
+          try { parsed = JSON.parse(clean); }
+          catch (e1) {
+            const fixed = repairJsonText(clean);
+            try {
+              parsed = JSON.parse(fixed);
+              addLog(`🩹 ${aiName(modelForCall || geminiModel)}: naprawiono składnię JSON w odpowiedzi (${e1.message.slice(0, 80)}) — ${listing.title}`, "info");
+            } catch {
+              const err = new Error(e1.message);
+              err.badJson = !/unterminated string|unexpected end of json/i.test(e1.message); // ucięty JSON obsługuje osobna ścieżka niżej
+              throw err;
+            }
+          }
 
           // ── KROK 1: FAKTY — normalizacja. Na nich opierają się twarde reguły niżej: liczy je program,
           // a nie model, bo modele dużo pewniej wyciągają pojedyncze fakty, niż oceniają całość naraz.
@@ -2469,6 +2538,12 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // Zabezpieczenie na wypadek gdyby Google NIE zgłosił finishReason="MAX_TOKENS" wprost,
           // a JSON i tak wygląda na ucięty w połowie — te komunikaty błędu JSON.parse to typowy
           // odcisk palca truncation, nie faktycznie zepsutego JSON-a od modelu.
+          // v6.3: zepsuta składnia (nie ucięcie), której nie dało się naprawić — jedna ponowna próba od razu, bez czekania 10 min
+          if (e?.badJson && !badJsonRetried) {
+            badJsonRetried = true;
+            addLog(`⏳ ${aiName(modelForCall || geminiModel)}: odpowiedź z błędem składni JSON (${msg.slice(0, 100)}) — ponawiam od razu — ${listing.title}`, "error");
+            continue;
+          }
           const looksTruncated = /unterminated string|unexpected end of json/i.test(msg);
           if (looksTruncated && attempt < 3) {
             const bumped = Math.min(65000, Math.round((effectiveOverrides.maxOutputTokens || 600) * 1.6) + 1000);
@@ -2804,12 +2879,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // v5.14: odcisk treści ogłoszenia (opis + zdjęcia, opcjonalnie cena) — czy wynik analizy jest nadal aktualny; v6.1: także tytuł
   const contentKey = (l, withPrice = true) => hashStr(`${normTitle(l.title)}|${withPrice ? l.price ?? "" : ""}|${l.fullDesc || ""}|${(l.images || []).join(",")}`);
 
-  // ── v6.1: duplikaty — ten sam rower pod innym numerem ogłoszenia ──
+  // ── Duplikaty — ten sam rower pod innym numerem ogłoszenia (v6.1, przebudowane w v6.2) ──
   // Sam tytuł + cena to tylko podejrzenie (dwa takie same modele w tej samej cenie to normalna rzecz).
-  // Duplikat = ten sam tytuł i cena ORAZ ten sam sprzedawca albo identyczny opis. Sprawdzamy po pobraniu strony
-  // ogłoszenia, PRZED analizą AI — duplikat dostaje wynik pierwszego ogłoszenia, bez kosztu AI i bez drugiego alertu.
+  // PEWNY duplikat (bez AI): ten sam tytuł i cena, sprzedawcy nie są różni, ORAZ ten sam sprzedawca z identycznym
+  // opisem albo identyczne zdjęcia. Różni (znani) sprzedawcy = zawsze osobne rowery. Ten sam sprzedawca z innym opisem
+  // i zdjęciami (może mieć dwa egzemplarze) albo identyczny opis bez numeru sprzedawcy → MOŻLIWY duplikat: normalna
+  // analiza z ostrzeżeniem. Wpis = rekord roweru: numery ogłoszeń, aktywny link, wycena do obserwacji, stan alertu.
   const titlePriceKey = (l) => `${normTitle(l.title)}|${l.price ?? ""}`;
   const descKey = (desc) => { const d = String(desc || "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, ""); return d.length >= 40 ? hashStr(d) : null; };
+  const imgKey = (images) => (images || []).length >= 2 ? hashStr(images.join(",")) : null;
   const loadDupes = () => {
     let map = {};
     try { map = JSON.parse(localStorage.getItem("ddf_dupes") || "{}") || {}; } catch {}
@@ -2822,24 +2900,63 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (ids.length > DUPE_MAX) ids.sort((a, b) => map[a].t - map[b].t).slice(0, ids.length - DUPE_MAX).forEach(k => delete map[k]);
     try { localStorage.setItem("ddf_dupes", JSON.stringify(map)); localStorage.removeItem("ddf_alert_keys"); } catch {}
   };
+  const dupeKeyFor = (map, id) => {
+    id = String(id);
+    if (map[id]) return id;
+    return Object.keys(map).find(k => (map[k].ids || []).includes(id)) || null;
+  };
   const findDuplicate = (l) => {
     const map = loadDupes();
-    const tp = titlePriceKey(l), dk = descKey(l.fullDesc);
-    for (const [id, e] of Object.entries(map)) {
-      if (id === String(l.listingId) || e.tp !== tp) continue;
-      if (l.sellerId && e.seller === l.sellerId) return { id, e, why: "ten sam sprzedawca" };
-      if (dk && e.dk === dk) return { id, e, why: "identyczny opis" };
+    const tp = titlePriceKey(l), dk = descKey(l.fullDesc), ik = imgKey(l.images);
+    let maybe = null;
+    for (const [key, e] of Object.entries(map)) {
+      const id = String(l.listingId);
+      if (key === id || (e.ids || []).includes(id) || e.tp !== tp) continue;
+      if (l.sellerId && e.seller && e.seller !== l.sellerId) continue; // różni sprzedawcy — różne rowery
+      const sameSeller = !!(l.sellerId && e.seller === l.sellerId);
+      if (ik && e.ik === ik) return { key, e, sure: true, why: "identyczne zdjęcia" };
+      if (sameSeller && dk && e.dk === dk) return { key, e, sure: true, why: "ten sam sprzedawca i opis" };
+      if (!maybe && (sameSeller || (dk && e.dk === dk))) maybe = { key, e, sure: false, why: sameSeller ? "ten sam sprzedawca, inny opis i zdjęcia" : "identyczny opis, sprzedawca nieznany" };
     }
-    return null;
+    return maybe;
+  };
+  // Wycena do obserwacji spadku ceny (v6.1): tylko gdy jakaś niższa cena spełniłaby próg
+  const watchOf = (a, price) => {
+    const pi = profitInputs(a);
+    const lower = pi ? bestPriceAtMost(pi.sale, pi.transport, (price ?? Infinity) - 1) : null;
+    return lower != null && lower >= minListingPrice ? { watchSale: pi.sale, watchT: pi.transport } : null;
   };
   const recordAnalyzed = (l, a, kind) => {
     if (!l?.listingId || !l.fullDesc) return;
     const map = loadDupes();
+    const old = map[dupeKeyFor(map, l.listingId)];
+    const w = watchOf(a, l.price);
     map[l.listingId] = {
-      tp: titlePriceKey(l), seller: l.sellerId || null, dk: descKey(l.fullDesc), t: Date.now(), kind,
+      tp: titlePriceKey(l), seller: l.sellerId || null, dk: descKey(l.fullDesc), ik: imgKey(l.images), t: Date.now(), kind,
       typ: a?.typ_roweru || "?", dec: a?.decyzja || "nie", opis: String(a?._summary || a?.krotki_opis || "").slice(0, 300),
+      ids: old?.ids || [], href: l.href || null, watchSale: w?.watchSale ?? null, watchT: w?.watchT ?? null,
+      alert: kind === "deal" ? "pending" : null, // v6.2: stan alertu okazji — oczekuje / wysłany / utracony
     };
     saveDupes(map);
+  };
+  // v6.2: stan alertu okazji w rekordzie roweru (szukany po dowolnym z jego numerów)
+  const setAlertState = (id, state) => {
+    const map = loadDupes();
+    const key = dupeKeyFor(map, id);
+    if (!key || map[key].kind !== "deal") return;
+    map[key].alert = state; map[key].t = Date.now();
+    saveDupes(map);
+  };
+  // v6.2: nowy numer tego samego roweru dołącza do rekordu — przejmuje obserwację ceny i aktywny link
+  const linkDuplicate = (dup, l) => {
+    const map = loadDupes();
+    const e = map[dup.key];
+    if (!e) return;
+    e.ids = [...new Set([...(e.ids || []), String(l.listingId)])].slice(-10);
+    e.href = l.href || e.href; e.t = Date.now();
+    saveDupes(map);
+    const seenE = seenIdsRef.current.get(l.listingId);
+    if (seenE && e.watchSale != null) { seenE.watchSale = e.watchSale; seenE.watchT = e.watchT; persistSeenMap(); }
   };
 
   // ── Wspólne pomocnicze dla pętli ───────────────────────────────────────
@@ -2881,7 +2998,14 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
   // ── Wysyłka powiadomień z listy "do wysłania" (outbox) ────────────────
   // Pozycja znika z listy dopiero po potwierdzeniu przez Discorda. Nieudane czekają na kolejny cykl.
-  const flushOutbox = async ({ deals = true, uncertain = true } = {}) => {
+  // v6.3: wysyłka po kolei — pętla zbierania i wykonawca AI wołają ją niezależnie; dwie naraz mogłyby wysłać to samo
+  const outboxChainRef = useRef(Promise.resolve());
+  const flushOutbox = (opts) => {
+    const p = outboxChainRef.current.then(() => flushOutboxNow(opts));
+    outboxChainRef.current = p.catch(() => {});
+    return p;
+  };
+  const flushOutboxNow = async ({ deals = true, uncertain = true } = {}) => {
     if (!runningRef.current) return; // po STOP nic nie wysyłamy — wyślemy po następnym starcie
     if (deals) {
       for (const item of outboxRef.current.filter(o => o.kind === "deal")) {
@@ -2890,6 +3014,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         if (Date.now() - (item.addedAt || 0) > DETAILS_MAX_AGE_MS && !(item.checkedAt && Date.now() - item.checkedAt <= DETAILS_MAX_AGE_MS)) {
           const toUncertain = (reason) => {
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            setAlertState(item.listing.listingId, "lost"); // v6.2: alert okazji nie dotarł (ponowne wystawienie → nowa analiza)
             addToOutbox({ kind: "uncertain", listing: item.listing, reason });
             addLog(`❓ Zaległa okazja → do niepewnych (${reason}): ${item.listing.title}`, "info");
           };
@@ -2908,6 +3033,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           if (det.gone) {
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
             persistOutbox();
+            setAlertState(item.listing.listingId, "lost");
             addLog(`🗑 Zaległa okazja nie wysłana — ogłoszenie zostało usunięte: ${item.listing.title}`, "info");
             continue;
           }
@@ -2931,7 +3057,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             const id = item.listing.listingId;
             if (!pendingRef.current.has(id)) {
               pendingRef.current.set(id, {
-                listing: { ...item.listing, price: det.price, ...(det.title ? { title: det.title } : {}) }, source: "content_changed", cachedType: null, stage: "analyze",
+                listing: { ...item.listing, price: det.price, ...(det.title ? { title: det.title, cardTitle: item.listing.cardTitle ?? item.listing.title } : {}) }, source: "content_changed", cachedType: null, stage: "analyze",
                 groqType: ["full", "dirt", "elektryk_gorski"].includes(item.analysis?.typ_roweru) ? item.analysis.typ_roweru : "niepewne",
                 classifierDown: false, attempts: 0, addedAt: Date.now(),
               });
@@ -2973,9 +3099,12 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const r = await sendToDiscord(item.listing, item.analysis);
         if (r.ok) {
           outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+          setAlertState(item.listing.listingId, "sent"); // v6.2: dopiero teraz „okazja już zgłoszona”
           setStats(st => ({ ...st, sent: st.sent + 1 }));
           if (item.resultId != null) setResults(prev => prev.map(x => x.id === item.resultId ? { ...x, status: "sent" } : x));
-          addLog(`📨 Wysłano na Discord: ${item.listing.title} — ${item.listing.href}`, "success");
+          const delay = item.foundAt ? Date.now() - item.foundAt : null; // v6.3: czas od wykrycia oferty do alertu
+          if (delay != null) alertDelaysRef.current = [...alertDelaysRef.current, delay].slice(-20);
+          addLog(`📨 Wysłano na Discord: ${item.listing.title} — ${item.listing.href}${delay != null ? ` · ⏱ ${fmtDuration(delay)} od wykrycia` : ""}`, "success");
           persistOutbox();
         } else {
           if (r.stopped) return; // v5.14: STOP w trakcie wysyłki — zostaje w kolejce, wyślemy po starcie
@@ -2983,6 +3112,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           persistOutbox();
           if (r.status === 400) { // odrzucona także wersja tekstowa — ponawianie nic nie da
             outboxRef.current = outboxRef.current.filter(o => o.id !== item.id);
+            setAlertState(item.listing.listingId, "lost");
             persistOutbox();
             addLog(`⚠️ Discord odrzuca tę wiadomość (${describeDiscordError(r)}) — usuwam z kolejki: ${item.listing.title} — ${item.listing.href}`, "error");
             continue;
@@ -3171,7 +3301,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // (do 3 prób), po STOP albo po wyczerpaniu budżetu — czeka na następny cykl.
   // v5.11 (A): wołane po KAŻDYM wyszukiwaniu (okazja idzie na Discord od razu, a nie po przejrzeniu wszystkich 44)
   // i raz na końcu cyklu (final). cb = wspólny licznik cyklu: analizy, pobrane strony ogłoszeń, zatrzymanie.
-  const runStage2 = async (cb, { final = false } = {}) => {
+  // v6.2: nowy tytuł oferty w kolejce → ocena od początku (etap 1 + analiza, bez zapisanej pierwszej analizy)
+  const resetJobForTitle = (j, title, keepDetails = false) => {
+    j.rev = (j.rev || 0) + 1; // v6.3: wykonawca AI porównuje — zmiana w trakcie analizy unieważnia jej wynik
+    j.listing.title = title;
+    j.stage = "new"; j.groqType = null; j.cachedType = null; j.classifierDown = false;
+    delete j.knownModel; delete j.recheckedFull; delete j.firstResult; delete j.firstResultKey;
+    if (!keepDetails) { delete j.listing.fullDesc; j.listing.images = []; }
+  };
+  const runStage2 = async (cb, { final = false, worker = false } = {}) => {
     if (cb.halted) return; // brak środków / zły klucz / budżet — w tym cyklu już nie próbujemy
     if (!cb.attempted) cb.attempted = new Set();
     // v5.14: po serii nieudanych analiz (awaria dostawcy AI) — wspólna przerwa zamiast zużywania prób kolejnych ofert
@@ -3184,16 +3322,27 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       .filter(j => j.stage === "analyze")
       // v5.14: jedna próba na ofertę na cykl (stage 2 jest wołany po każdym wyszukiwaniu) i odstęp po nieudanej próbie
       .filter(j => !cb.attempted.has(j.listing.listingId) && !(j.nextAttemptAt > nowTs))
-      .sort((a, b) => ((b.groqType !== "niepewne") - (a.groqType !== "niepewne")) || (b.addedAt - a.addedAt));
+      // v6.3: oferty czekające dłużej niż JOB_AGING_MS idą pierwsze (najstarsze najpierw) — przy stałym napływie nowych
+      // starsze i niepewne nie czekają w nieskończoność; dalej pewne typy przed niepewnymi i najnowsze przed starszymi
+      .sort((a, b) => {
+        const aOld = nowTs - (a.addedAt || 0) > JOB_AGING_MS, bOld = nowTs - (b.addedAt || 0) > JOB_AGING_MS;
+        if (aOld !== bOld) return aOld ? -1 : 1;
+        if (aOld) return (a.addedAt || 0) - (b.addedAt || 0);
+        return ((b.groqType !== "niepewne") - (a.groqType !== "niepewne")) || (b.addedAt - a.addedAt);
+      });
     if (candidates.length === 0) return;
+    const candIds = new Set(candidates.map(j => j.listing.listingId));
     if (final && candidates.length > maxGeminiPerCycle - cb.analyses) {
       addLog(`⚖️ ${candidates.length} ofert czeka na analizę AI, w tym cyklu zostało ${Math.max(0, maxGeminiPerCycle - cb.analyses)} z ${maxGeminiPerCycle} — reszta poczeka na następny cykl (najpierw pewne typy i najnowsze)`, "info");
     }
     let deferred = 0;
-    const statusBefore = scanStatusRef.current; // v6.1: po analizach wraca linia stanu wyszukiwania
     try {
       for (const job of candidates) {
         if (!runningRef.current) return;
+        // v6.3: wykonawca AI — gdy w kolejce pojawiła się nowa oferta, przerywamy i układamy kolejność od nowa
+        if (worker && [...pendingRef.current.values()].some(j => j.stage === "analyze" && !candIds.has(j.listing.listingId)
+          && !cb.attempted.has(j.listing.listingId) && !(j.nextAttemptAt > Date.now()))) return;
+        const revAtStart = job.rev || 0;
         if (!pendingRef.current.has(job.listing.listingId)) continue;
         const listing = job.listing;
         let groqType = job.groqType || "niepewne";
@@ -3222,7 +3371,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           if (!runningRef.current) return;
           cb.lastDetailFetchAt = Date.now();
           cb.detailFetches++;
-          setScanStatus({ phase: "detail", title: listing.title });
+          setAiStatus({ phase: "detail", title: listing.title });
           const det = await fetchListingDetails(listing);
           touchActivity();
           if (!runningRef.current) return;
@@ -3233,6 +3382,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             listing.detailsFetchedAt = Date.now();
             if (det.sellerId) listing.sellerId = det.sellerId; // v6.1: do wykrywania duplikatów
             delete job.detailsMissingSince;
+            // v6.2 (B4): strona ogłoszenia ma inny tytuł niż karta (zmiana po pobraniu listy albo nieaktualna karta) —
+            // liczy się tytuł ze strony: filtry, etap 1 i analiza od początku (świeży opis i zdjęcia zostają)
+            if (det.title && normTitle(det.title) !== normTitle(listing.title)) {
+              addLog(`✏️ Strona ogłoszenia ma inny tytuł niż lista: „${listing.title}” → „${det.title}” — oceniam od początku`, "info");
+              if (listing.cardTitle == null) listing.cardTitle = listing.title;
+              resetJobForTitle(job, det.title, true);
+              persistPending();
+              continue;
+            }
             if (job.priceUnconfirmed) {
               delete job.priceUnconfirmed;
               if (det.price == null) {
@@ -3318,17 +3476,37 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           }
         }
 
-        // ── v6.1: duplikat (ten sam tytuł i cena + ten sam sprzedawca albo identyczny opis) — wynik pierwszego ogłoszenia, bez AI i bez alertu ──
+        // ── Duplikat (v6.1, v6.2): pewny → wynik pierwszego ogłoszenia, bez AI; możliwy → normalna analiza z ostrzeżeniem ──
         const dup = listing.fullDesc ? findDuplicate(listing) : null;
-        if (dup) {
+        delete listing._maybeDup;
+        if (dup && !dup.sure) {
+          listing._maybeDup = `możliwy duplikat ogłoszenia ${dup.key} (${dup.why})`;
+        } else if (dup) {
           const { e } = dup;
-          addLog(`🔁 Duplikat ogłoszenia ${dup.id} (${dup.why}, ten sam tytuł i cena) — bez analizy AI i bez alertu, wynik jak wcześniej (${e.dec}): ${listing.title}`, "info");
-          if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
-          removeJob(listing.listingId);
-          persistPending();
-          pushResult(listing, { typ_roweru: e.typ || "?", decyzja: e.dec === "tak" ? "nie" : e.dec, oplaca_sie: false,
-            krotki_opis: `🔁 Duplikat ogłoszenia ${dup.id} (${dup.why}) — ${e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej"}: ${e.opis || "–"}` }, "skip");
-          continue;
+          linkDuplicate(dup, listing); // przejmuje obserwację ceny i aktywny link (B2)
+          const outIds = new Set([dup.key, ...(e.ids || [])].map(String));
+          const pendingAlert = e.dec === "tak" ? outboxRef.current.find(o => o.kind === "deal" && outIds.has(String(o.listing?.listingId))) : null;
+          // v6.2 (B3): „okazja już zgłoszona” tylko przy potwierdzonej wysyłce; alert w kolejce dostaje nowy link;
+          // alert utracony (np. stare ogłoszenie usunięte przed wysyłką) → nowy numer idzie do normalnej analizy
+          if (e.dec === "tak" && e.alert !== "sent" && !pendingAlert) {
+            addLog(`🔁 Ponowne wystawienie ogłoszenia ${dup.key} (${dup.why}) — wcześniejszy alert nie dotarł, analizuję nowy numer: ${listing.title}`, "info");
+          } else {
+            let what;
+            if (pendingAlert) {
+              const oldHref = pendingAlert.listing.href;
+              pendingAlert.listing = { ...pendingAlert.listing, listingId: listing.listingId, href: listing.href, price: listing.price ?? pendingAlert.listing.price };
+              persistOutbox();
+              what = "okazja czeka na wysłanie — podmieniam link na nowy";
+              addLog(`🔗 Oczekujący alert: link ${oldHref} → ${listing.href}`, "info");
+            } else what = e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej";
+            addLog(`🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}, ten sam tytuł i cena) — bez analizy AI, ${what} (${e.dec}): ${listing.title}`, "info");
+            if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
+            removeJob(listing.listingId);
+            persistPending();
+            pushResult(listing, { typ_roweru: e.typ || "?", decyzja: e.dec === "tak" ? "nie" : e.dec, oplaca_sie: false,
+              krotki_opis: `🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}) — ${what}: ${e.opis || "–"}` }, "skip");
+            continue;
+          }
         }
 
         cb.analyses++;
@@ -3337,9 +3515,14 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const cKey = contentKey(listing);
         const resume = job.firstResult && job.firstResultKey === cKey ? job.firstResult : null;
         if (job.firstResult && !resume) { delete job.firstResult; delete job.firstResultKey; }
-        setScanStatus({ phase: "ai", title: listing.title });
+        setAiStatus({ phase: "ai", title: listing.title });
         const analysis = await analyzeWithGemini(listing, groqType, resume);
         touchActivity();
+        // v6.3: w trakcie analizy pętla zbierania zmieniła ofertę (nowy tytuł → ocena od początku) albo usunęła ją z kolejki
+        if (!analysis?._aborted && (pendingRef.current.get(listing.listingId) !== job || job.stage !== "analyze" || (job.rev || 0) !== revAtStart)) {
+          addLog(`↩️ Oferta zmieniła się w trakcie analizy — wynik pomijam, oceniam ją od nowa: ${listing.title}`, "info");
+          continue;
+        }
         if ((analysis?._aborted || analysis?._fatal) && analysis._first) {
           job.firstResult = analysis._first; job.firstResultKey = cKey; persistPending();
         }
@@ -3384,6 +3567,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         // Analiza zakończona — oferta schodzi z kolejki; okazje i niepewne idą do listy "do wysłania"
         removeJob(listing.listingId);
         persistPending();
+        if (listing._maybeDup) analysis.ostrzezenia = [analysis.ostrzezenia, listing._maybeDup].filter(Boolean).join("; ").slice(0, 300); // v6.2
         recordAnalyzed(listing, analysis, analysis.decyzja === "tak" && !job.detailNoPrice ? "deal" : analysis.decyzja); // v6.1: indeks do wykrywania duplikatów
         if (analysis.decyzja === "tak" && job.detailNoPrice) {
           const why = `wyglądało na okazję (zysk ~${analysis.przewidywany_zysk}€), ale strona ogłoszenia nie pokazała ceny — cena z listy ${listing.price ?? "?"}€ niepotwierdzona`;
@@ -3394,7 +3578,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           addLog(`✅ OKAZJA! [${analysis.typ_roweru}] ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ → sprzedaż PL: ${analysis.szacowana_sprzedaz_eur ?? "?"}€ | zysk po transporcie: ~${analysis.przewidywany_zysk}€`, "success");
           setStats(st => ({ ...st, deals: st.deals + 1 }));
           const resultId = pushResult(listing, analysis, "deal");
-          addToOutbox({ kind: "deal", listing: slimListing(listing), analysis: dealSnapshot(analysis), resultId, contentKey: contentKey(listing, false) });
+          addToOutbox({ kind: "deal", listing: slimListing(listing), analysis: dealSnapshot(analysis), resultId, contentKey: contentKey(listing, false), foundAt: job.addedAt || Date.now() });
           await flushOutbox({ uncertain: false });
         } else if (analysis.decyzja === "niepewne") {
           addLog(`❓ Niepewne [${analysis.typ_roweru}] — ${listing.title} | zakup: ${analysis.cena_zakupu_eur ?? "?"}€ — ${analysis.krotki_opis || "za mało informacji"}`, "info");
@@ -3412,13 +3596,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           // v6.1: zapamiętaj wycenę (sprzedaż + transport) — gdy po spadku ceny zysk spełni próg dla NOWEJ ceny,
           // ogłoszenie wróci do analizy (nawet przy spadku < 20%). Zamiast jednej kwoty „opłaca się do” (v5.14),
           // która przy progach zależnych od ceny bywała zła w obie strony.
-          const pi = profitInputs(analysis);
           const seenE = seenIdsRef.current.get(listing.listingId);
           if (seenE) {
-            const lower = pi ? bestPriceAtMost(pi.sale, pi.transport, (listing.price ?? Infinity) - 1) : null;
-            const watch = lower != null && lower >= minListingPrice;
-            seenE.watchSale = watch ? pi.sale : null;
-            seenE.watchT = watch ? pi.transport : null;
+            const w = watchOf(analysis, listing.price);
+            seenE.watchSale = w?.watchSale ?? null;
+            seenE.watchT = w?.watchT ?? null;
             seenE.nearMax = null;
             persistSeenMap();
           }
@@ -3436,7 +3618,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         await sleep(5000);
       }
     } finally {
-      scanStatusRef.current = statusBefore;
+      setAiStatus(null);
       persistPending();
       if (final && deferred > 0) addLog(`⏳ ${deferred} ofert czeka w kolejce na następny cykl (limit ${maxGeminiPerCycle} analiz i ${MAX_DETAIL_FETCHES_PER_CYCLE} stron ogłoszeń na cykl)`, "info");
     }
@@ -3447,7 +3629,10 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // zmiany w Ustawieniach (zaznaczone modele, budżet, model AI…) działają od następnego cyklu.
   const runOneCycle = async (cycleN) => {
     const cycleStartedAt = Date.now();
-    const activeBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
+    const selBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
+    // v6.3: co cykl zaczynamy od innego wyszukiwania — pierwsze marki na liście nie są stale uprzywilejowane
+    const rot = selBikes.length ? (cycleN - 1) % selBikes.length : 0;
+    const activeBikes = [...selBikes.slice(rot), ...selBikes.slice(0, rot)];
     addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} wyszukiwań`, "success");
     addLog(
       groqClassifierKey
@@ -3467,19 +3652,24 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     await flushOutbox(); // zaległe powiadomienia (np. Discord nie odpowiadał w poprzednim cyklu)
 
     const phase1Stats = { blacklist: 0, groqInny: 0, noPrice: 0, priceThreshold: 0, confident: 0, uncertain: 0, oldBike: 0, priceDrops: 0, tooExpensive: 0, tooCheap: 0, freeDetect: 0, classifierDown: 0, skippedOld: 0, queued: 0 };
-    const cb = { analyses: 0, detailFetches: 0, lastDetailFetchAt: 0, halted: false }; // wspólny limit analiz/stron na cykl
+    const cb = { analyses: 0, detailFetches: 0, lastDetailFetchAt: 0, halted: false, attempted: new Set() }; // wspólny limit analiz/stron na cykl
+    cycleBudgetRef.current = cb; // v6.3: wykonawca AI liczy analizy i strony ogłoszeń w ramach bieżącego cyklu
     await runStage1(phase1Stats); // zaległe oferty etapu 1 (np. przerwane STOP-em)
+    wakeAiWorker();
 
     // ── FAZA 1: pobieranie wyników + kolejka + etap 1 (+ od razu analiza nowych ofert) ──
     const scrapePaused = Date.now() < scrapeBlockedUntilRef.current;
     if (scrapePaused) addLog(`⛔ Wyszukiwania wstrzymane po blokadzie Kleinanzeigen — wznowię ok. ${new Date(scrapeBlockedUntilRef.current).toLocaleTimeString("pl-PL")}`, "error");
     let blockStreak = 0, scannedCount = 0, rareSkipped = 0, cardsTotal = 0, searchesWithNew = 0;
-    for (let bikeIdx = 0; bikeIdx < activeBikes.length && !scrapePaused; bikeIdx++) {
-      const bike = activeBikes[bikeIdx];
+    // v6.3: lista może się wydłużyć — podejrzanie puste wyszukiwanie wraca raz na koniec cyklu
+    const searchQueue = [...activeBikes];
+    for (let bikeIdx = 0; bikeIdx < searchQueue.length && !scrapePaused; bikeIdx++) {
+      const bike = searchQueue[bikeIdx];
+      const isRetry = bikeIdx >= activeBikes.length;
       if (!runningRef.current) return;
       // v5.11 (A): wyszukiwanie bez nowych ofert od 3 dni sprawdzamy co ok. 10 min — cykl jest krótszy, więc popularne częściej
       const stPre = scanStateRef.current.searches[bike.id];
-      if (stPre?.baselineAt) {
+      if (stPre?.baselineAt && !isRetry) {
         if (stPre.lastNewAt == null) stPre.lastNewAt = Date.now(); // migracja: 3 dni "na start"
         if (Date.now() - stPre.lastNewAt > RARE_SEARCH_AFTER_MS && Date.now() - (stPre.lastScanAt || 0) < RARE_SEARCH_RESCAN_MS) { rareSkipped++; continue; }
       }
@@ -3488,23 +3678,32 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       scannedCount++;
       if (!runningRef.current) return;
       // v5.14: bez rutynowych linii na każde wyszukiwanie (log trzymał przez nie tylko ok. 25 min) — podsumowanie na końcu fazy 1
-      setScanStatus({ phase: "search", i: bikeIdx + 1, n: activeBikes.length, label: bike.label });
+      setScanStatus({ phase: "search", i: Math.min(bikeIdx + 1, activeBikes.length), n: activeBikes.length, label: isRetry ? `${bike.label} (powtórka)` : bike.label });
 
       let listings = [];
-      let scrapeOk = false, blocked = false, priceBroken = false;
+      let scrapeOk = false, blocked = false, priceBroken = false, suspiciousEmpty = false;
       try {
         const html = await scrapeKleinanzeigen(bike);
         touchActivity();
         listings = parseListings(html, bike.label);
         blocked = listings.blocked === true; // sprawdzić PRZED kopiowaniem tablicy (kopia gubi flagi)
         priceBroken = listings.priceParseBroken === true;
+        const pageHeading = listings.pageHeading || "";
         // Usuń duplikaty WEWNĄTRZ tego samego skanu (wyróżnione + zwykłe)
         const uniqueMap = new Map();
         listings.forEach(l => { if (!uniqueMap.has(l.listingId)) uniqueMap.set(l.listingId, l); });
         listings = [...uniqueMap.values()];
-        if (listings.length === 0) addLog(`📋 ${bike.label}: znaleziono 0 ogłoszeń (pobrano ${html.length} znaków HTML)`, "error");
+        if (listings.length === 0 && !blocked) {
+          // v6.3: Kleinanzeigen czasem chwilowo zwraca „keine Ergebnisse” dla popularnej frazy. Gdy ostatnio było tu
+          // dużo ogłoszeń, nie uznajemy tego za skan (stan wyszukiwania bez zmian) i powtarzamy raz na końcu cyklu.
+          const prev = scanStateRef.current.searches[bike.id]?.lastCards;
+          suspiciousEmpty = prev >= EMPTY_SUSPICIOUS_MIN_CARDS;
+          addLog(`📋 ${bike.label}: znaleziono 0 ogłoszeń (strona: „${pageHeading || "?"}”, ${html.length} znaków HTML)${suspiciousEmpty
+            ? (isRetry ? ` — przy poprzednim skanie było ${prev}; powtórka też pusta — sprawdzę w następnym cyklu` : ` — przy poprzednim skanie było ${prev}; nie liczę tego jako skanu, powtórzę na końcu cyklu`) : ""}`, "error");
+          if (suspiciousEmpty && !isRetry) searchQueue.push(bike);
+        }
         cardsTotal += listings.length;
-        scrapeOk = !blocked && !priceBroken; // prawidłowo pusta strona to poprawny wynik; captcha — nie (nie ruszamy stanu wyszukiwania)
+        scrapeOk = !blocked && !priceBroken && !suspiciousEmpty; // prawidłowo pusta strona to poprawny wynik; captcha — nie (nie ruszamy stanu wyszukiwania)
       } catch (e) {
         if (!runningRef.current) return;
         if (/Scrape HTTP (403|429)/.test(e.message)) blocked = true;
@@ -3539,13 +3738,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       let pricesUpdated = 0;
       for (const l of listings) {
         const j = pendingRef.current.get(l.listingId);
-        // v6.1: zmieniony tytuł (np. dopisane „defekt”, inny model) — wynik etapu 1 i zapisana pierwsza analiza nieaktualne
-        if (j && l.title && normTitle(l.title) !== normTitle(j.listing.title)) {
-          addLog(`✏️ Kolejka: zmiana tytułu „${j.listing.title}” → „${l.title}” — oceniam od początku`, "info");
-          j.listing.title = l.title;
-          j.stage = "new"; j.groqType = null; j.cachedType = null; j.classifierDown = false;
-          delete j.knownModel; delete j.recheckedFull; delete j.firstResult; delete j.firstResultKey;
-          delete j.listing.fullDesc; j.listing.images = [];
+        // v6.1: zmieniony tytuł (np. dopisane „defekt”, inny model) — wynik etapu 1 i zapisana pierwsza analiza nieaktualne.
+        // v6.2: porównujemy z tytułem z OSTATNIEJ KARTY (cardTitle), bo tytuł oferty mógł już przyjść ze strony ogłoszenia
+        // (nowszy niż nieodświeżona karta) — inaczej tytuł przeskakiwałby tam i z powrotem co cykl
+        if (j && l.title && normTitle(l.title) !== normTitle(j.listing.cardTitle ?? j.listing.title)) {
+          addLog(`✏️ Kolejka: zmiana tytułu „${j.listing.cardTitle ?? j.listing.title}” → „${l.title}” — oceniam od początku`, "info");
+          resetJobForTitle(j, l.title);
+          j.listing.cardTitle = l.title;
           pricesUpdated++;
         }
         if (j && l.price != null && j.listing.price !== l.price) {
@@ -3581,7 +3780,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       if (!st || !st.baselineAt) {
         fresh.forEach(l => saveSeenEntry(l, false));
         persistSeenMap();
-        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, urlVersion: SEARCH_URL_VERSION };
+        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, lastCards: listings.length, urlVersion: SEARCH_URL_VERSION, ...(bike.isCategory ? {} : { priceRange: `${minListingPrice}:${maxBuyPrice}` }) };
         persistScanState();
         addLog(`📌 ${bike.label}: pierwsze skanowanie tego wyszukiwania — zapamiętano ${fresh.length} istniejących ogłoszeń (bez analizy)`, "info");
         await sleep(3000);
@@ -3595,7 +3794,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       // ── Po przerwie dłuższej niż 24 h: tylko oferty dodane w ostatnich 24 h (wg daty na karcie) ──
       const gapMs = now - (st.lastScanAt || 0);
       let toQueue = fresh;
-      const urlChanged = !bike.isCategory && st.urlVersion !== SEARCH_URL_VERSION;
+      // v6.3: zmiana zakresu cen w Ustawieniach zmienia link — nowo widoczne stare oferty traktujemy jak po zmianie filtra
+      const rangeKey = `${minListingPrice}:${maxBuyPrice}`;
+      const urlChanged = !bike.isCategory && (st.urlVersion !== SEARCH_URL_VERSION || (st.priceRange != null && st.priceRange !== rangeKey));
       if ((gapMs > RESUME_WINDOW_MS || emptyBurst || urlChanged) && fresh.length > 0) {
         const recent = fresh.filter(l => l.postedAt != null && now - l.postedAt <= RESUME_WINDOW_MS);
         // Brak daty na karcie ≠ stara oferta: kilka pierwszych bez daty (lista jest od najnowszych) też analizujemy
@@ -3604,11 +3805,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const skipped = fresh.length - toQueue.length;
         if (skipped > 0 || undated.length > 0 || emptyBurst || urlChanged) {
           phase1Stats.skippedOld += skipped;
-          addLog(`⏭ ${bike.label}: ${urlChanged ? "nowy filtr wyszukiwania (Mountainbike + E-Bike)" : emptyBurst && gapMs <= RESUME_WINDOW_MS ? `wcześniej puste wyszukiwanie — nagle ${fresh.length} ofert` : `przerwa w skanowaniu ${st.lastScanAt ? `ok. ${Math.round(gapMs / 3600000)} h` : "o nieznanej długości"}`} — analizuję ${recent.length} ofert z ostatnich 24 h${undated.length > 0 ? ` + ${undated.length} bez daty` : ""}${skipped > 0 ? `, pomijam ${skipped} starszych (albo bez daty ponad limit ${RESUME_MAX_UNDATED})` : ""}`, "info");
+          addLog(`⏭ ${bike.label}: ${urlChanged ? "nowy filtr wyszukiwania (zakres cen / typ roweru)" : emptyBurst && gapMs <= RESUME_WINDOW_MS ? `wcześniej puste wyszukiwanie — nagle ${fresh.length} ofert` : `przerwa w skanowaniu ${st.lastScanAt ? `ok. ${Math.round(gapMs / 3600000)} h` : "o nieznanej długości"}`} — analizuję ${recent.length} ofert z ostatnich 24 h${undated.length > 0 ? ` + ${undated.length} bez daty` : ""}${skipped > 0 ? `, pomijam ${skipped} starszych (albo bez daty ponad limit ${RESUME_MAX_UNDATED})` : ""}`, "info");
         }
       }
       st.lastScanAt = now;
+      st.lastCards = listings.length; // v6.3: do wykrywania podejrzanie pustych wyników
       st.urlVersion = SEARCH_URL_VERSION;
+      if (!bike.isCategory) st.priceRange = rangeKey;
       persistScanState();
 
       // ── Spadki cen na JUŻ widzianych ogłoszeniach (spadek o co najmniej PRICE_DROP_THRESHOLD) ──
@@ -3664,8 +3867,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
       await runStage1(phase1Stats);
       if (!runningRef.current) return;
-      await runStage2(cb); // v5.11 (A): nowe oferty z tego wyszukiwania analizujemy od razu
-      if (!runningRef.current) return;
+      wakeAiWorker(); // v6.3: analiza w tle (wykonawca AI) — wyszukiwania nie czekają na AI
     }
     if (!runningRef.current) return;
     addLog(`🔍 Sprawdzono ${scannedCount} wyszukiwań (${cardsTotal} ogłoszeń na listach${searchesWithNew ? `, nowe lub tańsze w ${searchesWithNew}` : ", nic nowego"})`, "info");
@@ -3676,16 +3878,69 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       "success"
     );
 
-    // ── FAZA 2: analiza AI — to, co zostało (limit cyklu, oferty z poprzednich cykli) ──
-    await runStage2(cb, { final: true });
-    if (!runningRef.current) return;
+    // ── v6.3: analizy AI trwają w tle (wykonawca AI) — tu tylko stan kolejki ──
+    const waitingAi = [...pendingRef.current.values()].filter(j => j.stage === "analyze");
+    if (waitingAi.length > 0) {
+      const oldest = Math.max(...waitingAi.map(j => Date.now() - (j.addedAt || Date.now())));
+      const why = Date.now() < aiPauseUntilRef.current ? ` · analizy wstrzymane po błędach do ${new Date(aiPauseUntilRef.current).toLocaleTimeString("pl-PL")}`
+        : cb.halted ? " · analizy wstrzymane (budżet / klucz)"
+        : cb.analyses >= maxGeminiPerCycle ? ` · limit ${maxGeminiPerCycle} analiz w tym cyklu wyczerpany — reszta w następnym` : " · analizy trwają w tle";
+      addLog(`🧠 W kolejce do analizy AI: ${waitingAi.length} (najdłużej czeka ${fmtDuration(oldest)})${why}`, "info");
+    }
     await flushOutbox(); // lista niepewnych + ewentualne niewysłane okazje
 
     const took = Date.now() - cycleStartedAt;
     setLastCycleMs(took);
-    addLog(`✔ Cykl #${cycleN} zakończony w ${fmtDuration(took)} — czekam 60 s przed kolejnym${pendingRef.current.size ? ` · w kolejce: ${pendingRef.current.size}` : ""}${outboxRef.current.length ? ` · do wysłania: ${outboxRef.current.length}` : ""}`, "info");
+    const delays = alertDelaysRef.current;
+    const avgDelay = delays.length ? delays.reduce((x, y) => x + y, 0) / delays.length : null;
+    addLog(`✔ Cykl #${cycleN} zakończony w ${fmtDuration(took)} — czekam 60 s przed kolejnym${pendingRef.current.size ? ` · w kolejce: ${pendingRef.current.size}` : ""}${outboxRef.current.length ? ` · do wysłania: ${outboxRef.current.length}` : ""}${avgDelay != null ? ` · średnio ${fmtDuration(avgDelay)} od wykrycia do alertu (ostatnie ${delays.length})` : ""}`, "info");
   };
   runCycleRef.current = runOneCycle;
+
+  // ── v6.3: wykonawca AI — osobny przebieg obok pętli zbierania ofert ──
+  // Pętla zbierania pobiera listy wyników, etap 1 (filtry + Groq) i dopisuje oferty do kolejki; wykonawca bierze z kolejki
+  // po jednej ofercie (strona ogłoszenia + analiza + weryfikacja + wysyłka). Długa analiza nie wstrzymuje wyszukiwań.
+  // Jeden wykonawca naraz; zapytania do Kleinanzeigen obu przebiegów idą przez wspólny odstęp (kaSlot). STOP kończy oba.
+  const cycleBudgetRef = useRef(null);
+  const aiWakeRef = useRef(null);
+  const wakeAiWorker = () => { const w = aiWakeRef.current; aiWakeRef.current = null; if (w) w(); };
+  const aiWorkerLoop = async () => {
+    while (runningRef.current) {
+      const cb = cycleBudgetRef.current;
+      if (cb) {
+        try { await runStage2(cb, { worker: true }); }
+        catch (e) { if (runningRef.current) addLog(`❌ Nieoczekiwany błąd analizy w tle: ${e?.message || e} — oferty zostają w kolejce`, "error"); }
+      }
+      if (!runningRef.current) break;
+      await new Promise(res => { aiWakeRef.current = res; setTimeout(res, 1000); });
+    }
+  };
+
+  // ── v6.2: jedna aktywna karta skanera (Web Locks) ──
+  // Blokada „ddf-scanner” trzymana przez cały czas pracy. Druga karta tego samego adresu w tej samej przeglądarce
+  // nie wystartuje (też z autostartu) i zostaje podglądem. Nie chroni przed innym komputerem / przeglądarką / wersją testową.
+  const lockReleaseRef = useRef(null);
+  const startingRef = useRef(false);
+  const [otherTabActive, setOtherTabActive] = useState(false);
+  const acquireScanLock = () => new Promise((resolve) => {
+    if (typeof navigator === "undefined" || !navigator.locks?.request) { resolve(true); return; } // brak Web Locks — jak dawniej
+    navigator.locks.request("ddf-scanner", { ifAvailable: true }, (lock) => {
+      if (!lock) { resolve(false); return; }
+      resolve(true);
+      return new Promise(rel => { lockReleaseRef.current = rel; });
+    }).catch(() => resolve(true));
+  });
+  const releaseScanLock = () => { try { lockReleaseRef.current?.(); } catch {} lockReleaseRef.current = null; };
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.locks?.query) return;
+    const check = () => {
+      if (runningRef.current) { setOtherTabActive(false); return; }
+      navigator.locks.query().then(st => setOtherTabActive((st.held || []).some(l => l.name === "ddf-scanner"))).catch(() => {});
+    };
+    check();
+    const t = setInterval(check, 5000);
+    return () => clearInterval(t);
+  }, []);
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
@@ -3693,7 +3948,17 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     // Model weryfikacji okazji (Gemini/Claude) potrzebuje własnego klucza — bez niego każda okazja kończyłaby jako "niepewne"
     if (provider !== "groq" && !keyFor(strongModel)) { addLog(`❌ Brak klucza ${aiName(strongModel)} — wybrany model weryfikacji okazji to ${strongModel} (Ustawienia)`, "error"); setTab("settings"); return; }
     if (!discordWebhook) { addLog("❌ Brak Discord Webhook",    "error"); setTab("settings"); return; }
-    if (runningRef.current) return;
+    if (runningRef.current || startingRef.current) return;
+    startingRef.current = true;
+    const gotLock = await acquireScanLock();
+    startingRef.current = false;
+    if (!gotLock) {
+      setOtherTabActive(true);
+      addLog("⛔ Skaner już działa w innej karcie tej przeglądarki — tu nie uruchamiam (ta karta jest tylko podglądem). Żeby skanować tutaj, zatrzymaj albo zamknij tamtą kartę.", "error");
+      return;
+    }
+    if (runningRef.current) { releaseScanLock(); return; }
+    setOtherTabActive(false);
 
     sessionAbortRef.current = typeof AbortController !== "undefined" ? new AbortController() : null;
     runningRef.current = true;
@@ -3707,6 +3972,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     addLog("🚀 Uruchamiam skanowanie — wyszukiwania sprawdzane pierwszy raz tylko zapamiętują istniejące oferty; po przerwie do 24 h analizuję wszystko, co się w tym czasie pojawiło (po dłuższej — tylko oferty z ostatnich 24 h)", "success");
 
     let n = 1;
+    cycleBudgetRef.current = null;
+    const workerDone = aiWorkerLoop(); // v6.3: analizy AI w tle
     try {
       while (runningRef.current) {
         setCycleNum(n);
@@ -3727,6 +3994,10 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       }
     } finally {
       runningRef.current = false;
+      wakeAiWorker();
+      try { await workerDone; } catch {} // v6.3: czekamy, aż wykonawca AI odda ofertę do kolejki
+      cycleBudgetRef.current = null;
+      releaseScanLock();
       sessionAbortRef.current = null;
       persistPending();
       persistOutbox();
@@ -3816,6 +4087,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               <div style={{ fontSize: 10, color: "#475569", textTransform: "uppercase" }}>{lbl}</div>
             </div>
           ))}
+          {!running && otherTabActive && (
+            <div data-testid="other-tab" style={{ background: "#1a1408", border: "1px solid #f59e0b55", borderRadius: 8, padding: "6px 14px", fontSize: 11, color: "#f59e0b", maxWidth: 260 }}>
+              ⚠️ Skaner działa w innej karcie tej przeglądarki — ta karta jest tylko podglądem
+            </div>
+          )}
           {running && (
             <div style={{ background: "#0a1520", border: "1px solid #22c55e44", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#22c55e", display: "flex", alignItems: "center", gap: 6 }}>
@@ -3823,7 +4099,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   animation: "pulse 1.2s infinite" }} />
                 Cykl #{cycleNum}
               </div>
-              <ScanStatus statusRef={scanStatusRef} activityRef={lastActivityRef} />
+              <ScanStatus statusRef={scanStatusRef} activityRef={lastActivityRef} aiRef={aiStatusRef} />
             </div>
           )}
         </div>

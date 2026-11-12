@@ -11,7 +11,7 @@ const A = { id: "1000000001", title: "Canyon Torque AL alt", price: 1000 };
 const HREF = (id) => `https://www.kleinanzeigen.de/s-anzeige/x/${id}-217-1234`;
 const TIERS = [60, 40, 30, 20];
 const results = [];
-async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${e.message}`); } }
+async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${String(e.message).replace(/\s+/g, " ").slice(0, 300)}`); } }
 const ai = (o = {}) => (b) => b.action ? {} : geminiResp(analysisJson(o), { imagesAttached: b.imageUrls?.length || 0 });
 
 // phases: tablica funkcji (k) => karty dla fazy 2, 3, …; faza 1 = sama oferta A (zapamiętanie)
@@ -41,7 +41,7 @@ await test("Audyt: 445 € (zysk 57% < 60%) → spadek do 437 € (60,2%) wraca 
   const B = (p) => ({ id: "2000000612", title: "Canyon Torque AL 445", price: p });
   await run({ cfg: { profitTiers: TIERS }, phases: [(k) => k === "torque" ? [A, B(445)] : [], (k) => k === "torque" ? [A, B(437)] : []],
     world: { ai: ai({ decyzja: "nie", cena_zakupu_eur: 445, szacowana_sprzedaz_eur: 770 }) } }, async (app, next) => {
-    await app.waitLog(/Cykl #2 zakończony/);
+    await app.waitLog(/Cykl #2 zakończony/); await app.waitQueueEmpty(); // v6.3: analiza w tle
     const before = genReqs(app.st).length; // wynik graniczny może dostać dokładną analizę — liczymy od tego miejsca
     assert.ok(before >= 1);
     next();
@@ -69,13 +69,13 @@ await test("Ten sam tytuł i cena, ale inny sprzedawca i inny opis → dwa róż
   });
 });
 
-await test("Ten sam tytuł, cena i sprzedawca (inny opis) → duplikat: bez analizy AI i bez drugiego alertu", async () => {
+await test("Ten sam tytuł, cena, sprzedawca i opis (nowe zdjęcia) → duplikat: bez analizy AI i bez drugiego alertu", async () => {
   const B1 = { id: "2000000616", title: "Canyon Torque CF 9 Dup", price: 900 };
   const B2 = { id: "2000000617", title: "Canyon Torque CF 9 Dup", price: 900 };
-  const detail = (id) => ({ desc: id === B1.id ? GOOD : GOOD + " Neu eingestellt.", images: 4, seller: "164360590" });
+  const detail = (id) => ({ desc: GOOD, images: 4, imgSet: id === B1.id ? "a1" : "a2", seller: "164360590" });
   await run({ phases: [(k) => k === "torque" ? [A, B1, B2] : []], world: { detail, ai: ai() } }, async (app) => {
-    await app.waitLog(/Duplikat ogłoszenia 200000061[67] \(ten sam sprzedawca, ten sam tytuł i cena\)/, 25000);
-    await app.waitLog(/Cykl #2 zakończony/);
+    await app.waitLog(/Duplikat ogłoszenia 200000061[67] \(ten sam sprzedawca i opis, ten sam tytuł i cena\)/, 25000);
+    await app.waitLog(/Cykl #2 zakończony/); await app.waitQueueEmpty();
     assert.equal(deals(app.st).length, 1);
     assert.equal(genReqs(app.st).filter(b => !isVer(b)).length, 1, "druga oferta bez analizy AI");
     const dupes = JSON.parse(await app.ls("ddf_dupes"));
@@ -85,14 +85,17 @@ await test("Ten sam tytuł, cena i sprzedawca (inny opis) → duplikat: bez anal
 
 await test("Zmiana tytułu oferty czekającej w kolejce → ocena od początku z nowym tytułem", async () => {
   const id = "2000000618";
-  let detailN = 0;
-  const detail = () => (++detailN === 1 ? { status: 500 } : { desc: GOOD, images: 4 });
+  // v6.3: analiza idzie w tle i cykle w testach są bardzo krótkie — strona ogłoszenia „nie działa”, dopóki
+  // wyszukiwanie nie zobaczy nowego tytułu; inaczej oferta mogłaby zostać przeanalizowana, zanim tytuł się zmieni
+  let titleSeen = false;
+  const detail = () => (titleSeen ? { desc: GOOD, images: 4 } : { status: 500 });
   await run({ phases: [(k) => k === "torque" ? [A, { id, title: "Canyon Torque AL 7", price: 900 }] : [],
     (k) => k === "torque" ? [A, { id, title: "Canyon Torque AL 7 Rahmen defekt", price: 900 }] : []],
     world: { detail, ai: ai({ decyzja: "nie", szacowana_sprzedaz_eur: 900 }) } }, async (app, next) => {
     await app.waitLog(/chwilowo niedostępna/, 20000);
     next();
     await app.waitLog(/Kolejka: zmiana tytułu „Canyon Torque AL 7” → „Canyon Torque AL 7 Rahmen defekt” — oceniam od początku/, 20000);
+    titleSeen = true;
     await app.waitUntil(() => genReqs(app.st).some(b => promptOf(b).includes("Rahmen defekt")), 20000, "analiza z nowym tytułem");
     assert.ok(!genReqs(app.st).some(b => promptOf(b).includes("Canyon Torque AL 7\n")), "bez analizy ze starym tytułem");
   });
