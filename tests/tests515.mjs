@@ -23,7 +23,7 @@ async function firstPrompt(cfg, listing, key) {
 await test("Full: zasada „przednia przerzutka = rower stary” z wyjątkami + wpis Remedy 9 alu i Fuel EX 9.8", async () => {
   const p = await firstPrompt({ selectedBikes: ["trek_remedy"] }, { id: "2000000501", title: "Trek Remedy 9 Alu", price: 690 }, "other");
   assert.ok(p.includes("PRZEDNIA PRZERZUTKA = ROWER STARY"), "zasada w KROKU 1");
-  assert.ok(p.includes("Trek Fuel EX 9.8 2017–2018 z XT 2x11"), "wyjątek dla Fuel EX 9.8 2017–2018");
+  assert.ok(p.includes("Trek Fuel EX 9.8 2017–2018 z XT 2x11") && p.includes("bez dowodu w opisie przednia przerzutka = rower sprzed 2017"), "wyjątek dla Fuel EX 9.8 tylko z dowodem w opisie");
   assert.ok(p.includes("przednia przerzutka albo 2–3 zębatki przy korbie w fullu = rower sprzed 2017"), "notka o zdjęciach");
   assert.ok(p.includes("## Trek Remedy 9 — ALU"), "wpis Remedy 9 alu");
   assert.ok(p.includes("Fuel EX 9.8 karbon, 2017–2018"), "wpis Fuel EX 9.8");
