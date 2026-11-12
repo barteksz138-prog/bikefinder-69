@@ -89,6 +89,68 @@ await test("Koniec cyklu: stan kolejki analiz i średni czas od wykrycia do aler
   } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
 });
 
+await test("Zepsuty JSON od modelu (cal 27,5\" bez \\) → naprawiony, analiza idzie dalej bez ponawiania", async () => {
+  let phase = 1;
+  const B = { id: "2000000636", title: "Trek Slash 7 27,5", price: 900 };
+  const broken = analysisJson({ krotki_opis: "KOLO" }).replace('"KOLO"', '"Laufräder 27,5" Mavic"');
+  const ai = (b) => b.action ? {} : geminiResp(isVer(b) ? analysisJson() : broken, { imagesAttached: b.imageUrls?.length || 0 });
+  const app = await openApp({ world: { detail: () => ({ desc: GOOD, images: 4 }), ai, search: (k) => k === "torque" ? [A, ...(phase >= 2 ? [B] : [])] : [] } });
+  try {
+    await app.start(); await app.waitLog(/Cykl #1 zakończony/); phase = 2;
+    await app.waitLog(/naprawiono składnię JSON w odpowiedzi .* — Trek Slash 7 27,5/, 20000);
+    await app.waitUntil(() => deals(app.st).length >= 1, 20000, "okazja");
+    assert.equal(genReqs(app.st).filter(b => !isVer(b)).length, 1, "bez ponownej analizy");
+  } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
+});
+
+await test("JSON nie do naprawienia → jedna ponowna próba od razu (nie za 10 min)", async () => {
+  let phase = 1, n = 0;
+  const B = { id: "2000000637", title: "Canyon Torque CF Json", price: 900 };
+  const ai = (b) => { if (b.action) return {}; if (!isVer(b) && ++n === 1) return geminiResp('{"typ_roweru": "full" "decyzja": "tak" ???}'); return geminiResp(analysisJson(), { imagesAttached: b.imageUrls?.length || 0 }); };
+  const app = await openApp({ world: { detail: () => ({ desc: GOOD, images: 4 }), ai, search: (k) => k === "torque" ? [A, ...(phase >= 2 ? [B] : [])] : [] } });
+  try {
+    await app.start(); await app.waitLog(/Cykl #1 zakończony/); phase = 2;
+    await app.waitLog(/odpowiedź z błędem składni JSON .* ponawiam od razu — Canyon Torque CF Json/, 20000);
+    await app.waitUntil(() => deals(app.st).length >= 1, 20000, "okazja po ponowieniu");
+    assert.equal(await app.countLogs(/następna za 10 min/), 0);
+  } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
+});
+
+await test("Pusta lista tam, gdzie było ≥ 5 ogłoszeń → nie liczy się jako skan, powtórka na końcu cyklu", async () => {
+  const many = Array.from({ length: 6 }, (_, i) => ({ id: `300000064${i}`, title: `Canyon Torque Lista ${i}`, price: 1600 }));
+  let emptyOnce = false;
+  const search = (k, n) => {
+    if (k !== "torque") return [];
+    if (n === 2 && !emptyOnce) { emptyOnce = true; return []; } // cykl 2: chwilowo pusto
+    return many;
+  };
+  const app = await openApp({ world: { search, detail: () => ({ desc: GOOD }) } });
+  try {
+    await app.start();
+    await app.waitLog(/Canyon Torque: znaleziono 0 ogłoszeń \(strona: „.*”, \d+ znaków HTML\) — przy poprzednim skanie było 6; nie liczę tego jako skanu, powtórzę na końcu cyklu/, 20000);
+    await app.waitUntil(() => app.st.searchCalls.torque >= 3, 15000, "powtórka w tym samym cyklu");
+    await app.waitLog(/Cykl #2 zakończony/, 15000);
+    const st = JSON.parse(await app.ls("ddf_scan_state"));
+    assert.equal(st.searches.canyon_torque.lastCards, 6);
+  } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
+});
+
+await test("Zmiana tytułu w trakcie analizy w tle → wynik odrzucony, ponowna analiza z nowym tytułem", async () => {
+  let phase = 1, started = false;
+  const T1 = "Canyon Torque AL Mid", T2 = "Canyon Torque AL Mid Gabel defekt";
+  const ai = (b) => { if (!b.action && promptOf(b).includes(T1 + "\n")) { started = true; return aiResp({}, 2000)(b); } return aiResp({ decyzja: "nie", szacowana_sprzedaz_eur: 900 })(b); };
+  const app = await openApp({ world: { detail: () => ({ desc: GOOD, images: 4 }), ai,
+    search: (k) => k !== "torque" ? [] : phase === 1 ? [A] : [A, { id: "2000000638", title: phase === 2 ? T1 : T2, price: 900 }] } });
+  try {
+    await app.start(); await app.waitLog(/Cykl #1 zakończony/); phase = 2;
+    await app.waitUntil(() => started, 15000, "analiza starego tytułu");
+    phase = 3;
+    await app.waitLog(/Oferta zmieniła się w trakcie analizy — wynik pomijam, oceniam ją od nowa/, 15000);
+    await app.waitUntil(() => genReqs(app.st).some(b => promptOf(b).includes(T2)), 15000, "analiza z nowym tytułem");
+    assert.equal(deals(app.st).length, 0, "bez alertu ze starej analizy");
+  } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
+});
+
 for (const r of results) console.log(r);
 await closeBrowser();
 if (results.some(r => r.startsWith("❌"))) process.exit(1);
