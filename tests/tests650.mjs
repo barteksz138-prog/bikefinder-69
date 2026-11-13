@@ -43,23 +43,21 @@ await test("„AL” w tytule: AI wyceniło karbon z wyglądu → program liczy 
   } finally { await close(app); }
 });
 
-await test("bez materiału w tekście: karbon z wyglądu u weryfikatora, okazja tylko jako karbon → niepewne „materiał ramy” z dowodem", async () => {
+await test("bez materiału w tekście: karbon z wyglądu u weryfikatora liczy się jako karbon — okazja z ostrzeżeniem i zyskiem jako alu", async () => {
   const B = { id: "2000000652", title: "Canyon Torque 2021 Enduro", price: 900 };
   const app = await run(B, { ai: aiBy({ cena_zakupu_eur: 900, szacowana_sprzedaz_eur: 1500, przewidywany_zysk: 530, rama: CARBON_LOOK },
     { cena_zakupu_eur: 900, szacowana_sprzedaz_eur: 1500, przewidywany_zysk: 530, rama: { ...CARBON_LOOK, sprzedaz_alu_eur: null } }) });
   try {
     const reqs = genReqs(app.st);
     assert.ok(promptOf(reqs[0]).includes("Materiał ramy z tekstu: nie podano"), "brak materiału w tekście");
-    assert.equal(reqs.filter(isVer).length, 1, "pierwsza analiza nie obniża wyceny z wyglądu → weryfikacja");
+    assert.equal(reqs.filter(isVer).length, 1, "weryfikacja");
     assert.ok(promptOf(reqs.find(isVer)).includes("7a. MATERIAŁ RAMY"), "punkt o ramie w weryfikacji");
-    assert.equal(deals(app.st).length, 0, "brak okazji");
-    const a = await resultOf(app, B.id);
-    assert.equal(a.decyzja, "niepewne"); assert.equal(a.niepewne_kategoria, "material");
-    assert.equal(a.szacowana_sprzedaz_eur, 1200, "bez wyceny alu: 80% z 1500");
-    assert.match(a.krotki_opis, /Materiał ramy do sprawdzenia.*suporcie.*jako karbon zysk ~530€.*jako alu ~230€/);
-    const out = JSON.parse(await app.ls("ddf_outbox") || "[]");
-    const sentUnc = app.st.discord.some(d => /Niepewne rowery/.test(d.payload.content || "") && /możliwy karbon/.test(d.payload.content));
-    assert.ok(sentUnc || out.some(o => o.kind === "uncertain" && /możliwy karbon/.test(o.reason)), "lista niepewnych z powodem");
+    await app.waitUntil(() => deals(app.st).length >= 1, 20000, "okazja");
+    const e = deals(app.st)[0].payload.embeds[0];
+    assert.match(e.fields.find(x => /zysk/i.test(x.name)).value, /~530€/, "zysk z wyceny karbonu");
+    assert.match(e.fields.find(x => /Do sprawdzenia/.test(x.name)).value, /karbon tylko z wyglądu — sprawdź spoiny przy suporcie; jako alu zysk ~230€ \(25\.6%\)/, "bez wyceny alu: 80% z 1500 = 1200 €");
+    assert.match(e.fields.find(x => /Rama/.test(x.name)).value, /^karbon \(tylko z wyglądu\) — sprawdź spoiny przy suporcie: zdj\. 3/);
+    assert.equal(await app.countLogs(/🧱/), 0, "wycena bez zmian");
   } finally { await close(app); }
 });
 
@@ -72,20 +70,6 @@ await test("czytelny napis na ramie u weryfikatora → karbon, okazja wysłana z
     await app.waitUntil(() => deals(app.st).length >= 1, 20000, "okazja");
     const f = deals(app.st)[0].payload.embeds[0].fields.find(x => /Rama/.test(x.name));
     assert.ok(f, "pole Rama"); assert.match(f.value, /^karbon \(napis na ramie\): zdj\. 2: napis CF 8/);
-  } finally { await close(app); }
-});
-
-await test("karbon z wyglądu, ale okazja także jako alu → wysłana, wycena alu i ostrzeżenie „możliwy karbon”", async () => {
-  const B = { id: "2000000654", title: "Canyon Torque 2022 Fully", price: 900 };
-  const LOOK = { ...CARBON_LOOK, sprzedaz_alu_eur: 1500 };
-  const app = await run(B, { ai: aiBy({ cena_zakupu_eur: 900, szacowana_sprzedaz_eur: 1800, przewidywany_zysk: 830, rama: LOOK },
-    { cena_zakupu_eur: 900, szacowana_sprzedaz_eur: 1800, przewidywany_zysk: 830, rama: LOOK }) });
-  try {
-    await app.waitUntil(() => deals(app.st).length >= 1, 20000, "okazja");
-    const e = deals(app.st)[0].payload.embeds[0];
-    assert.match(e.fields.find(x => /zysk/i.test(x.name)).value, /~530€/, "zysk z wyceny alu 1500 €");
-    assert.match(e.fields.find(x => /Do sprawdzenia/.test(x.name)).value, /możliwy karbon \(tylko z wyglądu\) — wyceniono jak alu/);
-    assert.match(e.fields.find(x => /Rama/.test(x.name)).value, /^alu \(tylko z wyglądu\) — możliwy karbon, wyceniono jak alu/);
   } finally { await close(app); }
 });
 

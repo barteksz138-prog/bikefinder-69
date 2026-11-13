@@ -642,8 +642,9 @@ const fmtFork = (w) => !w ? null : w.sztywny ? "sztywny (bez amortyzacji)"
 const forkField = (a) => a?.widelec && (a.typ_roweru === "dirt" || a.widelec.model) ? [{ name: "🔧 Widelec", value: String(fmtFork(a.widelec)).slice(0, 200), inline: true }] : [];
 
 // ==FRAME_START== v6.5: MATERIAŁ RAMY (alu / karbon). Testy na 18 ogłoszeniach (11.2026): AI ze zdjęć bez napisu myli alu z karbonem
-// (Haiku 2–5 z 9 ram alu, Sonnet 1–2 z 9 — m.in. YT Capra AL), więc o wycenie decyduje kolejno: tekst ogłoszenia (wykrywa program),
-// czytelny napis na ramie, a sam wygląd NIGDY nie podnosi wyceny do karbonu (weryfikator: „możliwy karbon” → do sprawdzenia).
+// (Haiku 2–5 z 9 ram alu, Sonnet 1–2 z 9 — m.in. YT Capra AL, która miała „AL” w tytule), więc o wycenie decyduje kolejno: tekst ogłoszenia
+// (wykrywa program), czytelny napis na ramie, a dopiero potem wygląd. Karbon z samego wyglądu liczy się jako karbon (decyzja właściciela
+// 13.11.2026), ale alert dostaje znacznik „tylko z wyglądu” i zysk w wersji alu.
 // Słowa przy podzespołach („Carbon Lenker”, „Carbonräder”, „Alu-Hinterbau”) nie mówią nic o ramie (przednim trójkącie) — usuwamy je przed szukaniem.
 const FRAME_PART_WORDS = "lenker|laufr(?:a|ä|ae)d|r(?:ä|ae)der|gabel|felgen?|kurbel\\w*|sattelst(?:ü|ue)tze|st(?:ü|ue)tze|vorbau|sattel|pedale?|naben?|speichen|griffe|kassette|kettenbl(?:a|ä)tt\\w*|"
   + "hinterbau|heck|schwinge|wippe|ketten?streben?|sitzstreben?|umlenk\\w*|optik|look|handlebars?|bars?|wheels?|wheelset|rims?|cranks?|seatpost|stem|parts|teile|komponenten|ausstattung|rocker|links?|spokes";
@@ -694,10 +695,10 @@ const normalizeFrame = (r) => {
 };
 // Gdy AI wyceniło karbon, a liczymy alu, a AI nie podało wyceny alu: karbon ≈ +10–25% wobec alu (KOREKTY w bazie) → alu ≈ 80% karbonu
 const FRAME_ALU_FACTOR = 0.8;
-// Który materiał liczy program. text = detectFrameMaterialText(...), rama = normalizeFrame(...), sale = wycena AI (€), verify = weryfikacja okazji.
-// Wygląd (bez tekstu i napisu) w pierwszej analizie nie zmienia wyceny — taka okazja i tak idzie do weryfikatora ze wszystkimi zdjęciami;
-// u weryfikatora wycena spada do alu, a okazja „tylko jako karbon” trafia do niepewnych z jego dowodem.
-const resolveFrameMaterial = (text, rama, sale, verify) => {
+// Który materiał liczy program. text = detectFrameMaterialText(...), rama = normalizeFrame(...), sale = wycena AI (€).
+// Tekst „alu” (albo napis alu sprzeczny z tekstem) → wycena alu (priceAsAlu). Karbon tylko z wyglądu → zostaje karbon, ale possibleCarbon
+// i saleAlu = wartość wersji alu (do pokazania w alercie).
+const resolveFrameMaterial = (text, rama, sale) => {
   const ai = rama.material, src = rama.zrodlo;
   let final, source, warn = null, possibleCarbon = false;
   if (text.material) {
@@ -709,13 +710,12 @@ const resolveFrameMaterial = (text, rama, sale, verify) => {
   } else if (ai === "karbon" && src === "napis") {
     final = "karbon"; source = "napis";
   } else if (ai === "karbon") {
-    possibleCarbon = true; source = "wyglad";
-    final = verify ? "alu" : "karbon";
+    possibleCarbon = true; source = "wyglad"; final = "karbon";
   } else {
     final = ai || "nie_wiem"; source = ai ? src : "nieznany";
   }
   const priceAsAlu = ai === "karbon" && final === "alu" && sale != null && sale > 0;
-  const saleAlu = !priceAsAlu ? null
+  const saleAlu = !(priceAsAlu || possibleCarbon) || sale == null || !(sale > 0) ? null
     : rama.sprzedaz_alu_eur != null && rama.sprzedaz_alu_eur < sale ? rama.sprzedaz_alu_eur : Math.round(sale * FRAME_ALU_FACTOR);
   return { final, source, warn, possibleCarbon, priceAsAlu, saleAlu };
 };
@@ -723,7 +723,7 @@ const resolveFrameMaterial = (text, rama, sale, verify) => {
 const FRAME_SOURCE_LABELS = { tekst: "z tekstu ogłoszenia", napis: "napis na ramie", wyglad: "tylko z wyglądu", nieznany: "nieustalony" };
 const fmtFrame = (r) => !r || !r.material ? null
   : `${r.material === "karbon" ? "karbon" : r.material === "alu" ? "alu" : "nieustalony (liczone jak alu)"} (${FRAME_SOURCE_LABELS[r.zrodlo] || r.zrodlo})`
-    + (r.possibleCarbon && r.material === "alu" ? " — możliwy karbon, wyceniono jak alu" : "") + (r.dowod ? `: ${r.dowod}` : "");
+    + (r.possibleCarbon ? " — sprawdź spoiny przy suporcie" : "") + (r.dowod ? `: ${r.dowod}` : "");
 const frameField = (a) => a?.rama?.material && a.typ_roweru !== "dirt" ? [{ name: "🧱 Rama", value: String(fmtFrame(a.rama)).slice(0, 220), inline: false }] : [];
 
 // Okazja zapisana do wysyłki — tylko pola potrzebne do wiadomości na Discordzie
@@ -756,7 +756,6 @@ const UNCERTAIN_LABELS = {
   nisza_custom: "Nisza/custom — brak cen rynkowych",
   za_malo_opisu: "Za mało informacji w opisie",
   nieznany_model: "Nieznany model",
-  material: "Materiał ramy do sprawdzenia (możliwy karbon)", // v6.5 — ustawia tylko program
   inne: "Do sprawdzenia",
 };
 
@@ -2321,7 +2320,7 @@ Wiele modeli ma wersję alu i karbonową (różnica kilkaset €). Uznanie alu z
 1. TEKST OGŁOSZENIA — program sam szuka materiału w tytule i opisie i podaje wynik przy ogłoszeniu („Materiał ramy z tekstu”). Jeśli go podał — wyceniaj według niego ("rama.zrodlo": "tekst").
 2. NAPIS NA RAMIE na zdjęciu ("zrodlo": "napis"): Carbon, CF, CFR, HPC (u Cube HPC to KARBON), Advanced (Giant), OCLV (Trek), FACT / S-Works (Specialized), C:62 = karbon; AL, Alu, Alloy, Aluminium/Aluminum, HPA (Cube), ALUXX (Giant), Alpha (Trek) = alu. W "dowod" przepisz dokładnie, co przeczytałeś.
 3. WYGLĄD ("zrodlo": "wyglad") — przejrzyj wszystkie zdjęcia, szczególnie zbliżenia. Najpewniejsze miejsce to okolice SUPORTU: łączenie rury podsiodłowej i dolnej z obudową suportu. W ramach alu spoin przy suporcie prawie nigdy się nie szlifuje — widoczna spoina (zgrubiały szew, łuska) = alu. Brak spawów przy główce ramy nic nie znaczy (tam alu bywa szlifowane). Spawy na tylnym trójkącie nie przesądzają (karbonowe ramy często mają alu tył). Gładki / matowy lakier, „organiczne” kształty i drogi osprzęt NIE dowodzą karbonu. Gdy okolicy suportu nie widać wyraźnie — nie twierdź, że widzisz suport.
-WYCENA: karbon z samego wyglądu jest niepewny — wtedy możesz wycenić karbon, ale MUSISZ podać "rama.sprzedaz_alu_eur" (ile wart jest ten sam model i generacja w wersji alu, z pasma alu w bazie); program sam zdecyduje, którą wycenę przyjąć. Materiał nieustalony ("nie_wiem") → wyceniaj wersję alu (tańsze pasmo). W dirtach i modelach istniejących tylko w jednej wersji materiał nie zmienia wyceny — wpisz, co wiesz.
+WYCENA: karbon z samego wyglądu wyceniaj jako karbon tylko z konkretnym dowodem (numer zdjęcia i co na nim widać) i podaj też "rama.sprzedaz_alu_eur" (ile wart jest ten sam model i generacja w wersji alu, z pasma alu w bazie) — użytkownik zobaczy oba zyski. Materiał nieustalony ("nie_wiem") → wyceniaj wersję alu (tańsze pasmo). W dirtach i modelach istniejących tylko w jednej wersji materiał nie zmienia wyceny — wpisz, co wiesz.
 
 === UWAGA — SPRAWDŹ OPIS PRZED OZNACZENIEM "niepewne" Z POWODU BRAKU OSPRZĘTU ===
 Wiele ogłoszeń (szczególnie rowerów budowanych indywidualnie/na zamówienie) podaje pełną listę komponentów w formie wypunktowania (np. "Sattel: X, Bremsen: Y, Gabel: Z, Dämpfer: W, Kurbeln: ..."). PRZED napisaniem w "powod_decyzji" że "opis nie mówi nic o stanie/wyposażeniu" lub "nierozpoznawalny model/marka" — przeskanuj opis pod kątem SŁÓW-KLUCZY (w dowolnym języku): widelec/Gabel/fork, amortyzator/Dämpfer/shock, hamulce/Bremsen/brakes, napęd/Schaltung/Antrieb/drivetrain/Kurbel/crank, koła/Laufräder/Felgen/wheels/hub, sztyca/Sattelstütze/dropper. Jeśli choć kilka z nich występuje — osprzęt JEST opisany i musisz oszacować cenę na tej podstawie (nawet z szerszym marginesem błędu), a nie oznaczać jako "niepewne".
@@ -2625,19 +2624,20 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           const progZysku = minProfitFor(cenaNum ?? listing.price); // v6: próg zależny od ceny zakupu
           let sprzedazNum = toNum(parsed.szacowana_sprzedaz_eur);
 
-          // ── v6.5: MATERIAŁ RAMY — tekst ogłoszenia > czytelny napis na ramie > wygląd. Karbon z samego wyglądu nie podnosi
-          // wyceny: w pierwszej analizie zostaje (okazja i tak idzie do weryfikatora ze wszystkimi zdjęciami), u weryfikatora → alu.
+          // ── v6.5: MATERIAŁ RAMY — tekst ogłoszenia > czytelny napis na ramie > wygląd. Tekst „alu” wygrywa z oceną AI;
+          // karbon z samego wyglądu zostaje karbonem, ale z ostrzeżeniem i zyskiem w wersji alu (niżej).
           const ramaAi = normalizeFrame(parsed.rama);
-          const fr = resolveFrameMaterial(frameText, ramaAi, sprzedazNum, !!opts.verify);
+          const fr = resolveFrameMaterial(frameText, ramaAi, sprzedazNum);
           let sprzedazKarbon = null;
           if (fr.priceAsAlu && !parsed.odrzucenie && typ !== "inny") {
             sprzedazKarbon = sprzedazNum;
             const viaFactor = ramaAi.sprzedaz_alu_eur == null || ramaAi.sprzedaz_alu_eur >= sprzedazNum;
-            addLog(`🧱 ${aiName(modelForCall || geminiModel)}: wycena jak karbon (${FRAME_SOURCE_LABELS[ramaAi.zrodlo] || ramaAi.zrodlo}${ramaAi.dowod ? `: ${ramaAi.dowod}` : ""}), ale ${fr.source === "tekst" ? `tekst ogłoszenia mówi „${fr.final}” (${frameText.evidence})` : "karbon tylko z wyglądu"} — liczę wersję alu: ${sprzedazNum}€ → ${fr.saleAlu}€${viaFactor ? ` (${Math.round(FRAME_ALU_FACTOR * 100)}% wyceny karbonu)` : ""} — ${listing.title}`, "info");
+            addLog(`🧱 ${aiName(modelForCall || geminiModel)}: wycena jak karbon (${FRAME_SOURCE_LABELS[ramaAi.zrodlo] || ramaAi.zrodlo}${ramaAi.dowod ? `: ${ramaAi.dowod}` : ""}), ale ${fr.source === "tekst" ? `tekst ogłoszenia mówi „${fr.final}” (${frameText.evidence})` : "napis przeczy tekstowi"} — liczę wersję alu: ${sprzedazNum}€ → ${fr.saleAlu}€${viaFactor ? ` (${Math.round(FRAME_ALU_FACTOR * 100)}% wyceny karbonu)` : ""} — ${listing.title}`, "info");
             sprzedazNum = fr.saleAlu;
           }
           parsed.rama = { material: fr.final, zrodlo: fr.source, dowod: ramaAi.dowod,
-            ...(fr.possibleCarbon ? { possibleCarbon: true } : {}), ...(sprzedazKarbon != null ? { sprzedaz_karbon_eur: sprzedazKarbon } : {}) };
+            ...(fr.possibleCarbon ? { possibleCarbon: true, ...(fr.saleAlu != null ? { sprzedaz_alu_eur: fr.saleAlu } : {}) } : {}),
+            ...(sprzedazKarbon != null ? { sprzedaz_karbon_eur: sprzedazKarbon } : {}) };
 
           // ── "CENA NOWEGO" Z OPISU: regex (pewniejszy) albo fakt od modelu ──
           // Pomijamy kwoty opisane przy podzespole ("neue Gabel, Neupreis 1.000 €") i kwoty niższe od ceny
@@ -2753,17 +2753,6 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             }
           }
 
-          // ── v6.5: okazja TYLKO jako karbon, a karbon tylko z wyglądu (weryfikator, bez tekstu i napisu) → do ręcznego
-          // sprawdzenia z dowodem weryfikatora. Testy 11.2026: Sonnet ze zdjęć uznawał ramy alu (YT Capra AL) za karbon.
-          if (sprzedazKarbon != null && fr.possibleCarbon && !parsed.odrzucenie && typ !== "inny" && cenaNum > 0 && zyskLiczony != null
-            && parsed.decyzja !== "niepewne" && (zyskLiczony / cenaNum) * 100 < progZysku
-            && ((sprzedazKarbon - cenaNum - transport) / cenaNum) * 100 >= progZysku) {
-            const zk = Math.round((sprzedazKarbon - cenaNum - transport) * 100) / 100;
-            const pk = ((zk / cenaNum) * 100).toFixed(1), pa = ((zyskLiczony / cenaNum) * 100).toFixed(1);
-            addLog(`🧱 Okazja tylko jako karbon (zysk ${pk}%), a karbon tylko z wyglądu — jako alu ${pa}% < próg ${progZysku}% → do sprawdzenia — ${listing.title}`, "info");
-            markUncertain("material", `możliwy karbon tylko z wyglądu${ramaAi.dowod ? ` (${ramaAi.dowod})` : ""}: jako karbon zysk ~${zk}€ (${pk}%), jako alu ~${zyskLiczony}€ (${pa}%, próg ${progZysku}%)`.slice(0, 220));
-          }
-
           // ── "TAK" MUSI SIĘ OBRONIĆ: kompletne liczby i próg zysku ──
           if (parsed.decyzja === "tak") {
             if (cenaNum == null || sprzedazNum == null || cenaNum <= 0) {
@@ -2819,9 +2808,10 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // v5.14: także sama marka bez modelu (RockShox / Fox / Manitou / Marzocchi — od modelu zależy półka)
           const forkWarn = typ !== "dirt" || parsed.odrzucenie ? null : forkNeedsCheck(parsed.widelec);
           if (forkWarn && !(parsed.ostrzezenia || "").includes("widel")) parsed.ostrzezenia = [parsed.ostrzezenia, forkWarn].filter(Boolean).join("; ").slice(0, 240);
-          // v6.5: materiał ramy — sprzeczność napisu z tekstem albo karbon tylko z wyglądu, wyceniony jak alu
-          const frameWarn = fr.warn || (parsed.rama.possibleCarbon && parsed.rama.material === "alu" && parsed.niepewne_kategoria !== "material"
-            ? "możliwy karbon (tylko z wyglądu) — wyceniono jak alu" : null);
+          // v6.5: materiał ramy — sprzeczność napisu z tekstem albo karbon tylko z wyglądu (z zyskiem, gdyby to było alu)
+          const zyskAlu = fr.possibleCarbon && fr.saleAlu != null && cenaNum > 0 ? Math.round(fr.saleAlu - cenaNum - transport) : null;
+          const frameWarn = fr.warn || (fr.possibleCarbon && !parsed.odrzucenie && typ !== "inny"
+            ? `karbon tylko z wyglądu — sprawdź spoiny przy suporcie${zyskAlu != null ? `; jako alu zysk ~${zyskAlu}€ (${((zyskAlu / cenaNum) * 100).toFixed(1)}%)` : ""}` : null);
           if (frameWarn) parsed.ostrzezenia = [parsed.ostrzezenia, frameWarn].filter(Boolean).join("; ").slice(0, 280);
           if (parsed.ostrzezenia) parsed.krotki_opis += ` ⚠️ ${parsed.ostrzezenia}`;
           const cleanStr = (v, max) => {
@@ -3039,7 +3029,7 @@ Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — t
 5. WALUTY — czy kwoty z bazy zapisane w złotówkach nie zostały potraktowane jak euro?
 6. STAN — uszkodzenia OPISANE w ogłoszeniu albo WYRAŹNIE widoczne na zdjęciach, braki, niekompletny rower? Uwzględnij je w wycenie. Podejrzanie niska cena, możliwe oszustwo czy podejrzenie ukrytych wad NIE są powodem do "nie" ani "niepewne" — wpisz je w "ostrzezenia" (użytkownik sam to weryfikuje).
 7. BAZA CEN — czy szacunek mieści się w paśmie z bazy dla TEGO modelu i generacji (sekcja wpisów dla ogłoszenia)? Czy wybrano właściwą generację / wersję? Rocznik tylko oszacowany albo skąpy opis → dolna granica pasma.
-7a. MATERIAŁ RAMY — alu czy karbon (zasady z sekcji MATERIAŁ RAMY)? ${frameText.material ? `Tekst ogłoszenia podaje: ${frameText.material} — wyceniaj tę wersję.` : `Tekst ogłoszenia go nie podaje — szukaj napisu na ramie i spoin przy suporcie na zbliżeniach. Karbon tylko z wyglądu program wyceni jak alu — podaj "rama.sprzedaz_alu_eur" i konkretny dowód z numerem zdjęcia.`}${allPhotos.length > 0 ? `
+7a. MATERIAŁ RAMY — alu czy karbon (zasady z sekcji MATERIAŁ RAMY)? ${frameText.material ? `Tekst ogłoszenia podaje: ${frameText.material} — wyceniaj tę wersję.` : `Tekst ogłoszenia go nie podaje — szukaj napisu na ramie i spoin przy suporcie na zbliżeniach. Karbon tylko z wyglądu podawaj z konkretnym dowodem (numer zdjęcia) i z "rama.sprzedaz_alu_eur".`}${allPhotos.length > 0 ? `
 8. ZDJĘCIA — dołączono wszystkie zdjęcia z ogłoszenia (${allPhotos.length}). Czy pokazują TEN rower z opisu (model, generacja, karbon/alu, osprzęt), bez widocznych uszkodzeń (sprawdź też dalsze zdjęcia i zbliżenia)? Zdjęcia katalogowe zamiast prawdziwych → tylko wpis w "ostrzezenia", nie zmiana decyzji.` : ""}${typeConflictNote ? `
 9. TYP ROWERU — ${typeConflictNote}. Rozstrzygnij typ na podstawie zdjęć i opisu i napisz w "powod_decyzji", co o tym przesądza. Jeśli nie da się tego jednoznacznie ustalić — decyzja "niepewne".` : ""}
 Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej analizy. Decyzja "tak" tylko wtedy, gdy żaden punkt nie podważa okazji. Odpowiedz w tym samym formacie JSON co wyżej (z polem "fakty").`;
