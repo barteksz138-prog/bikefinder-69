@@ -9,7 +9,7 @@ const GOOD = "Sehr gepflegtes Canyon Torque AL 6, Fox 38 Performance, Float X2, 
 const href = (l) => `https://www.kleinanzeigen.de/s-anzeige/x/${l.id}-217-1234`;
 const ALL_BIKE_IDS = [...(await import("node:fs")).readFileSync(new URL("../public/index.html", import.meta.url), "utf8").matchAll(/\{ id: "([a-z0-9_]+)",\s+label:/g)].map(m => m[1]);
 const results = [];
-async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${e.message}`); } }
+async function test(name, fn) { try { await fn(); results.push(`✅ ${name}`); } catch (e) { results.push(`❌ ${name}: ${String(e.message).replace(/\s+/g, " ").slice(0, 400)}`); } }
 const twoPhase = async (opts, after) => {
   let phase = 1;
   const app = await openApp({ ...opts, world: { ...opts.world, search: () => [A, ...(phase >= 2 ? (opts.newOnes || [B]) : [])] } });
@@ -55,6 +55,7 @@ await test("Weryfikacja i niepewne: wszystkie zdjęcia (12)", async () => {
     ai: (b) => { if (b.action) return {}; n++; return geminiResp(n === 1 ? analysisJson({ decyzja: "niepewne", niepewne_kategoria: "mozliwe_uszkodzenia" }) : analysisJson(), { imagesAttached: b.imageUrls?.length || 0 }); } } }, async (app) => {
     await app.waitUntil(() => app.st.discord.length >= 1, 20000, "deal");
     const g = genReqs(app.st);
+    if (process.env.DBG) console.log("DBG", JSON.stringify(app.st.discord.map(d => d.payload.content || d.payload.embeds?.[0]?.title)), (await app.logs()).filter(l => /Zielony|Weryf|dokładn|tak|niepewne/i.test(l)).slice(-12).join("\n"));
     assert.deepEqual(g.map(b => b.imageUrls.length), [4, 12, 12]);
     assert.ok(isVer(g[2]));
     const f = app.st.discord[0].payload.embeds[0].fields.find(x => x.name.includes("Weryfikacja"));

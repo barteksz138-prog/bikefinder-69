@@ -50,7 +50,7 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
     if (url.startsWith("http://app.localhost/api/scrape")) {
       const target = decodeURIComponent(new URL(url).searchParams.get("url"));
       if (target.includes("/s-anzeige/")) {
-        const id = (target.match(/\/(\d{7,})-/) || [])[1];
+        const id = (target.match(/\/(\d{7,})(?:-|$)/) || [])[1]; // v6.4: także krótki adres /s-anzeige/<numer> (nocne sprawdzanie cen)
         st.detailCalls.push(id);
         const d = world.detail ? world.detail(id, st) : { desc: "Sehr gepflegtes Bike, Fox 38, SRAM GX, Größe L, regelmäßig gewartet, Rechnung vorhanden, kleine Kratzer am Rahmen, sonst top. Abholung." };
         if (d.status) return route.fulfill({ status: d.status, body: d.body || "", contentType: "text/html" });

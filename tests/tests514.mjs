@@ -34,7 +34,7 @@ await test("Groq „inny” (uznał za ramę) przy tytule bez słowa o części 
   const groq = () => ({ choices: [{ message: { content: "opis dotyczy wyłącznie ramy i komponentów, nie całego roweru.\ninny" }, finish_reason: "stop" }] });
   await run({ cfg: { selectedBikes: ["yt"], groqClassifierKey: "gsk_x" }, phases: [(k) => k === "other" ? [L1, L2] : []],
     world: { groq, ai: ai({ decyzja: "nie", szacowana_sprzedaz_eur: 1300 }) } }, async (app) => {
-    await app.waitLog(/uznał za część.*YT capra Industrie/);
+    await app.waitLog(/uznał za część.*YT capra Industrie|tytuł to znany model .*YT capra Industrie/); // v6.4: Capra to znany model YT
     await app.waitUntil(() => genReqs(app.st).some(b => promptOf(b).includes(L1.title)), 15000, "analiza AI L1");
     await app.waitLog(/Cykl #2 zakończony/);
     assert.ok(!genReqs(app.st).some(b => promptOf(b).includes(L2.title)), "tania oferta nie powinna iść do AI");
