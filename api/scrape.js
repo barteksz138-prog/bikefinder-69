@@ -1,3 +1,5 @@
+const SCRAPE_TIMEOUT_MS = 20000;      // v6.4
+const SCRAPE_MAX_CHARS = 4_000_000;  // v6.4: strona wyników ~650 tys., ogłoszenia ~270 tys. znaków
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -17,14 +19,23 @@ export default async function handler(req, res) {
   }
 
   try {
+    // v6.4: limit czasu (wisząca odpowiedź nie blokuje funkcji) i kontrola domeny po przekierowaniach
+    // (krótki adres /s-anzeige/<numer> przekierowuje na pełny — zostaje w kleinanzeigen.de)
     const resp = await fetch(target.toString(), {
+      signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS),
       headers: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept-Language": "de-DE,de;q=0.9",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
     });
+    let finalHost = "";
+    try { finalHost = new URL(resp.url || target.toString()).hostname; } catch {}
+    if (finalHost && !["www.kleinanzeigen.de", "kleinanzeigen.de"].includes(finalHost)) {
+      return res.status(502).json({ error: `Przekierowanie poza kleinanzeigen.de (${finalHost})` });
+    }
     let html = await resp.text();
+    if (html.length > SCRAPE_MAX_CHARS) return res.status(502).json({ error: `Odpowiedź za duża (${html.length} znaków)` });
     // Strony WYNIKÓW wyszukiwania (/s-..., ale nie /s-anzeige/) ważą ~650 tys. znaków, a aplikacji
     // potrzebne są tylko karty ogłoszeń. Wycinamy fragment od pierwszego <article do ostatniego
     // </article> — mniej transferu z Vercela i szybsze parsowanie. Strony ogłoszeń oraz strony
@@ -42,6 +53,7 @@ export default async function handler(req, res) {
     // ogłoszenia) — wcześniej zawsze było 200, więc aplikacja nie mogła wykryć blokady.
     return res.status(resp.status).send(html);
   } catch (e) {
+    if (e?.name === "TimeoutError" || e?.name === "AbortError") return res.status(504).json({ error: `Kleinanzeigen nie odpowiedział w ${SCRAPE_TIMEOUT_MS / 1000} s` });
     res.status(500).json({ error: e.message });
   }
 }

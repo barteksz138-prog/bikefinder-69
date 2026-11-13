@@ -36,7 +36,7 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 // Typy wpisów:
-//   isCategory: true  → categoryUrl to gotowy, pełny URL Kleinanzeigen (np. z filtrem ceny "preis:250:" i typu roweru) — pobierany bez zmian
+//   isCategory: true  → categoryUrl to gotowy URL Kleinanzeigen (np. z filtrem ceny "preis:250:"); od v6.4 program dokłada „anzeige:angebote” i górną cenę z Ustawień
 //   (brak)            → query to fraza wyszukiwana w /s-fahrraeder/{query}/k0c217
 //
 // Lista modeli ZAMIAST całej kategorii "Mountain Bike" — celowo węższe wyszukiwanie po
@@ -109,7 +109,7 @@ const BIKES_ADDED_AFTER_V51 = ["dirt_search", "dirtbike_search"];
 // Wbudowana baza cen — WYGENEROWANA z pliku bazy (kb_build.py). Nie edytuj ręcznie: popraw plik bazy i wygeneruj ponownie.
 const KB = {
  "version": "11.2026",
- "core": "BAZA CEN — OGÓLNE ZASADY I WYCENA KATEGORII (używaj, gdy modelu nie ma w bazie) — 11.2026\n\nZASADY OGÓLNE\n- Wpis konkretnego modelu z innych wpisów bazy ma zawsze pierwszeństwo. Ten wpis stosuj tylko wtedy, gdy modelu nie ma w bazie, gdy jest oznaczony „POMINIĘTA” albo „za mało danych”.\n- Ceny to konserwatywne szacunki sprzedaży w PL (zł) na podstawie cen ofertowych OLX i moich zamkniętych sprzedaży. Aktywne ogłoszenia to ceny ofertowe, nie transakcje. Nie odejmuj od tych liczb żadnych dodatkowych procentów.\n- Kurs 4,35 zł/€. Warunki bazowe: kompletny, sprawny rower w dobrym stanie, bez pęknięć i ukrytych wad, normalne ślady użytkowania. Części dołożone po zakupie nie dają dopłaty równej ich cenie.\n- Przy wycenie z kategorii bierz dolną połowę przedziału, chyba że rower ma wyraźnie topowy osprzęt (Fox Factory, RockShox Ultimate, karbonowe koła, AXS) i jest w bardzo dobrym stanie.\n- Gdy nie da się ustalić rocznika — przyjmij najstarszą pasującą generację (najniższe pasmo).\n- Jeśli wycena opiera się tylko na tym wpisie, a zysk wychodzi blisko progu — oznacz jako niepewne, nie „tak”.\n- [niska pewność] = estymacja o niskiej/średniej pewności, nie traktuj jako twardej ceny bez dodatkowego porównania. „POMINIĘTA” = w bazie celowo nie ma ceny.\n- Używany rower nie jest wart więcej niż ok. 70% ceny porównywalnego nowego w aktualnej promocji sklepowej.\n- E-MTB: bez znanego silnika i pojemności baterii wyceniaj od dolnej granicy i oznacz niepewne; przebieg licznika nie zastępuje raportu stanu baterii; nie łącz baterii 500 / 625 / 750 Wh w jednej cenie.\n- Moje zamknięte sprzedaże (najpewniejsze punkty odniesienia): Trek Ticket 5800 zł, Canyon Stitched 720 5800 zł, Canyon Stitched 360 Pro 3800 zł, Commencal Supreme V4.2 7300 zł, Trek Remedy 8 4900 zł, Santa Cruz Hightower CC 5800 zł, Santa Cruz Bronson CC ok. 8800 zł, YT Capra XL 2023 ok. 5400–5600 zł.\n\nTRAIL (120–150 mm)\n- budżetowe fulle (Giant Stance, Marin Hawk Hill / Rift Zone 1, Trek Fuel EX 5, Specialized Camber alu, starsze Cube AMS i podobne) | 2017–2020: sprzedaż PL 2800–3900 zł (≈640–900 €) | 2021+: sprzedaż PL 3500–4600 zł (≈800–1060 €)\n- średnia półka alu (Giant Trance, Focus Jam, Canyon Neuron, Trek Fuel EX 7/8, YT Jeffsy AL, Cube Stereo 120, Ghost Riot Trail i podobne) | 2017–2020: sprzedaż PL 3500–4600 zł (≈800–1060 €) | 2021+: sprzedaż PL 4500–5600 zł (≈1030–1290 €)\n- karbon, marki popularne (Canyon Neuron CF / Spectral CF, Trek Fuel EX 9.x, Specialized Stumpjumper / Camber carbon, Giant Trance Advanced, YT Jeffsy CF, Cube Stereo HPC / C:62, Radon Slide carbon, Focus Jam C, Scott Genius / Spark, Merida One-Forty / One-Twenty carbon, Rose i podobne) | 2017–2020: sprzedaż PL 4500–5400 zł (≈1030–1240 €) | 2021–2023: sprzedaż PL 5200–7000 zł (≈1200–1610 €) — dolna granica dla tańszych wersji (np. Neuron CF 7, Stereo HPC Pro / Race, Fox 34 Rhythm / Performance, Deore / SLX), górna tylko dla Fox 36 / Float X, XT / GX i wersji 8–9 | 2024+: od ok. 7500 zł — rzadko w budżecie [niska pewność]\n- karbon, marki premium (Santa Cruz, Yeti, Pivot, Ibis, Evil, Transition, Intense) | 2017–2020: sprzedaż PL 4500–5600 zł (≈1030–1290 €) | 2021+: sprzedaż PL 6000–8000 zł (≈1380–1840 €) [niska pewność]\n\nENDURO / ALL-MOUNTAIN (150–180 mm)\n- budżetowe (Dartmoor Blackbird, GT Force, starsze Radon Swoop, niższe wersje Cube / Ghost) | sprzedaż PL 3000–4800 zł (≈690–1100 €)\n- alu | 2017–2020: sprzedaż PL 3800–5300 zł (≈870–1220 €) | 2021+: sprzedaż PL 4800–6800 zł (≈1100–1560 €)\n- karbon, marki mainstream (Canyon, YT, Specialized, Trek, Propain, Commencal, Giant) | 2017–2020: sprzedaż PL 5000–6500 zł (≈1150–1490 €) | 2021+: sprzedaż PL 7000–9500 zł (≈1610–2180 €)\n- karbon, marki premium (Santa Cruz, Yeti, Pivot, Evil, Transition, Intense, Ibis) | 2017–2020: sprzedaż PL 7000–9000 zł (≈1610–2070 €) | 2021+: sprzedaż PL 8500–11 000 zł (≈1950–2530 €) [niska pewność]\n\nFREERIDE / PARK (np. Commencal Clash, Propain Spindrift, Dartmoor Thunderbird)\n- alu 2017–2021: sprzedaż PL 4800–7000 zł (≈1100–1610 €) | alu 2022+: sprzedaż PL 7000–9000 zł (≈1610–2070 €) | karbon 2022+: sprzedaż PL 9000–11 000 zł (≈2070–2530 €) [niska pewność]\n\nDH (200 mm, widelec dwupółkowy)\n- alu 27,5\", 2017–2020 | sprzedaż PL 4500–6500 zł (≈1030–1490 €); najlepsze modele tych lat (YT Tues 2019–2020, Propain Rage, Commencal Supreme V4.2) do ok. 7500 zł\n- karbon 27,5\", 2017–2020 | sprzedaż PL 5000–6500 zł (≈1150–1490 €)\n- 29\" / mullet, 2019+ | sprzedaż PL 7000–10 000 zł (≈1610–2300 €); najnowsze generacje (2023+) drożej — rzadko w budżecie\n\nE-MTB (pełna moc, chyba że napisano inaczej)\n- 1. generacja (Shimano E8000 / STEPS, Bosch gen. 2, Brose 1.3; bateria 378–504 Wh; ok. 2016–2019) | sprzedaż PL 3800–5500 zł (≈870–1260 €)\n- 2019–2022, Bosch CX gen. 4 625 Wh / Shimano EP8 504–630 Wh / Specialized 2.1 500–700 Wh, alu | sprzedaż PL 6000–8500 zł (≈1380–1950 €)\n- jak wyżej, budżetowy osprzęt (np. Giant Stance E+, Yamaha Sport, widelec Suntour / Recon) | sprzedaż PL 5000–7000 zł (≈1150–1610 €)\n- jak wyżej, karbon albo topowy osprzęt | sprzedaż PL 8500–10 500 zł (≈1950–2410 €) [niska pewność]\n- 2022–2024, bateria 750 Wh / Bosch Smart System, alu | sprzedaż PL 8500–10 500 zł (≈1950–2410 €) [niska pewność]\n- lekkie e-MTB (Specialized SL, Fazua, TQ; 320–430 Wh), 2020–2023 | sprzedaż PL 8500–11 000 zł (≈1950–2530 €) [niska pewność]\n- e-hardtail górski (np. Specialized Levo HT) | sprzedaż PL 3000–4500 zł (≈690–1030 €)\n- 2025+ (Bosch CX gen. 5 800 Wh, DJI Avinox, Shimano EP801) | nie dla budżetu 1400 €; poniżej 1400 € podejrzane\n\nDIRT / SLOPESTYLE — patrz osobny wpis o dirtówkach.\n\nKOREKTY (orientacyjnie)\n- karbon zamiast alu w tej samej generacji i przy podobnym osprzęcie: ok. +10–25% (w trailach bliżej +10%; tańszy karbon z gorszym osprzętem bywa wart tyle co alu z lepszym)\n- marka premium (Santa Cruz, Yeti, Pivot, Evil, Transition, Intense, Ibis): ok. +10–25% wobec marek mainstream; marki budżetowe (Dartmoor, Kellys, GT, Marin, niższe wersje Cube / Ghost / Giant): ok. −10–25%\n- topowe zawieszenie (Fox Factory / Kashima, RockShox Ultimate, Öhlins, coil): ok. +300–800 zł; podstawowe (Suntour, Recon, X-Fusion): dolna granica przedziału\n- napęd 2x / 3x albo koła 26\" w trailu / enduro = stara generacja (zwykle sprzed 2017) → najniższe pasmo albo odrzuć\n- rozmiary skrajne (XS, XXL) schodzą wolniej: ok. −5%\n- Cube: rynek w PL przesycony (dużo rowerów sprowadzanych z Niemiec), sprzedaż trwa dłużej — Cube spoza bazy wyceniaj ok. 10% poniżej kategorii\n- e-MTB: przebieg powyżej 5000 km ok. −10%, powyżej 10 000 km ok. −20%; brak ładowarki ok. −500 zł; druga bateria ok. +1000 zł; brak raportu baterii → dolna granica\n- uszkodzenia (pęknięcia, spawy, wgniecenia ramy, luzy w zawieszeniu, niesprawny silnik) → niepewne albo odrzuć\n\nZASADY WPISÓW MAREK (dotyczą każdego wpisu marki dołączonego do ogłoszenia)\n- liczby to konserwatywne szacunki sprzedaży w PL; OLX/Allegro pokazują ceny ofertowe, nie transakcje — nie odejmuj od nich dodatkowych procentów. Gdy nie da się ustalić generacji/rocznika — przyjmij najniższe pasmo modelu. Pasma „nie dla budżetu” w Niemczech prawie nigdy nie kosztują ≤1400 € — taka oferta to zwykle oszustwo, kradzież albo uszkodzenie → niepewne. Brak ceny albo „POMINIĘTA” → wyceniaj z wpisu „OGÓLNE ZASADY I WYCENA KATEGORII” i oznacz niepewne. [niska pewność] = nie traktuj jako twardej ceny.\n\nROZPOZNAWANIE ROCZNIKA — ZASADY I DATY WPROWADZENIA PODZESPOŁÓW — 11.2026\nJAK USTALAĆ ROCZNIK\n- Rocznik ustalaj po elementach, których nikt nie opłaca się wymieniać: rama (geometria, prowadzenie linek, mocowanie amortyzatora), rozmiar kół, standard napędu (liczba biegów), amortyzator tylny (wymiar metric / trunnion), silnik i bateria w e-MTB.\n- Widelec, koła, hamulce i kokpit często są wymienione — nie ustalaj rocznika tylko po nich. Lepszy osprzęt niż seryjny = wyższa wersja albo upgrade, nie nowszy rocznik.\n- Gdy osprzęt pasuje do kilku lat — przyjmij NAJSTARSZY pasujący rocznik. Gdy czegoś brakuje w opisie — nie zgaduj na korzyść sprzedającego.\n- Bike checki (seryjne wersje bazowe/średnie, rok po roku; źródła: 99spokes, bikewise) są we wpisach marek, które program dołącza do ogłoszenia. Porównaj osprzęt z opisu z seryjnym osprzętem kolejnych roczników. „nowy” = cena katalogowa w walucie źródła — pomaga rozpoznać wersję i segment; NIE wpisuj jej do pola cena_nowego_eur (to pole jest tylko dla ceny nowego podanej w opisie ogłoszenia).\n\nDATY WPROWADZENIA PODZESPOŁÓW (MY = rok modelowy; rower nie może być starszy niż jego najnowszy seryjny element)\n- SRAM 12s Eagle: XX1/X01 od MY2017, GX Eagle od MY2018, NX Eagle od MY2019, SX Eagle od MY2020. SRAM 1x11 (GX / NX / X1) = zwykle 2016–2019. SRAM T-Type / Transmission (bez haka, UDH), nazwy Eagle 70/90 = od MY2024.\n- Shimano 12s: XTR M9100 od MY2019, XT M8100 i SLX M7100 od MY2020, Deore M6100 od MY2021. Shimano 11s (XT M8000, SLX M7000) = ok. 2016–2019; Deore 10s (M6000) = ok. 2016–2020. Napęd 2x lub 3x w enduro/trailu = zwykle sprzed 2017.\n- RockShox: Pike RCT3 do ok. MY2017, potem Pike RC / Select; Yari od MY2017; Lyrik od MY2016; ZEB od MY2021; Charger 2.1 od MY2019; nazwy Select / Select+ / Ultimate od MY2020; nowe Pike / Lyrik / ZEB z Charger 3 od MY2023. Monarch / Monarch Plus = zwykle do 2018–2019; Deluxe / Super Deluxe (metric) od ok. 2017–2018.\n- Fox: Grip2 od MY2019; nowy Fox 36 i Fox 38 od MY2021; DPX2 ok. 2018–2021; nowy Float X (zastąpił DPX2) od ok. MY2022; DPS od ok. 2016.\n- Hamulce: SRAM Guide → G2 od MY2020; SRAM DB8 od ok. MY2021; SRAM Maven od 2024; Shimano 4-tłoczkowe MT520 / MT420 częste od ok. 2019.\n- Koła i standardy: 26\" w trailu/enduro = do ok. 2016; 27,5+ / „6Fattie” = ok. 2016–2018; mullet (29\" przód / 27,5\" tył) seryjnie od ok. MY2021; UDH od ok. MY2022.\n- E-MTB: Shimano E8000 ok. 2016–2020, EP8 od MY2021, EP801 od MY2023; Bosch Performance CX gen. 2 (75 Nm) ok. 2017–2019, CX gen. 4 od MY2020 (75 Nm, od MY2021 85 Nm), PowerTube 500 ok. 2018–2020, PowerTube 625 od MY2020, 750 Wh od MY2022, Bosch Smart System od MY2023, CX gen. 5 / 800 Wh od MY2025; Specialized 2.1 w MY2019–2021, 2.2 od MY2022; Yamaha / Giant SyncDrive Pro 80 Nm ok. 2019–2021, 85 Nm od MY2022; Fazua Ride 60 od 2022.",
+ "core": "BAZA CEN — OGÓLNE ZASADY I WYCENA KATEGORII (używaj, gdy modelu nie ma w bazie) — 11.2026\n\nZASADY OGÓLNE\n- Wpis konkretnego modelu z innych wpisów bazy ma zawsze pierwszeństwo. Ten wpis stosuj tylko wtedy, gdy modelu nie ma w bazie, gdy jest oznaczony „POMINIĘTA” albo „za mało danych”.\n- Ceny to konserwatywne szacunki sprzedaży w PL (zł) na podstawie cen ofertowych OLX i moich zamkniętych sprzedaży. Aktywne ogłoszenia to ceny ofertowe, nie transakcje. Nie odejmuj od tych liczb żadnych dodatkowych procentów.\n- Kurs 4,35 zł/€. Warunki bazowe: kompletny, sprawny rower w dobrym stanie, bez pęknięć i ukrytych wad, normalne ślady użytkowania. Części dołożone po zakupie nie dają dopłaty równej ich cenie.\n- Przy wycenie z kategorii bierz dolną połowę przedziału, chyba że rower ma wyraźnie topowy osprzęt (Fox Factory, RockShox Ultimate, karbonowe koła, AXS) i jest w bardzo dobrym stanie.\n- Gdy nie da się ustalić rocznika — przyjmij najstarszą pasującą generację (najniższe pasmo).\n- Jeśli wycena opiera się tylko na tym wpisie, a zysk wychodzi blisko progu — oznacz jako niepewne, nie „tak”.\n- [niska pewność] = estymacja o niskiej/średniej pewności, nie traktuj jako twardej ceny bez dodatkowego porównania. „POMINIĘTA” = w bazie celowo nie ma ceny.\n- Używany rower nie jest wart więcej niż ok. 70% ceny porównywalnego nowego w aktualnej promocji sklepowej.\n- E-MTB: bez znanego silnika i pojemności baterii wyceniaj od dolnej granicy i oznacz niepewne; przebieg licznika nie zastępuje raportu stanu baterii; nie łącz baterii 500 / 625 / 750 Wh w jednej cenie.\n- Moje zamknięte sprzedaże (najpewniejsze punkty odniesienia): Trek Ticket 5800 zł, Canyon Stitched 720 5800 zł, Canyon Stitched 360 Pro 3800 zł, Commencal Supreme V4.2 7300 zł, Trek Remedy 8 4900 zł, Santa Cruz Hightower CC 5800 zł, Santa Cruz Bronson CC ok. 8800 zł, YT Capra XL 2023 ok. 5400–5600 zł.\n\nTRAIL (120–150 mm)\n- budżetowe fulle (Giant Stance, Marin Hawk Hill / Rift Zone 1, Trek Fuel EX 5, Specialized Camber alu, starsze Cube AMS i podobne) | 2017–2020: sprzedaż PL 2800–3900 zł (≈640–900 €) | 2021+: sprzedaż PL 3500–4600 zł (≈800–1060 €)\n- średnia półka alu (Giant Trance, Focus Jam, Canyon Neuron, Trek Fuel EX 7/8, YT Jeffsy AL, Cube Stereo 120, Ghost Riot Trail i podobne) | 2017–2020: sprzedaż PL 3500–4600 zł (≈800–1060 €) | 2021+: sprzedaż PL 4500–5600 zł (≈1030–1290 €)\n- karbon, marki popularne (Canyon Neuron CF / Spectral CF, Trek Fuel EX 9.x, Specialized Stumpjumper / Camber carbon, Giant Trance Advanced, YT Jeffsy CF, Cube Stereo HPC / C:62, Radon Slide carbon, Focus Jam C, Scott Genius / Spark, Merida One-Forty / One-Twenty carbon, Rose i podobne) | 2017–2020: sprzedaż PL 4500–5400 zł (≈1030–1240 €) | 2021–2023: sprzedaż PL 5200–7000 zł (≈1200–1610 €) — dolna granica dla tańszych wersji (np. Neuron CF 7, Stereo HPC Pro / Race, Fox 34 Rhythm / Performance, Deore / SLX), górna tylko dla Fox 36 / Float X, XT / GX i wersji 8–9 | 2024+: od ok. 7500 zł — rzadko w budżecie [niska pewność]\n- karbon, marki premium (Santa Cruz, Yeti, Pivot, Ibis, Evil, Transition, Intense) | 2017–2020: sprzedaż PL 4500–5600 zł (≈1030–1290 €) | 2021+: sprzedaż PL 6000–8000 zł (≈1380–1840 €) [niska pewność]\n\nENDURO / ALL-MOUNTAIN (150–180 mm)\n- budżetowe (Dartmoor Blackbird, GT Force, starsze Radon Swoop, niższe wersje Cube / Ghost) | sprzedaż PL 3000–4800 zł (≈690–1100 €)\n- alu | 2017–2020: sprzedaż PL 3800–5300 zł (≈870–1220 €) | 2021+: sprzedaż PL 4800–6800 zł (≈1100–1560 €)\n- karbon, marki mainstream (Canyon, YT, Specialized, Trek, Propain, Commencal, Giant) | 2017–2020: sprzedaż PL 5000–6500 zł (≈1150–1490 €) | 2021+: sprzedaż PL 7000–9500 zł (≈1610–2180 €)\n- karbon, marki premium (Santa Cruz, Yeti, Pivot, Evil, Transition, Intense, Ibis) | 2017–2020: sprzedaż PL 7000–9000 zł (≈1610–2070 €) | 2021+: sprzedaż PL 8500–11 000 zł (≈1950–2530 €) [niska pewność]\n\nFREERIDE / PARK (np. Commencal Clash, Propain Spindrift, Dartmoor Thunderbird)\n- alu 2017–2021: sprzedaż PL 4800–7000 zł (≈1100–1610 €) | alu 2022+: sprzedaż PL 7000–9000 zł (≈1610–2070 €) | karbon 2022+: sprzedaż PL 9000–11 000 zł (≈2070–2530 €) [niska pewność]\n\nDH (200 mm, widelec dwupółkowy)\n- alu 27,5\", 2017–2020 | sprzedaż PL 4500–6500 zł (≈1030–1490 €); najlepsze modele tych lat (YT Tues 2019–2020, Propain Rage, Commencal Supreme V4.2) do ok. 7500 zł\n- karbon 27,5\", 2017–2020 | sprzedaż PL 5000–6500 zł (≈1150–1490 €)\n- 29\" / mullet, 2019+ | sprzedaż PL 7000–10 000 zł (≈1610–2300 €); najnowsze generacje (2023+) drożej — rzadko w budżecie\n\nE-MTB (pełna moc, chyba że napisano inaczej)\n- 1. generacja (Shimano E8000 / STEPS, Bosch gen. 2, Brose 1.3; bateria 378–504 Wh; ok. 2016–2019) | sprzedaż PL 3800–5500 zł (≈870–1260 €)\n- 2019–2022, Bosch CX gen. 4 625 Wh / Shimano EP8 504–630 Wh / Specialized 2.1 500–700 Wh, alu | sprzedaż PL 6000–8500 zł (≈1380–1950 €)\n- jak wyżej, budżetowy osprzęt (np. Giant Stance E+, Yamaha Sport, widelec Suntour / Recon) | sprzedaż PL 5000–7000 zł (≈1150–1610 €)\n- jak wyżej, karbon albo topowy osprzęt | sprzedaż PL 8500–10 500 zł (≈1950–2410 €) [niska pewność]\n- 2022–2024, bateria 750 Wh / Bosch Smart System, alu | sprzedaż PL 8500–10 500 zł (≈1950–2410 €) [niska pewność]\n- lekkie e-MTB (Specialized SL, Fazua, TQ; 320–430 Wh), 2020–2023 | sprzedaż PL 8500–11 000 zł (≈1950–2530 €) [niska pewność]\n- e-hardtail górski (np. Specialized Levo HT) | sprzedaż PL 3000–4500 zł (≈690–1030 €)\n- 2025+ (Bosch CX gen. 5 800 Wh, DJI Avinox, Shimano EP801) | nie dla budżetu 1400 €; poniżej 1400 € — wpisz podejrzenie w ostrzeżenia\n\nDIRT / SLOPESTYLE — patrz osobny wpis o dirtówkach.\n\nKOREKTY (orientacyjnie)\n- karbon zamiast alu w tej samej generacji i przy podobnym osprzęcie: ok. +10–25% (w trailach bliżej +10%; tańszy karbon z gorszym osprzętem bywa wart tyle co alu z lepszym)\n- marka premium (Santa Cruz, Yeti, Pivot, Evil, Transition, Intense, Ibis): ok. +10–25% wobec marek mainstream; marki budżetowe (Dartmoor, Kellys, GT, Marin, niższe wersje Cube / Ghost / Giant): ok. −10–25%\n- topowe zawieszenie (Fox Factory / Kashima, RockShox Ultimate, Öhlins, coil): ok. +300–800 zł; podstawowe (Suntour, Recon, X-Fusion): dolna granica przedziału\n- przednia przerzutka / napęd 2x / 3x w fullu albo e-MTB = rower sprzed 2017 (twarda reguła z promptu; wyjątek tylko z dowodem w opisie); koła 26\" w trailu / enduro = stara generacja (zwykle sprzed 2017)\n- rozmiary skrajne (XS, XXL) schodzą wolniej: ok. −5%\n- Cube: rynek w PL przesycony (dużo rowerów sprowadzanych z Niemiec), sprzedaż trwa dłużej — Cube spoza bazy wyceniaj ok. 10% poniżej kategorii\n- e-MTB: przebieg powyżej 5000 km ok. −10%, powyżej 10 000 km ok. −20%; brak ładowarki ok. −500 zł; druga bateria ok. +1000 zł; brak raportu baterii → dolna granica\n- uszkodzenia (pęknięcia, spawy, wgniecenia ramy, luzy w zawieszeniu, niesprawny silnik) → niepewne albo odrzuć\n\nZASADY WPISÓW MAREK (dotyczą każdego wpisu marki dołączonego do ogłoszenia)\n- liczby to konserwatywne szacunki sprzedaży w PL; OLX/Allegro pokazują ceny ofertowe, nie transakcje — nie odejmuj od nich dodatkowych procentów. Gdy nie da się ustalić generacji/rocznika — przyjmij najniższe pasmo modelu. Pasma „nie dla budżetu” w Niemczech prawie nigdy nie kosztują ≤1400 € — taka oferta bywa oszustwem, kradzieżą albo ukrywa uszkodzenie — wyceń normalnie według pasma i wpisz podejrzenie w ostrzeżenia (podejrzana cena to ostrzeżenie, nie powód do „niepewne”). Brak ceny albo „POMINIĘTA” → wyceniaj z wpisu „OGÓLNE ZASADY I WYCENA KATEGORII” i oznacz niepewne. [niska pewność] = nie traktuj jako twardej ceny.\n\nROZPOZNAWANIE ROCZNIKA — ZASADY I DATY WPROWADZENIA PODZESPOŁÓW — 11.2026\nJAK USTALAĆ ROCZNIK\n- Rocznik ustalaj po elementach, których nikt nie opłaca się wymieniać: rama (geometria, prowadzenie linek, mocowanie amortyzatora), rozmiar kół, standard napędu (liczba biegów), amortyzator tylny (wymiar metric / trunnion), silnik i bateria w e-MTB.\n- Widelec, koła, hamulce i kokpit często są wymienione — nie ustalaj rocznika tylko po nich. Lepszy osprzęt niż seryjny = wyższa wersja albo upgrade, nie nowszy rocznik.\n- Gdy osprzęt pasuje do kilku lat — przyjmij NAJSTARSZY pasujący rocznik; wyjątek: gdy zakres obejmuje lata sprzed 2017 i 2017+, wpisz 2017 (jak w KROKU 1 promptu). Gdy czegoś brakuje w opisie — nie zgaduj na korzyść sprzedającego.\n- Bike checki (seryjne wersje bazowe/średnie, rok po roku; źródła: 99spokes, bikewise) są we wpisach marek, które program dołącza do ogłoszenia. Porównaj osprzęt z opisu z seryjnym osprzętem kolejnych roczników. „nowy” = cena katalogowa w walucie źródła — pomaga rozpoznać wersję i segment; NIE wpisuj jej do pola cena_nowego_eur (to pole jest tylko dla ceny nowego podanej w opisie ogłoszenia).\n\nDATY WPROWADZENIA PODZESPOŁÓW (MY = rok modelowy; rower nie może być starszy niż jego najnowszy seryjny element)\n- SRAM 12s Eagle: XX1/X01 od MY2017, GX Eagle od MY2018, NX Eagle od MY2019, SX Eagle od MY2020. SRAM 1x11 (GX / NX / X1) = zwykle 2016–2019. SRAM T-Type / Transmission (bez haka, UDH), nazwy Eagle 70/90 = od MY2024.\n- Shimano 12s: XTR M9100 od MY2019, XT M8100 i SLX M7100 od MY2020, Deore M6100 od MY2021. Shimano 11s (XT M8000, SLX M7000) = ok. 2016–2019; Deore 10s (M6000) = ok. 2016–2020. Napęd 2x lub 3x w enduro/trailu = zwykle sprzed 2017.\n- RockShox: Pike RCT3 do ok. MY2017, potem Pike RC / Select; Yari od MY2017; Lyrik od MY2016; ZEB od MY2021; Charger 2.1 od MY2019; nazwy Select / Select+ / Ultimate od MY2020; nowe Pike / Lyrik / ZEB z Charger 3 od MY2023. Monarch / Monarch Plus = zwykle do 2018–2019; Deluxe / Super Deluxe (metric) od ok. 2017–2018.\n- Fox: Grip2 od MY2019; nowy Fox 36 i Fox 38 od MY2021; DPX2 ok. 2018–2021; nowy Float X (zastąpił DPX2) od ok. MY2022; DPS od ok. 2016.\n- Hamulce: SRAM Guide → G2 od MY2020; SRAM DB8 od ok. MY2021; SRAM Maven od 2024; Shimano 4-tłoczkowe MT520 / MT420 częste od ok. 2019.\n- Koła i standardy: 26\" w trailu/enduro = do ok. 2016; 27,5+ / „6Fattie” = ok. 2016–2018; mullet (29\" przód / 27,5\" tył) seryjnie od ok. MY2021; UDH od ok. MY2022.\n- E-MTB: Shimano E8000 ok. 2016–2020, EP8 od MY2021, EP801 od MY2023; Bosch Performance CX gen. 2 (75 Nm) ok. 2017–2019, CX gen. 4 od MY2020 (75 Nm, od MY2021 85 Nm), PowerTube 500 ok. 2018–2020, PowerTube 625 od MY2020, 750 Wh od MY2022, Bosch Smart System od MY2023, CX gen. 5 / 800 Wh od MY2025; Specialized 2.1 w MY2019–2021, 2.2 od MY2022; Yamaha / Giant SyncDrive Pro 80 Nm ok. 2019–2021, 85 Nm od MY2022; Fazua Ride 60 od 2022.",
  "chunks": {
   "dirt": {
    "name": "Dirtówki / slopestyle",
@@ -198,6 +198,66 @@ const KB = {
   "giant": {
    "name": "Giant",
    "text": "BAZA CEN — Giant — 11.2026 (pasma cen sprzedaży w PL)\n## Giant Reign — enduro\n- Reign / Reign SX / Reign Advanced 27,5\" (2017–2020) | 160 mm, Pike / Yari / Lyrik / Fox 36, Monarch Plus / Deluxe / DPX2; SX: Fox 36 + DHX2 albo DVO | sprzedaż PL 3600–4700 zł (≈830–1080 €)\n- Reign 29 / Reign SX 29 (2020+) | 29\" (SX też mullet), Reign 2: Yari RC 170 + Deluxe Select+; Reign 1 / SX / Advanced: Fox 38 albo ZEB + X2 | sprzedaż PL 5200–7000 zł (≈1200–1610 €) [niska pewność]\n- Reign E+ (e-MTB) — za mało używanych\n- płynność: średnio | dane: n=17 / 12, 10.2026\n## Giant Trance — trail\n- Trance 27,5\" (2017–2021, Trance 1 / 2 / 3 / Advanced) | 150/140 mm, Fox 34 Rhythm albo RS 35 / Pike, Fox DPS / Deluxe | sprzedaż PL 3500–4700 zł (≈800–1080 €)\n- Trance 29 / Trance X 29 (2020+) | 29\", Fox 34 / 36, Float DPS | sprzedaż PL 4200–5800 zł (≈970–1330 €)\n- Trance E+ / Trance X E+ (e-MTB, 2020–2024) | Giant SyncDrive (Yamaha), 500–625 Wh | sprzedaż PL 7200–9000 zł (≈1660–2070 €)\n- płynność: średnio | dane: n=15 / 9 / 5, 10.2026\n## Giant Stance — budżetowy full\n- Stance 1 / 2 (27,5\" lub 29\") | Suntour albo RockShox Recon, Monarch R | sprzedaż PL 3000–4200 zł (≈690–970 €)\n- Stance E+ (e-MTB) | SyncDrive Sport (Yamaha) 70–75 Nm, 500–625 Wh | sprzedaż PL 5500–7000 zł (≈1260–1610 €) [niska pewność]\n- uwaga: nowe Stance/Stance E+ bywają przecenione (Stance 29 ok. 5900–8500 zł); ceny sklepowe nie są bezpośrednio porównywalne bez trimu i daty promocji, ale ograniczają sufit ceny używanego\n- płynność: średnio | dane: n=10 / 11, 10.2026\n## Giant Glory — downhill\n- Glory 27,5\" (2017+) | Boxxer / Domain / Fox 40, Vivid / Kage / DHX2 | sprzedaż PL 4000–5200 zł (≈920–1200 €)\n- płynność: wolno (DH) | dane: n=7, 10.2026\n\nROCZNIKI — bike checki seryjnych wersji (rocznik | widelec / amortyzator / napęd / hamulce | koła | cena nowego w walucie źródła):\n## Giant Reign 2 (enduro)\n- 2017 | Yari RC 160 / Monarch RT / SRAM NX 1x11 / Guide R | 27,5\" | nowy $2900\n- 2018 | Yari RC 160 / Deluxe RT / Shimano Deore 10s / Deore | 27,5\" | nowy $2755\n- 2019 | Yari RC 170 / Deluxe RT / Deore 10s / Shimano MT520 | 27,5\" | nowy $2730\n- 2020 | Yari RC 170 / Deluxe Select+ / SX Eagle 12s / MT420 | 27,5\" | nowy $2700\n- 2021 Reign 29 2 (nowa rama 29\") | Yari RC 170 / Deluxe Select+ (146 mm) / Shimano SLX 12s / Tektro Orion | 29\" | nowy $3650\n- 2022 Reign 29 | Yari RC 170 / Deluxe Select+ / SLX 12s / Deore | 29\" | nowy $3600\n## Giant Trance 2 (trail)\n- 2017–2018 | Fox 34 Rhythm 150 / Float Performance (EVOL) 140 / Shimano SLX 11s / Shimano | 27,5\" | nowy $2700–2890\n- 2019 | Fox 34 Rhythm 150 / Float DPS Performance 140 / SLX 11s / MT520 | 27,5\" | nowy $2900\n- 2020 | Fox 34 Rhythm 150 / DPS Performance / SLX 12s / MT520 | 27,5\"\n- 2021 Trance 29 2 | Fox 34 Rhythm 130 / DPS Performance 115 / SLX 12s / MT520 | 29\"\n- 2022–2023 Trance X 29 2 | RockShox 35 Gold RL 150 / DPS Performance 135 / SX Eagle / MT420 albo Tektro M745 | 29\" | nowy €2999\n## Giant Trance E+ (e-MTB)\n- 2019 Trance E+ 2 | SyncDrive Pro (Yamaha) 80 Nm, 500 Wh / Fox 36 Rhythm 150 / DPS Performance / Shimano XT 11s | 27,5\" | nowy $4600\n- 2022 Trance X E+ 2 | SyncDrive Pro 85 Nm, 625 Wh / Fox 36 Rhythm 150 / DPS Performance / XT M8100 12s | 29\""
+  },
+  "emtb_cannondale": {
+   "name": "e-MTB Cannondale",
+   "text": "BAZA CEN — e-MTB Cannondale — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Cannondale Moterra — e-MTB\n- 2018 profil: starsza generacja Bosch 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Yari / Recon; damper RS Deluxe; XT / SLX 11 | sprzedaż PL ~5 200 zł (widełki 3 700–6 700 zł) ≈1200 € (≈850–1540 €) [słabe dopasowanie]\n- 2019 profil: starsza generacja Bosch 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Yari / Recon; damper RS Deluxe; XT / SLX 11 | sprzedaż PL ~5 700 zł (widełki 4 200–7 200 zł) ≈1310 € (≈970–1660 €) [słabe dopasowanie]\n## Cannondale Moterra Neo — e-MTB\n- 2020 profil: Neo3, Bosch 500 / 35 Gold / SX | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS 35 Gold RL 160; damper RS Deluxe; SRAM SX Eagle 12 | sprzedaż PL ~6 800 zł (widełki 5 300–8 300 zł) ≈1560 € (≈1220–1910 €) [słabe dopasowanie]\n- 2021 profil: Neo3, Bosch 500 / 35 Gold / SX | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS 35 Gold RL 160; damper RS Deluxe; SRAM SX Eagle 12 | sprzedaż PL ~7 400 zł (widełki 5 900–8 900 zł) ≈1700 € (≈1360–2050 €) [słabe dopasowanie]\n- 2022 profil: carbon 750 / średni osprzęt | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS 35 Gold / ZEB Select; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~10 500 zł (widełki 8 500–12 500 zł) ≈2410 € (≈1950–2870 €) [słabe dopasowanie]\n- 2023 profil: carbon 750 / średni osprzęt | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS 35 Gold / ZEB Select; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~11 500 zł (widełki 9 500–13 500 zł) ≈2640 € (≈2180–3100 €) [słabe dopasowanie]\n- 2024 profil: carbon 750 / średni osprzęt | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS 35 Gold / ZEB Select; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~12 500 zł (widełki 10 500–14 500 zł) ≈2870 € (≈2410–3330 €) [słabe dopasowanie]"
+  },
+  "emtb_canyon": {
+   "name": "e-MTB Canyon",
+   "text": "BAZA CEN — e-MTB Canyon — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Canyon Neuron:ON AL — e-MTB\n- 2019 profil: AL 504 / średni osprzęt | AL; E8000, 70 Nm; 504 Wh; RS Recon / Fox 34; damper RS Deluxe / Fox DPS; Deore / SLX 10–12 | sprzedaż PL ~5 000 zł (widełki 3 500–6 500 zł) ≈1150 € (≈800–1490 €) [słabe dopasowanie]\n- 2020 profil: AL 504 / średni osprzęt | AL; E8000, 70 Nm; 504 Wh; RS Recon / Fox 34; damper RS Deluxe / Fox DPS; Deore / SLX 10–12 | sprzedaż PL ~5 600 zł (widełki 4 100–7 100 zł) ≈1290 € (≈940–1630 €) [słabe dopasowanie]\n- 2021 7 / 504 | AL; EP8 / DU-EP800, 85 Nm; 504 Wh; RS Judy Silver Air; damper RS Deluxe Select R; Deore 10 | sprzedaż PL ~6 400 zł (widełki 5 400–7 400 zł) ≈1470 € (≈1240–1700 €)\n- 2022 profil: EP8 504 / Judy / Deore | AL; EP8 / DU-EP800, 85 Nm; 504 Wh; RS Judy Silver Air; damper RS Deluxe Select R; Deore 10 | sprzedaż PL ~6 900 zł (widełki 5 900–7 900 zł) ≈1590 € (≈1360–1820 €)\n- 2023 6 / 630 | AL; EP6, 85 Nm; 630 Wh; Fox 34 Rhythm; damper Fox DPS Performance; Deore 12 | sprzedaż PL ~7 800 zł (widełki 6 800–8 800 zł) ≈1790 € (≈1560–2020 €) — uwaga: M–XL 630 Wh; XS/S 504 Wh.\n- 2024 profil: EP6 630 / Fox / Deore | AL; EP6, 85 Nm; 630 Wh; Fox 34 Rhythm; damper Fox DPS Performance; Deore 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €) — uwaga: M–XL 630 Wh; XS/S 504 Wh.\n## Canyon Neuron:ON CF — e-MTB\n- 2023 CF 7 / 750 | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Pike Rush RC; damper RS Deluxe Select R; Deore 12 | sprzedaż PL ~11 500 zł (widełki 9 500–13 500 zł) ≈2640 € (≈2180–3100 €) [słabe dopasowanie]\n- 2023 CF 8 / 750 | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 34 Performance; damper Fox DPS Performance; XT 12 | sprzedaż PL ~13 000 zł (widełki 11 000–15 000 zł) ≈2990 € (≈2530–3450 €) [słabe dopasowanie]\n- 2024 profil: CF7, Bosch 750 / Pike / Deore | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Pike Rush RC; damper RS Deluxe Select R; Deore 12 | sprzedaż PL ~12 500 zł (widełki 10 500–14 500 zł) ≈2870 € (≈2410–3330 €) [słabe dopasowanie]\n- 2024 profil: CF8, Bosch 750 / Fox / XT | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 34 Performance; damper Fox DPS Performance; XT 12 | sprzedaż PL ~14 000 zł (widełki 12 000–16 000 zł) ≈3220 € (≈2760–3680 €) [słabe dopasowanie]\n## Canyon Spectral:ON AL — e-MTB\n- 2018 profil: AL, Fox / XT | AL; E8000, 70 Nm; 504 Wh; Fox 36 Performance; damper Fox DPS Performance; XT 11 | sprzedaż PL ~5 600 zł (widełki 4 100–7 100 zł) ≈1290 € (≈940–1630 €) [słabe dopasowanie]\n- 2019 profil: AL, Fox / XT | AL; E8000, 70 Nm; 504 Wh; Fox 36 Performance; damper Fox DPS Performance; XT 11 | sprzedaż PL ~6 100 zł (widełki 4 600–7 600 zł) ≈1400 € (≈1060–1750 €) [słabe dopasowanie]\n## Canyon Spectral:ON CF — e-MTB\n- 2020 profil: CF 504 / Lyrik / XT–SLX | carbon / tył AL; E8000, 70 Nm; 504 Wh; RS Lyrik Select; damper RS Deluxe Select; XT / SLX 12 | sprzedaż PL ~7 400 zł (widełki 6 400–8 400 zł) ≈1700 € (≈1470–1930 €)\n- 2021 CF 7 | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 630 Wh; RS Lyrik Select; damper RS Deluxe Select; XT / SLX 12 | sprzedaż PL ~8 800 zł (widełki 7 800–9 800 zł) ≈2020 € (≈1790–2250 €)\n- 2022 CF 7 / 720 | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; RS Lyrik Select; damper RS Deluxe Select; XT 12 (mieszany) | sprzedaż PL ~9 500 zł (widełki 8 000–11 000 zł) ≈2180 € (≈1840–2530 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2022 CF 8 / 900 | carbon; EP8 / DU-EP800, 85 Nm; 900 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT 12 | sprzedaż PL ~10 700 zł (widełki 9 200–12 200 zł) ≈2460 € (≈2110–2800 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2023 profil: CF7, Lyrik / XT, 720 Wh | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; RS Lyrik Select; damper RS Deluxe Select; XT 12 (mieszany) | sprzedaż PL ~10 200 zł (widełki 8 700–11 700 zł) ≈2340 € (≈2000–2690 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2023 profil: CF8, Fox Rhythm / XT, 900 Wh | carbon; EP8 / DU-EP800, 85 Nm; 900 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2024 profil: CF7, Lyrik / XT, 720 Wh | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; RS Lyrik Select; damper RS Deluxe Select; XT 12 (mieszany) | sprzedaż PL ~11 200 zł (widełki 9 700–12 700 zł) ≈2570 € (≈2230–2920 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2024 profil: CF8, Fox Rhythm / XT, 900 Wh | carbon; EP8 / DU-EP800, 85 Nm; 900 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT 12 | sprzedaż PL ~12 500 zł (widełki 11 000–14 000 zł) ≈2870 € (≈2530–3220 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n## Canyon Torque:ON AL — e-MTB\n- 2021 profil: AL, RockShox / Deore–SLX | AL; EP8 / DU-EP800, 85 Nm; 504 Wh; RS ZEB / Yari; damper RS Super Deluxe; Deore / SLX 12 | sprzedaż PL ~7 800 zł (widełki 6 800–8 800 zł) ≈1790 € (≈1560–2020 €) — uwaga: Torque:ON od 2021. Tu jedna bateria 504 Wh; nie CF i nie 2020.\n- 2022 profil: AL, RockShox / Deore–SLX | AL; EP8 / DU-EP800, 85 Nm; 504 Wh; RS ZEB / Yari; damper RS Super Deluxe; Deore / SLX 12 | sprzedaż PL ~8 300 zł (widełki 7 300–9 300 zł) ≈1910 € (≈1680–2140 €) — uwaga: Torque:ON od 2021. Tu jedna bateria 504 Wh; nie CF i nie 2020.\n## Canyon Torque:ON CF — e-MTB\n- 2023 CF 8 / 720 | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; Fox 38 Performance 180; damper Fox Float X2 Performance; SLX 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2023 CF 9 / 900 | carbon; EP8 / DU-EP800, 85 Nm; 900 Wh; Fox 38 Factory 180; damper Fox Float X2 Factory; XT 12 | sprzedaż PL ~14 000 zł (widełki 12 500–15 500 zł) ≈3220 € (≈2870–3560 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2024 profil: CF8, Fox Performance / SLX, 720 | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; Fox 38 Performance 180; damper Fox Float X2 Performance; SLX 12 | sprzedaż PL ~12 500 zł (widełki 11 000–14 000 zł) ≈2870 € (≈2530–3220 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno.\n- 2024 profil: CF9, Fox Factory / XT, 900 | carbon; EP8 / DU-EP800, 85 Nm; 900 Wh; Fox 38 Factory 180; damper Fox Float X2 Factory; XT 12 | sprzedaż PL ~15 000 zł (widełki 13 500–16 500 zł) ≈3450 € (≈3100–3790 €) — uwaga: 720/900 Wh: sprawdź zakończenie akcji serwisowej baterii i rzeczywiście zamontowany akumulator. Wycena tylko sprawnego, dopuszczonego do jazdy egzemplarza; 800 Wh po wymianie traktuj osobno."
+  },
+  "emtb_commencal": {
+   "name": "e-MTB Commencal",
+   "text": "BAZA CEN — e-MTB Commencal — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Commencal Meta Power — e-MTB\n- 2018 profil: E8000 / 504 / RockShox | AL; E8000, 70 Nm; 504 Wh; RS Yari / Lyrik; damper RS Deluxe / Super Deluxe; SLX 11 | sprzedaż PL ~6 000 zł (widełki 4 500–7 500 zł) ≈1380 € (≈1030–1720 €) [słabe dopasowanie]\n- 2019 profil: E8000 / 504 / RockShox | AL; E8000, 70 Nm; 504 Wh; RS Yari / Lyrik; damper RS Deluxe / Super Deluxe; SLX 11 | sprzedaż PL ~6 500 zł (widełki 5 000–8 000 zł) ≈1490 € (≈1150–1840 €) [słabe dopasowanie]\n- 2020 profil: E8000 / 504 / RockShox | AL; E8000, 70 Nm; 504 Wh; RS Yari / Lyrik; damper RS Deluxe / Super Deluxe; SLX 11 | sprzedaż PL ~7 000 zł (widełki 5 500–8 500 zł) ≈1610 € (≈1260–1950 €) [słabe dopasowanie]\n## Commencal Meta Power 29 — e-MTB\n- 2021 profil: EP8 630 / Fox / SLX | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 Performance; damper Fox Float X Performance; SLX 12 | sprzedaż PL ~9 000 zł (widełki 7 500–10 500 zł) ≈2070 € (≈1720–2410 €) — uwaga: Źródło producenta miesza sekcje generacji; wiersz jest profilem części, nie gwarancją fabrycznego Essential z danego roku.\n- 2022 profil: EP8 630 / Fox / SLX | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 Performance; damper Fox Float X Performance; SLX 12 | sprzedaż PL ~9 800 zł (widełki 8 300–11 300 zł) ≈2250 € (≈1910–2600 €) — uwaga: Źródło producenta miesza sekcje generacji; wiersz jest profilem części, nie gwarancją fabrycznego Essential z danego roku.\n- 2023 profil: EP8 630 / Fox / SLX | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 Performance; damper Fox Float X Performance; SLX 12 | sprzedaż PL ~10 500 zł (widełki 9 000–12 000 zł) ≈2410 € (≈2070–2760 €) — uwaga: Źródło producenta miesza sekcje generacji; wiersz jest profilem części, nie gwarancją fabrycznego Essential z danego roku.\n- 2024 profil: EP8 630 / Fox / SLX | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 Performance; damper Fox Float X Performance; SLX 12 | sprzedaż PL ~11 200 zł (widełki 9 700–12 700 zł) ≈2570 € (≈2230–2920 €) — uwaga: Źródło producenta miesza sekcje generacji; wiersz jest profilem części, nie gwarancją fabrycznego Essential z danego roku."
+  },
+  "emtb_cube": {
+   "name": "e-MTB Cube",
+   "text": "BAZA CEN — e-MTB Cube — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Cube Reaction Hybrid — e-MTB\n- 2018 Pro 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Suntour XCM34, sprężyna; Deore 10 | sprzedaż PL ~3 300 zł (widełki 2 300–4 300 zł) ≈760 € (≈530–990 €)\n- 2018 Race 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Judy Silver Air; XT 11 | sprzedaż PL ~3 900 zł (widełki 2 900–4 900 zł) ≈900 € (≈670–1130 €)\n- 2019 profil: podstawowy, XCM / Deore | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Suntour XCM34, sprężyna; Deore 10 | sprzedaż PL ~3 700 zł (widełki 2 700–4 700 zł) ≈850 € (≈620–1080 €)\n- 2019 profil: Judy Air / XT | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Judy Silver Air; XT 11 | sprzedaż PL ~4 300 zł (widełki 3 300–5 300 zł) ≈990 € (≈760–1220 €)\n- 2020 profil: podstawowy, 500 Wh | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; Suntour XCM34, sprężyna; Deore | sprzedaż PL ~4 200 zł (widełki 3 200–5 200 zł) ≈970 € (≈740–1200 €)\n- 2021 profil: podstawowy, 500 Wh | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; Suntour XCM34, sprężyna; Deore | sprzedaż PL ~4 600 zł (widełki 3 600–5 600 zł) ≈1060 € (≈830–1290 €)\n- 2022 profil: podstawowy, 500 Wh | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; Suntour XCM34, sprężyna; Deore | sprzedaż PL ~4 900 zł (widełki 3 900–5 900 zł) ≈1130 € (≈900–1360 €)\n- 2023 Pro 625 | AL; Bosch CX gen.4 Smart, 85 Nm; 625 Wh; X-Fusion MIG32 Air; Deore 11 | sprzedaż PL ~5 700 zł (widełki 4 700–6 700 zł) ≈1310 € (≈1080–1540 €)\n- 2023 profil: 750 Wh, powietrze / Deore–XT | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Judy / Recon Air; Deore / XT 12 | sprzedaż PL ~6 800 zł (widełki 5 800–7 800 zł) ≈1560 € (≈1330–1790 €)\n- 2024 profil: powietrze / Deore, 625 Wh | AL; Bosch CX gen.4 Smart, 85 Nm; 625 Wh; X-Fusion MIG32 Air; Deore 11 | sprzedaż PL ~6 200 zł (widełki 5 200–7 200 zł) ≈1430 € (≈1200–1660 €)\n- 2024 profil: 750 Wh, powietrze / Deore–XT | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Judy / Recon Air; Deore / XT 12 | sprzedaż PL ~7 300 zł (widełki 6 300–8 300 zł) ≈1680 € (≈1450–1910 €)\n## Cube Stereo Hybrid 120 — e-MTB\n- 2018 profil: AL / Recon / Deore–XT | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Recon Air; damper RS Deluxe; Deore / XT 10–11 | sprzedaż PL ~4 300 zł (widełki 2 800–5 800 zł) ≈990 € (≈640–1330 €) [słabe dopasowanie]\n- 2019 profil: AL / Recon / Deore–XT | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Recon Air; damper RS Deluxe; Deore / XT 10–11 | sprzedaż PL ~4 800 zł (widełki 3 300–6 300 zł) ≈1100 € (≈760–1450 €) [słabe dopasowanie]\n- 2020 profil: 625 Wh, Recon / Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon RL; damper RS Deluxe; Deore 12 | sprzedaż PL ~6 200 zł (widełki 5 200–7 200 zł) ≈1430 € (≈1200–1660 €)\n- 2021 profil: 625 Wh, Recon / Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon RL; damper RS Deluxe; Deore 12 | sprzedaż PL ~6 700 zł (widełki 5 700–7 700 zł) ≈1540 € (≈1310–1770 €)\n- 2022 profil: 625 Wh, Recon / Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon RL; damper RS Deluxe; Deore 12 | sprzedaż PL ~7 200 zł (widełki 6 200–8 200 zł) ≈1660 € (≈1430–1890 €)\n- 2023 profil: 750 Wh, średni osprzęt | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Recon / Judy Air; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~8 500 zł (widełki 7 000–10 000 zł) ≈1950 € (≈1610–2300 €) [słabe dopasowanie]\n- 2024 profil: 750 Wh, średni osprzęt | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Recon / Judy Air; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~9 200 zł (widełki 7 700–10 700 zł) ≈2110 € (≈1770–2460 €) [słabe dopasowanie]\n## Cube Stereo Hybrid 140 — e-MTB\n- 2018 Pro 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Suntour Aion; damper Suntour DUAir; XT 11 (mieszany) | sprzedaż PL ~4 500 zł (widełki 3 500–5 500 zł) ≈1030 € (≈800–1260 €)\n- 2018 Race 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Fox 34 Rhythm; damper Fox DPS; XT 11 | sprzedaż PL ~5 200 zł (widełki 4 200–6 200 zł) ≈1200 € (≈970–1430 €)\n- 2019 profil: AL / Aion / XT | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Suntour Aion; damper Suntour DUAir; XT 11 (mieszany) | sprzedaż PL ~5 000 zł (widełki 4 000–6 000 zł) ≈1150 € (≈920–1380 €)\n- 2019 profil: AL / Fox Rhythm / XT | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Fox 34 Rhythm; damper Fox DPS; XT 11 | sprzedaż PL ~5 700 zł (widełki 4 700–6 700 zł) ≈1310 € (≈1080–1540 €)\n## Cube Stereo Hybrid 140 HPC — e-MTB\n- 2020 profil: 625 Wh, RockShox / Deore | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon / 35 Gold Air; damper RS Deluxe; Deore 12 | sprzedaż PL ~6 500 zł (widełki 5 500–7 500 zł) ≈1490 € (≈1260–1720 €)\n- 2020 SL 625 | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 34 Rhythm; damper Fox DPS; XT / SLX–Deore 12 | sprzedaż PL ~7 400 zł (widełki 6 400–8 400 zł) ≈1700 € (≈1470–1930 €) — uwaga: 2021/22: mieszanka XT i Deore zależnie od części; nie wyceniaj samego napisu XT jako pełnej grupy.\n- 2021 profil: 625 Wh, RockShox / Deore | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon / 35 Gold Air; damper RS Deluxe; Deore 12 | sprzedaż PL ~7 000 zł (widełki 6 000–8 000 zł) ≈1610 € (≈1380–1840 €)\n- 2021 profil: SL: Fox Rhythm / XT | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 34 Rhythm; damper Fox DPS; XT / SLX–Deore 12 | sprzedaż PL ~7 800 zł (widełki 6 800–8 800 zł) ≈1790 € (≈1560–2020 €) — uwaga: 2021/22: mieszanka XT i Deore zależnie od części; nie wyceniaj samego napisu XT jako pełnej grupy.\n- 2022 Pro 625 — konfiguracja ogłoszenia | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon Silver Air; damper RS Deluxe Select; Deore 12 | sprzedaż PL ~7 500 zł (widełki 6 500–8 500 zł) ≈1720 € (≈1490–1950 €) — uwaga: Wersja konkretnego ogłoszenia; sprawdź hamulce w egzemplarzu.\n- 2022 profil: SL: Fox Rhythm / XT | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 34 Rhythm; damper Fox DPS; XT / SLX–Deore 12 | sprzedaż PL ~8 100 zł (widełki 7 100–9 100 zł) ≈1860 € (≈1630–2090 €) — uwaga: 2021/22: mieszanka XT i Deore zależnie od części; nie wyceniaj samego napisu XT jako pełnej grupy.\n- 2023 profil: 750 Wh, Fox Rhythm / XT | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 34 Rhythm 150; damper Fox DPS; XT 12 (mieszany) | sprzedaż PL ~10 000 zł (widełki 8 500–11 500 zł) ≈2300 € (≈1950–2640 €)\n- 2024 SLX 750 | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 34 Rhythm 150; damper Fox DPS; XT 12 (mieszany) | sprzedaż PL ~11 000 zł (widełki 9 500–12 500 zł) ≈2530 € (≈2180–2870 €)\n## Cube Stereo Hybrid 160 — e-MTB\n- 2018 SL 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; Fox 36 Float 170; damper Fox DPX2; XT 11 | sprzedaż PL ~6 000 zł (widełki 5 000–7 000 zł) ≈1380 € (≈1150–1610 €)\n- 2019 Race 500 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Yari RC 170; damper Fox DPS; SRAM NX Eagle 12 | sprzedaż PL ~5 800 zł (widełki 4 800–6 800 zł) ≈1330 € (≈1100–1560 €)\n## Cube Stereo Hybrid 160 HPC — e-MTB\n- 2020 SL 625 | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Select 170; damper RS Deluxe Select+; SRAM NX / SX Eagle 12 | sprzedaż PL ~7 600 zł (widełki 6 600–8 600 zł) ≈1750 € (≈1520–1980 €)\n- 2020 SLT 625 | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Ultimate; damper RS Super Deluxe Ultimate; SRAM X01 AXS 12 | sprzedaż PL ~10 000 zł (widełki 8 000–12 000 zł) ≈2300 € (≈1840–2760 €) [słabe dopasowanie] — uwaga: Wycena konfiguracji premium na podstawie słabszych wersji; większa niepewność.\n- 2021 profil: Lyrik / NX, 625 Wh | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Select 170; damper RS Deluxe Select+; SRAM NX / SX Eagle 12 | sprzedaż PL ~8 100 zł (widełki 7 100–9 100 zł) ≈1860 € (≈1630–2090 €)\n- 2022 profil: Lyrik / NX, 625 Wh | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Select 170; damper RS Deluxe Select+; SRAM NX / SX Eagle 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €)\n- 2023 SLX 750 | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS ZEB Select 170; damper RS Deluxe Select+; XT / Deore 12 | sprzedaż PL ~11 000 zł (widełki 9 500–12 500 zł) ≈2530 € (≈2180–2870 €)\n- 2023 profil: premium Fox Factory / XT | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 38 Factory; damper Fox Float X / X2 Factory; XT 12 | sprzedaż PL ~13 500 zł (widełki 11 500–15 500 zł) ≈3100 € (≈2640–3560 €) [słabe dopasowanie]\n- 2024 profil: SLX: ZEB / XT, 750 Wh | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS ZEB Select 170; damper RS Deluxe Select+; XT / Deore 12 | sprzedaż PL ~12 000 zł (widełki 10 500–13 500 zł) ≈2760 € (≈2410–3100 €)\n- 2024 profil: premium Fox Factory / XT | carbon / tył AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 38 Factory; damper Fox Float X / X2 Factory; XT 12 | sprzedaż PL ~14 500 zł (widełki 12 500–16 500 zł) ≈3330 € (≈2870–3790 €) [słabe dopasowanie]"
+  },
+  "emtb_focus": {
+   "name": "e-MTB Focus",
+   "text": "BAZA CEN — e-MTB Focus — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Focus JAM² — e-MTB\n- 2018 profil: Shimano / 378 Wh / Fox | AL; E8000, 70 Nm; 378 Wh; Fox 34 Rhythm; damper Fox DPS; XT 11 | sprzedaż PL ~4 400 zł (widełki 3 400–5 400 zł) ≈1010 € (≈780–1240 €) — uwaga: Bez dodatkowego akumulatora TEC. Nie mieszać ze sprzedawanymi równolegle Bosch 625.\n- 2019 profil: Shimano / 378 Wh / Fox | AL; E8000, 70 Nm; 378 Wh; Fox 34 Rhythm; damper Fox DPS; XT 11 | sprzedaż PL ~4 900 zł (widełki 3 900–5 900 zł) ≈1130 € (≈900–1360 €) — uwaga: Bez dodatkowego akumulatora TEC. Nie mieszać ze sprzedawanymi równolegle Bosch 625.\n- 2020 profil: Shimano / 378 Wh / Fox | AL; E8000, 70 Nm; 378 Wh; Fox 34 Rhythm; damper Fox DPS; XT 11 | sprzedaż PL ~5 300 zł (widełki 4 300–6 300 zł) ≈1220 € (≈990–1450 €) — uwaga: Bez dodatkowego akumulatora TEC. Nie mieszać ze sprzedawanymi równolegle Bosch 625.\n- 2021 6.8 Nine / Bosch | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 34 Rhythm; damper Fox DPS; XT / SLX 12 | sprzedaż PL ~7 800 zł (widełki 6 800–8 800 zł) ≈1790 € (≈1560–2020 €)\n- 2022 profil: Bosch 625 / Fox / XT | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 34 Rhythm; damper Fox DPS; XT / SLX 12 | sprzedaż PL ~8 300 zł (widełki 7 300–9 300 zł) ≈1910 € (≈1680–2140 €)\n- 2023 6.8 / Bosch 750 | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 36 Rhythm; damper Fox DPS; XT 12 | sprzedaż PL ~10 500 zł (widełki 9 000–12 000 zł) ≈2410 € (≈2070–2760 €) — uwaga: Istnieje też wariant JAM² z Shimano 720 Wh — to osobna konfiguracja.\n- 2024 profil: Bosch 750 / Fox / XT | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 36 Rhythm; damper Fox DPS; XT 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €) — uwaga: Istnieje też wariant JAM² z Shimano 720 Wh — to osobna konfiguracja.\n## Focus SAM² — e-MTB\n- 2019 profil: E8000 / 378 / Fox–XT | AL; E8000, 70 Nm; 378 Wh; Fox 36 Performance; damper Fox DPS; XT 11 | sprzedaż PL ~5 900 zł (widełki 4 400–7 400 zł) ≈1360 € (≈1010–1700 €) [słabe dopasowanie]\n- 2020 profil: E8000 / 378 / Fox–XT | AL; E8000, 70 Nm; 378 Wh; Fox 36 Performance; damper Fox DPS; XT 11 | sprzedaż PL ~6 500 zł (widełki 5 000–8 000 zł) ≈1490 € (≈1150–1840 €) [słabe dopasowanie]\n- 2021 6.8 / 625 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS ZEB Charger R; damper RS Super Deluxe Select+; SRAM GX / NX Eagle 12 | sprzedaż PL ~8 800 zł (widełki 7 800–9 800 zł) ≈2020 € (≈1790–2250 €)\n- 2022 profil: 625 / ZEB / GX | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS ZEB Charger R; damper RS Super Deluxe Select+; SRAM GX / NX Eagle 12 | sprzedaż PL ~9 500 zł (widełki 8 000–11 000 zł) ≈2180 € (≈1840–2530 €)\n- 2023 profil: nowa generacja 750 / Fox / XT | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 38 Performance; damper Fox Float X / DHX Performance; XT 12 | sprzedaż PL ~11 800 zł (widełki 9 800–13 800 zł) ≈2710 € (≈2250–3170 €) [słabe dopasowanie]\n- 2024 profil: nowa generacja 750 / Fox / XT | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 38 Performance; damper Fox Float X / DHX Performance; XT 12 | sprzedaż PL ~12 800 zł (widełki 10 800–14 800 zł) ≈2940 € (≈2480–3400 €) [słabe dopasowanie]"
+  },
+  "emtb_giant": {
+   "name": "e-MTB Giant",
+   "text": "BAZA CEN — e-MTB Giant — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Giant Reign E+ — e-MTB\n- 2020 profil: starszy SyncDrive 80 Nm / 500 | AL; Giant SyncDrive Pro (Yamaha), 80 Nm; 500 Wh; RS Yari / Fox 36 Rhythm; damper RS Deluxe / Fox DPS; Deore / SLX 12 | sprzedaż PL ~6 800 zł (widełki 5 300–8 300 zł) ≈1560 € (≈1220–1910 €) [słabe dopasowanie]\n- 2021 profil: starszy SyncDrive 80 Nm / 500 | AL; Giant SyncDrive Pro (Yamaha), 80 Nm; 500 Wh; RS Yari / Fox 36 Rhythm; damper RS Deluxe / Fox DPS; Deore / SLX 12 | sprzedaż PL ~7 500 zł (widełki 6 000–9 000 zł) ≈1720 € (≈1380–2070 €) [słabe dopasowanie]\n- 2022 profil: E+3 MX / 625, podstawowy | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 625 Wh; RS Yari 170; damper RS Deluxe; Deore 10–12 | sprzedaż PL ~8 000 zł (widełki 7 000–9 000 zł) ≈1840 € (≈1610–2070 €) — uwaga: Konfiguracja referencyjna; sprawdź rocznik i liczbę przełożeń zamiast samej nazwy E+3.\n- 2023 profil: E+3 MX / 625, podstawowy | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 625 Wh; RS Yari 170; damper RS Deluxe; Deore 10–12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €) — uwaga: Konfiguracja referencyjna; sprawdź rocznik i liczbę przełożeń zamiast samej nazwy E+3.\n- 2023 E+ 2 / 800 | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 800 Wh; RS ZEB Select 170; damper Fox Float X Performance; SLX / Deore 12 | sprzedaż PL ~11 000 zł (widełki 9 500–12 500 zł) ≈2530 € (≈2180–2870 €)\n- 2024 profil: E+2, ZEB / SLX / 800 | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 800 Wh; RS ZEB Select 170; damper Fox Float X Performance; SLX / Deore 12 | sprzedaż PL ~12 000 zł (widełki 10 500–13 500 zł) ≈2760 € (≈2410–3100 €)\n## Giant Trance E+ Pro — e-MTB\n- 2019 profil: E+2 Pro, Fox Rhythm / XT–SLX | AL; Giant SyncDrive Pro (Yamaha), 80 Nm; 500 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT / SLX 11–12 | sprzedaż PL ~5 900 zł (widełki 4 900–6 900 zł) ≈1360 € (≈1130–1590 €) — uwaga: Źródłowy 2020: 12 przełożeń. Starsze 11-rzędowe traktuj jako profil, nie tę samą grupę.\n- 2020 E+ 2 Pro | AL; Giant SyncDrive Pro (Yamaha), 80 Nm; 500 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT / SLX 11–12 | sprzedaż PL ~6 400 zł (widełki 5 400–7 400 zł) ≈1470 € (≈1240–1700 €) — uwaga: Źródłowy 2020: 12 przełożeń. Starsze 11-rzędowe traktuj jako profil, nie tę samą grupę.\n- 2021 profil: E+2 Pro, Fox Rhythm / XT–SLX | AL; Giant SyncDrive Pro (Yamaha), 80 Nm; 500 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT / SLX 11–12 | sprzedaż PL ~6 900 zł (widełki 5 900–7 900 zł) ≈1590 € (≈1360–1820 €) — uwaga: Źródłowy 2020: 12 przełożeń. Starsze 11-rzędowe traktuj jako profil, nie tę samą grupę.\n## Giant Trance X Advanced E+ — e-MTB\n- 2022 E+ 1 / Live Valve | carbon; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 625 Wh; Fox 36 Live Valve; damper Fox Live Valve; XT / SLX 12 | sprzedaż PL ~12 000 zł (widełki 10 500–13 500 zł) ≈2760 € (≈2410–3100 €) — uwaga: Pełna sprawność Live Valve założona; sam carbon nie uzasadnia ceny nowego roweru.\n- 2023 profil: Advanced 625 / Live Valve | carbon; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 625 Wh; Fox 36 Live Valve; damper Fox Live Valve; XT / SLX 12 | sprzedaż PL ~13 000 zł (widełki 11 500–14 500 zł) ≈2990 € (≈2640–3330 €) — uwaga: Pełna sprawność Live Valve założona; sam carbon nie uzasadnia ceny nowego roweru.\n## Giant Trance X E+ — e-MTB\n- 2022 E+ 2 / 625 | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 625 Wh; Fox 36 Rhythm; damper Fox DPS Performance; XT / SLX–Deore 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €)\n- 2023 E+ 2 / 800 | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 800 Wh; Fox 36 Rhythm; damper Fox Float Performance; SLX / Deore 12 | sprzedaż PL ~10 500 zł (widełki 9 000–12 000 zł) ≈2410 € (≈2070–2760 €)\n- 2024 profil: E+2, 800 Wh / Fox / SLX | AL; Giant SyncDrive Pro2 (Yamaha), 85 Nm; 800 Wh; Fox 36 Rhythm; damper Fox Float Performance; SLX / Deore 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €)"
+  },
+  "emtb_haibike": {
+   "name": "e-MTB Haibike",
+   "text": "BAZA CEN — e-MTB Haibike — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Haibike AllMtn — e-MTB\n- 2021 7 / carbon | carbon; Yamaha PW-X2, 80 Nm; 600 Wh; Fox 38 Factory; damper Fox DPX2 Factory; XT 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €)\n- 2022 3 / Bosch 625 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Yari RC; damper RS Deluxe RT; SRAM SX Eagle 12 | sprzedaż PL ~8 000 zł (widełki 7 000–9 000 zł) ≈1840 € (≈1610–2070 €)\n- 2022 profil: PW-X2 600 / Factory / XT | carbon; Yamaha PW-X2, 80 Nm; 600 Wh; Fox 38 Factory; damper Fox DPX2 Factory; XT 12 | sprzedaż PL ~9 200 zł (widełki 7 700–10 700 zł) ≈2110 € (≈1770–2460 €)\n- 2023 profil: Yamaha 720 / średni osprzęt | AL; Yamaha PW-X3, 85 Nm; 720 Wh; RS Yari / ZEB Select; damper RS Deluxe; Deore / SLX 12 | sprzedaż PL ~9 800 zł (widełki 8 300–11 300 zł) ≈2250 € (≈1910–2600 €)\n- 2024 profil: Yamaha 720 / średni osprzęt | AL; Yamaha PW-X3, 85 Nm; 720 Wh; RS Yari / ZEB Select; damper RS Deluxe; Deore / SLX 12 | sprzedaż PL ~10 800 zł (widełki 9 300–12 300 zł) ≈2480 € (≈2140–2830 €)\n## Haibike FullSeven — e-MTB\n- 2021 5 | AL; Yamaha PW-ST, 70 Nm; 500 Wh; RS 35 Silver, sprężyna; damper RS Deluxe Select+; Deore 11 | sprzedaż PL ~5 500 zł (widełki 4 500–6 500 zł) ≈1260 € (≈1030–1490 €)\n- 2022 profil: PW-ST 500 / 35 Silver | AL; Yamaha PW-ST, 70 Nm; 500 Wh; RS 35 Silver, sprężyna; damper RS Deluxe Select+; Deore 11 | sprzedaż PL ~6 000 zł (widełki 5 000–7 000 zł) ≈1380 € (≈1150–1610 €)\n- 2023 profil: Bosch 625 / powietrze | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Yari / Revelation; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~7 600 zł (widełki 6 600–8 600 zł) ≈1750 € (≈1520–1980 €)\n- 2024 profil: Bosch 625 / powietrze | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Yari / Revelation; damper RS Deluxe; Deore / XT 12 | sprzedaż PL ~8 200 zł (widełki 7 200–9 200 zł) ≈1890 € (≈1660–2110 €)\n## Haibike SDURO / FullSeven — e-MTB\n- 2018 profil: 500 Wh / podstawowy full | AL; Yamaha PW-SE / PW-ST, 70 Nm; 500 Wh; Suntour Aion / RS Recon; damper Suntour / RS Deluxe; Deore 10–11 | sprzedaż PL ~4 000 zł (widełki 2 500–5 500 zł) ≈920 € (≈570–1260 €) [słabe dopasowanie]\n- 2019 profil: 500 Wh / podstawowy full | AL; Yamaha PW-SE / PW-ST, 70 Nm; 500 Wh; Suntour Aion / RS Recon; damper Suntour / RS Deluxe; Deore 10–11 | sprzedaż PL ~4 400 zł (widełki 2 900–5 900 zł) ≈1010 € (≈670–1360 €) [słabe dopasowanie]\n- 2020 profil: 500 Wh / podstawowy full | AL; Yamaha PW-SE / PW-ST, 70 Nm; 500 Wh; Suntour Aion / RS Recon; damper Suntour / RS Deluxe; Deore 10–11 | sprzedaż PL ~4 800 zł (widełki 3 300–6 300 zł) ≈1100 € (≈760–1450 €) [słabe dopasowanie]\n## Haibike XDURO / AllMtn — e-MTB\n- 2018 profil: Yamaha 500 / średni osprzęt | AL; Yamaha PW-X, 80 Nm; 500 Wh; RS Yari / Fox 36; damper RS Deluxe / Fox DPS; XT / SLX 11 | sprzedaż PL ~5 100 zł (widełki 3 600–6 600 zł) ≈1170 € (≈830–1520 €) [słabe dopasowanie]\n- 2019 profil: Yamaha 500 / średni osprzęt | AL; Yamaha PW-X, 80 Nm; 500 Wh; RS Yari / Fox 36; damper RS Deluxe / Fox DPS; XT / SLX 11 | sprzedaż PL ~5 600 zł (widełki 4 100–7 100 zł) ≈1290 € (≈940–1630 €) [słabe dopasowanie]\n- 2020 profil: Yamaha 500 / średni osprzęt | AL; Yamaha PW-X, 80 Nm; 500 Wh; RS Yari / Fox 36; damper RS Deluxe / Fox DPS; XT / SLX 11 | sprzedaż PL ~6 100 zł (widełki 4 600–7 600 zł) ≈1400 € (≈1060–1750 €) [słabe dopasowanie]"
+  },
+  "emtb_merida": {
+   "name": "e-MTB Merida",
+   "text": "BAZA CEN — e-MTB Merida — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Merida eONE-FORTY — e-MTB\n- 2021 500 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z2; damper Suntour Edge; Deore 11 | sprzedaż PL ~6 600 zł (widełki 5 100–8 100 zł) ≈1520 € (≈1170–1860 €) [słabe dopasowanie]\n- 2022 profil: 500: Z2 / Deore / 630 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z2; damper Suntour Edge; Deore 11 | sprzedaż PL ~7 100 zł (widełki 5 600–8 600 zł) ≈1630 € (≈1290–1980 €) [słabe dopasowanie]\n- 2023 profil: 500: Z2 / Deore / 630 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z2; damper Suntour Edge; Deore 11 | sprzedaż PL ~7 600 zł (widełki 6 100–9 100 zł) ≈1750 € (≈1400–2090 €) [słabe dopasowanie]\n- 2024 profil: 500: Z2 / Deore / 630 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z2; damper Suntour Edge; Deore 11 | sprzedaż PL ~8 200 zł (widełki 6 700–9 700 zł) ≈1890 € (≈1540–2230 €) [słabe dopasowanie]\n## Merida eONE-SIXTY — e-MTB\n- 2018 800 | AL; E8000, 70 Nm; 504 Wh; RS Yari; damper RS Super Deluxe R; XT / SLX 11 | sprzedaż PL ~5 500 zł (widełki 4 500–6 500 zł) ≈1260 € (≈1030–1490 €)\n- 2019 profil: AL / Yari / XT–SLX | AL; E8000, 70 Nm; 504 Wh; RS Yari; damper RS Super Deluxe R; XT / SLX 11 | sprzedaż PL ~6 000 zł (widełki 5 000–7 000 zł) ≈1380 € (≈1150–1610 €)\n- 2020 9000 | carbon / tył AL; E8000, 70 Nm; 504 Wh; Fox 36 Factory; damper Fox DPX2 Factory; XT 12 | sprzedaż PL ~8 000 zł (widełki 7 000–9 000 zł) ≈1840 € (≈1610–2070 €)\n- 2021 500 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; RS 35 Gold RL; damper RS Deluxe Select+; Deore 11 | sprzedaż PL ~7 200 zł (widełki 6 200–8 200 zł) ≈1660 € (≈1430–1890 €) — uwaga: Dla 630 Wh; XS może mieć 504 Wh. Deore M5100 to 11 przełożeń.\n- 2021 profil: carbon premium / Fox Factory | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 / 36 Factory; damper Fox Float X2 / DPX2 Factory; XT / XTR 12 | sprzedaż PL ~10 500 zł (widełki 8 500–12 500 zł) ≈2410 € (≈1950–2870 €) [słabe dopasowanie] — uwaga: Nie automatyczna wycena każdej wersji 10K; osprzęt i koła muszą odpowiadać opisowi.\n- 2022 profil: 500: EP8 / 35 Gold / Deore | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; RS 35 Gold RL; damper RS Deluxe Select+; Deore 11 | sprzedaż PL ~7 700 zł (widełki 6 700–8 700 zł) ≈1770 € (≈1540–2000 €) — uwaga: Dla 630 Wh; XS może mieć 504 Wh. Deore M5100 to 11 przełożeń.\n- 2022 profil: 8000: XT Linkglide / Z1 | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z1; damper Fox DPX2 Performance; XT Linkglide 11 | sprzedaż PL ~9 000 zł (widełki 7 500–10 500 zł) ≈2070 € (≈1720–2410 €) — uwaga: Profil wyceny z 11-rzędowym Linkglide; sprawdź wersję, nie zakładaj XT12.\n- 2022 profil: carbon premium / Fox Factory | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 / 36 Factory; damper Fox Float X2 / DPX2 Factory; XT / XTR 12 | sprzedaż PL ~11 200 zł (widełki 9 200–13 200 zł) ≈2570 € (≈2110–3030 €) [słabe dopasowanie] — uwaga: Nie automatyczna wycena każdej wersji 10K; osprzęt i koła muszą odpowiadać opisowi.\n- 2023 profil: 500: EP8 / 35 Gold / Deore | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; RS 35 Gold RL; damper RS Deluxe Select+; Deore 11 | sprzedaż PL ~8 200 zł (widełki 7 200–9 200 zł) ≈1890 € (≈1660–2110 €) — uwaga: Dla 630 Wh; XS może mieć 504 Wh. Deore M5100 to 11 przełożeń.\n- 2023 profil: 700: Z1 / XT / 630 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z1; damper Fox DPX2 Performance; XT / Deore 12 | sprzedaż PL ~9 000 zł (widełki 7 500–10 500 zł) ≈2070 € (≈1720–2410 €)\n- 2023 profil: carbon premium / Fox Factory | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 / 36 Factory; damper Fox Float X2 / DPX2 Factory; XT / XTR 12 | sprzedaż PL ~12 000 zł (widełki 10 000–14 000 zł) ≈2760 € (≈2300–3220 €) [słabe dopasowanie] — uwaga: Nie automatyczna wycena każdej wersji 10K; osprzęt i koła muszą odpowiadać opisowi.\n- 2024 profil: 500: EP8 / 35 Gold / Deore | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; RS 35 Gold RL; damper RS Deluxe Select+; Deore 11 | sprzedaż PL ~8 800 zł (widełki 7 800–9 800 zł) ≈2020 € (≈1790–2250 €) — uwaga: Dla 630 Wh; XS może mieć 504 Wh. Deore M5100 to 11 przełożeń.\n- 2024 profil: 700: Z1 / XT / 630 | AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Marzocchi Z1; damper Fox DPX2 Performance; XT / Deore 12 | sprzedaż PL ~9 700 zł (widełki 8 200–11 200 zł) ≈2230 € (≈1890–2570 €)\n- 2024 profil: carbon premium / Fox Factory | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 630 Wh; Fox 38 / 36 Factory; damper Fox Float X2 / DPX2 Factory; XT / XTR 12 | sprzedaż PL ~12 800 zł (widełki 10 800–14 800 zł) ≈2940 € (≈2480–3400 €) [słabe dopasowanie] — uwaga: Nie automatyczna wycena każdej wersji 10K; osprzęt i koła muszą odpowiadać opisowi."
+  },
+  "emtb_orbea": {
+   "name": "e-MTB Orbea",
+   "text": "BAZA CEN — e-MTB Orbea — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Orbea Rise — e-MTB\n- 2021 M20 / 360 | carbon; EP8 RS, 60 Nm; 360 Wh; Fox 34 Performance; damper Fox DPS Performance; SLX 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €) — uwaga: Bez extendera; nie pełnomocny EP8 85 Nm.\n- 2022 H30 / 540 | AL; EP8 RS, 60 Nm; 540 Wh; Marzocchi Z2; damper Fox DPS Performance; SLX / Deore 12 | sprzedaż PL ~8 100 zł (widełki 7 100–9 100 zł) ≈1860 € (≈1630–2090 €) — uwaga: Bez extendera.\n- 2022 profil: M20, EP8 RS / 360 | carbon; EP8 RS, 60 Nm; 360 Wh; Fox 34 Performance; damper Fox DPS Performance; SLX 12 | sprzedaż PL ~9 200 zł (widełki 7 700–10 700 zł) ≈2110 € (≈1770–2460 €) — uwaga: Bez extendera; nie pełnomocny EP8 85 Nm.\n- 2023 profil: H30, EP8 RS / 540 | AL; EP8 RS, 60 Nm; 540 Wh; Marzocchi Z2; damper Fox DPS Performance; SLX / Deore 12 | sprzedaż PL ~8 600 zł (widełki 7 600–9 600 zł) ≈1980 € (≈1750–2210 €) — uwaga: Bez extendera.\n- 2023 profil: carbon, EP801 RS / 540 | carbon; EP801 RS (ograniczona charakterystyka); 540 Wh; Fox 34 / 36 Performance; damper Fox DPS / Float X Performance; SLX / XT 12 | sprzedaż PL ~10 500 zł (widełki 8 500–12 500 zł) ≈2410 € (≈1950–2870 €) [słabe dopasowanie] — uwaga: Profil z większą baterią; sprawdź 360 vs 540 oraz generację RS. Cena pod ograniczeniem nowych ofert.\n- 2024 profil: carbon, EP801 RS / 540 | carbon; EP801 RS (ograniczona charakterystyka); 540 Wh; Fox 34 / 36 Performance; damper Fox DPS / Float X Performance; SLX / XT 12 | sprzedaż PL ~11 500 zł (widełki 9 500–13 500 zł) ≈2640 € (≈2180–3100 €) [słabe dopasowanie] — uwaga: Profil z większą baterią; sprawdź 360 vs 540 oraz generację RS. Cena pod ograniczeniem nowych ofert.\n## Orbea Wild — e-MTB\n- 2023 profil: nowa generacja AL 750 | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS 35 Gold / ZEB Select; damper Fox Float X / RS Deluxe; Deore / XT 12 | sprzedaż PL ~10 500 zł (widełki 9 000–12 000 zł) ≈2410 € (≈2070–2760 €)\n- 2023 profil: nowa generacja carbon 750 | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 38 Performance / Factory; damper Fox Float X Performance / Factory; XT 12 | sprzedaż PL ~14 500 zł (widełki 12 500–16 500 zł) ≈3330 € (≈2870–3790 €) [słabe dopasowanie]\n- 2024 profil: nowa generacja AL 750 | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS 35 Gold / ZEB Select; damper Fox Float X / RS Deluxe; Deore / XT 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €)\n- 2024 profil: nowa generacja carbon 750 | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; Fox 38 Performance / Factory; damper Fox Float X Performance / Factory; XT 12 | sprzedaż PL ~15 500 zł (widełki 13 500–17 500 zł) ≈3560 € (≈3100–4020 €) [słabe dopasowanie]\n## Orbea Wild FS — e-MTB\n- 2020 profil: AL 625 / Fox / XT–Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 38 Performance; damper Fox DPS; XT / Deore 12 | sprzedaż PL ~7 800 zł (widełki 6 800–8 800 zł) ≈1790 € (≈1560–2020 €)\n- 2021 H20 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 38 Performance; damper Fox DPS; XT / Deore 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €)\n- 2022 H20 — konfiguracja ogłoszenia | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS 35 Silver Air; damper Fox DPS; XT / Deore 12 | sprzedaż PL ~9 000 zł (widełki 7 500–10 500 zł) ≈2070 € (≈1720–2410 €) — uwaga: Hamulce wg egzemplarza ogłoszeniowego; nie deklaracja oryginalności.\n- 2022 M10 | carbon / tył AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 38 Performance; damper Fox DPS; XT / SLX 12 | sprzedaż PL ~11 000 zł (widełki 9 000–13 000 zł) ≈2530 € (≈2070–2990 €) [słabe dopasowanie]"
+  },
+  "emtb_santa_cruz": {
+   "name": "e-MTB Santa Cruz",
+   "text": "BAZA CEN — e-MTB Santa Cruz — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Santa Cruz Heckler — e-MTB\n- 2020 profil: Heckler 8, średni / E8000 | carbon; E8000, 70 Nm; 504 Wh; Fox 36 Performance; damper RS Super Deluxe Select+; SRAM GX Eagle 12 | sprzedaż PL ~9 000 zł (widełki 7 500–10 500 zł) ≈2070 € (≈1720–2410 €) [słabe dopasowanie]\n- 2021 profil: Heckler 8 R / E7000 | carbon; E7000, 60 Nm; 504 Wh; RS Yari; damper RS Super Deluxe Select; SRAM NX Eagle 12 | sprzedaż PL ~8 000 zł (widełki 6 500–9 500 zł) ≈1840 € (≈1490–2180 €) [słabe dopasowanie] — uwaga: W 2021 R miał E7000; droższe S/XT/X01 miały EP8.\n- 2021 profil: Heckler 8 S / EP8 | carbon; EP8 / DU-EP800, 85 Nm; 504 Wh; Fox 36 Performance; damper RS Super Deluxe Select+; SRAM GX Eagle 12 | sprzedaż PL ~10 000 zł (widełki 8 000–12 000 zł) ≈2300 € (≈1840–2760 €) [słabe dopasowanie]\n- 2022 profil: Heckler 9 C / 720 / GX | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; Fox 36 Performance; damper RS Super Deluxe Select+; SRAM GX Eagle 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €)\n- 2023 profil: Heckler 9 C / 720 / GX | carbon; EP8 / DU-EP800, 85 Nm; 720 Wh; Fox 36 Performance; damper RS Super Deluxe Select+; SRAM GX Eagle 12 | sprzedaż PL ~12 500 zł (widełki 11 000–14 000 zł) ≈2870 € (≈2530–3220 €)\n- 2024 9 C — custom z ogłoszenia | carbon; EP801, 85 Nm; 720 Wh; Fox 38 Performance; damper RS Super Deluxe Ultimate; SRAM GX Transmission | sprzedaż PL ~14 000 zł (widełki 12 500–15 500 zł) ≈3220 € (≈2870–3560 €) — uwaga: Konkretny zestaw zmodyfikowany; cena nie dotyczy każdej fabrycznej wersji C."
+  },
+  "emtb_scott": {
+   "name": "e-MTB Scott",
+   "text": "BAZA CEN — e-MTB Scott — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Scott Genius eRide — e-MTB\n- 2020 920 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 36 Rhythm; damper Fox Float EVOL / DPS, TwinLoc; SRAM SX Eagle 12 | sprzedaż PL ~6 900 zł (widełki 5 900–7 900 zł) ≈1590 € (≈1360–1820 €)\n- 2021 profil: 625 / Fox Rhythm / SX | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 36 Rhythm; damper Fox Float EVOL / DPS, TwinLoc; SRAM SX Eagle 12 | sprzedaż PL ~7 500 zł (widełki 6 500–8 500 zł) ≈1720 € (≈1490–1950 €)\n- 2022 profil: 625 / Fox / XT–Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 36 Rhythm; damper Fox Float EVOL / DPS, TwinLoc; XT / Deore 12 | sprzedaż PL ~8 100 zł (widełki 7 100–9 100 zł) ≈1860 € (≈1630–2090 €)\n- 2023 profil: 625 / Fox / XT–Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; Fox 36 Rhythm; damper Fox Float EVOL / DPS, TwinLoc; XT / Deore 12 | sprzedaż PL ~8 700 zł (widełki 7 700–9 700 zł) ≈2000 € (≈1770–2230 €)\n## Scott Patron eRide — e-MTB\n- 2022 profil: 920, Domain / XT–Deore | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Domain 160; damper Fox Float EVOL eRide; XT / Deore 12 | sprzedaż PL ~11 200 zł (widełki 9 700–12 700 zł) ≈2570 € (≈2230–2920 €) — uwaga: Źródło ma różne hamulce w opisie i tabeli; sprawdź egzemplarz. Nie stosować ceny do Lumen ani nowej generacji Patron.\n- 2023 profil: 920, Domain / XT–Deore | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Domain 160; damper Fox Float EVOL eRide; XT / Deore 12 | sprzedaż PL ~12 200 zł (widełki 10 700–13 700 zł) ≈2800 € (≈2460–3150 €) — uwaga: Źródło ma różne hamulce w opisie i tabeli; sprawdź egzemplarz. Nie stosować ceny do Lumen ani nowej generacji Patron.\n- 2024 profil: 920, Domain / XT–Deore | AL; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS Domain 160; damper Fox Float EVOL eRide; XT / Deore 12 | sprzedaż PL ~13 200 zł (widełki 11 700–14 700 zł) ≈3030 € (≈2690–3380 €) — uwaga: Źródło ma różne hamulce w opisie i tabeli; sprawdź egzemplarz. Nie stosować ceny do Lumen ani nowej generacji Patron."
+  },
+  "emtb_specialized": {
+   "name": "e-MTB Specialized",
+   "text": "BAZA CEN — e-MTB Specialized — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Specialized Turbo Kenevo — e-MTB\n- 2018 profil: stara generacja 180 mm | AL; Specialized 1.3 (Brose); 504 Wh; RS Lyrik 180; damper sprężynowy; SRAM GX / NX 11 | sprzedaż PL ~6 500 zł (widełki 5 000–8 000 zł) ≈1490 € (≈1150–1840 €) [słabe dopasowanie]\n- 2019 profil: stara generacja 180 mm | AL; Specialized 1.3 (Brose); 504 Wh; RS Lyrik 180; damper Damper sprężynowy; SRAM GX / NX 11 | sprzedaż PL ~7 000 zł (widełki 5 500–8 500 zł) ≈1610 € (≈1260–1950 €) [słabe dopasowanie]\n- 2020 profil: Comp / Z1 / NX11 | AL; Specialized 2.1 (Brose); 500 Wh; Marzocchi Bomber Z1 180; damper Fox DPX2 Performance; SRAM NX 11 | sprzedaż PL ~8 000 zł (widełki 6 500–9 500 zł) ≈1840 € (≈1490–2180 €) [słabe dopasowanie] — uwaga: Archiwalna strona ma zmieniane dane motoru i dampera; tu profil z 2.1 i DPX2. Zweryfikuj części konkretnego egzemplarza.\n- 2021 profil: Comp / Z1 / NX11 | AL; Specialized 2.1 (Brose); 500 Wh; Marzocchi Bomber Z1 180; damper Fox DPX2 Performance; SRAM NX 11 | sprzedaż PL ~8 600 zł (widełki 7 100–10 100 zł) ≈1980 € (≈1630–2320 €) [słabe dopasowanie] — uwaga: Archiwalna strona ma zmieniane dane motoru i dampera; tu profil z 2.1 i DPX2. Zweryfikuj części konkretnego egzemplarza.\n- 2021 profil: 700 Wh, dwupółka / GX | AL; Specialized 2.1 (Brose); 700 Wh; RS Boxxer Select 180; damper RS Super Deluxe; SRAM GX Eagle 12 | sprzedaż PL ~10 000 zł (widełki 8 000–12 000 zł) ≈2300 € (≈1840–2760 €) [słabe dopasowanie] — uwaga: Dotyczy ciężkiego Kenevo; nie Kenevo SL. Konfiguracja do wyceny, nie potwierdzony SKU każdego roku.\n- 2022 profil: 700 Wh, dwupółka / GX | AL; Specialized 2.2 (Brose), 90 Nm; 700 Wh; RS Boxxer Select 180; damper RS Super Deluxe; SRAM GX Eagle 12 | sprzedaż PL ~10 800 zł (widełki 8 800–12 800 zł) ≈2480 € (≈2020–2940 €) [słabe dopasowanie] — uwaga: Dotyczy ciężkiego Kenevo; nie Kenevo SL. Konfiguracja do wyceny, nie potwierdzony SKU każdego roku.\n- 2023 profil: 700 Wh, dwupółka / GX | AL; Specialized 2.2 (Brose), 90 Nm; 700 Wh; RS Boxxer Select 180; damper RS Super Deluxe; SRAM GX Eagle 12 | sprzedaż PL ~11 600 zł (widełki 9 600–13 600 zł) ≈2670 € (≈2210–3130 €) [słabe dopasowanie] — uwaga: Dotyczy ciężkiego Kenevo; nie Kenevo SL. Konfiguracja do wyceny, nie potwierdzony SKU każdego roku.\n- 2024: pełnego (ciężkiego) Kenevo już nie było — produkcja do MY2023; „Kenevo” 2024 to Kenevo SL 2 (lekki, karbon, SL 1.2) — inny rower, inna wycena\n## Specialized Turbo Levo — e-MTB\n- 2018 profil: Comp AL gen.1 | AL; Specialized 1.3 (Brose); 504 Wh; RS Revelation; damper RS Deluxe; SRAM GX / NX 11 | sprzedaż PL ~5 700 zł (widełki 4 200–7 200 zł) ≈1310 € (≈970–1660 €) [słabe dopasowanie]\n- 2018 profil: Comp Carbon gen.1 | carbon / tył AL; Specialized 1.3 (Brose); 504 Wh; RS Revelation / Fox 34; damper RS Deluxe / Fox DPS; SRAM GX 11 | sprzedaż PL ~6 500 zł (widełki 5 000–8 000 zł) ≈1490 € (≈1150–1840 €) [słabe dopasowanie]\n- 2019 profil: Comp AL gen.2 / 500 | AL; Specialized 2.1 (Brose); 500 Wh; RS Revelation; damper RS Deluxe; SRAM NX Eagle 12 | sprzedaż PL ~6 900 zł (widełki 5 900–7 900 zł) ≈1590 € (≈1360–1820 €)\n- 2020 profil: Comp AL gen.2 / 500 | AL; Specialized 2.1 (Brose); 500 Wh; RS Revelation; damper RS Deluxe; SRAM NX Eagle 12 | sprzedaż PL ~7 400 zł (widełki 6 400–8 400 zł) ≈1700 € (≈1470–1930 €)\n- 2021 profil: bazowy / 500 Wh | AL; Specialized 2.1 (Brose); 500 Wh; RS 35 Silver / Gold; damper RS Deluxe; SRAM NX / SX 12 | sprzedaż PL ~7 800 zł (widełki 6 800–8 800 zł) ≈1790 € (≈1560–2020 €)\n- 2021 Comp / 700 | AL; Specialized 2.1 (Brose); 700 Wh; Fox 36 Rhythm; damper Fox DPS Performance; SLX 12 | sprzedaż PL ~9 800 zł (widełki 8 300–11 300 zł) ≈2250 € (≈1910–2600 €)\n- 2022 Comp Alloy gen.3 | AL; Specialized 2.2 (Brose); 700 Wh; Fox 36 Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~11 500 zł (widełki 10 000–13 000 zł) ≈2640 € (≈2300–2990 €) — uwaga: S1 może mieć inny skok i damper. Sprawdź generację, nie tylko rok zakupu.\n- 2022 profil: carbon gen.3 / GX / Fox | carbon; Specialized 2.2 (Brose); 700 Wh; Fox 36 Performance / Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~13 200 zł (widełki 11 200–15 200 zł) ≈3030 € (≈2570–3490 €) [słabe dopasowanie]\n- 2023 profil: Comp Alloy gen.3 / 700 | AL; Specialized 2.2 (Brose); 700 Wh; Fox 36 Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~12 300 zł (widełki 10 800–13 800 zł) ≈2830 € (≈2480–3170 €) — uwaga: S1 może mieć inny skok i damper. Sprawdź generację, nie tylko rok zakupu.\n- 2023 profil: carbon gen.3 / GX / Fox | carbon; Specialized 2.2 (Brose); 700 Wh; Fox 36 Performance / Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~14 000 zł (widełki 12 000–16 000 zł) ≈3220 € (≈2760–3680 €) [słabe dopasowanie]\n- 2024 profil: Comp Alloy gen.3 / 700 | AL; Specialized 2.2 (Brose); 700 Wh; Fox 36 Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~13 200 zł (widełki 11 700–14 700 zł) ≈3030 € (≈2690–3380 €) — uwaga: S1 może mieć inny skok i damper. Sprawdź generację, nie tylko rok zakupu.\n- 2024 profil: carbon gen.3 / GX / Fox | carbon; Specialized 2.2 (Brose); 700 Wh; Fox 36 Performance / Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~15 000 zł (widełki 13 000–17 000 zł) ≈3450 € (≈2990–3910 €) [słabe dopasowanie]\n## Specialized Turbo Levo SL — e-MTB\n- 2020 Comp Carbon gen.1 | carbon; Specialized SL 1.1, 35 Nm; 320 Wh; Fox 34 Rhythm; damper Fox DPS Performance; SRAM NX Eagle 12 | sprzedaż PL ~8 000 zł (widełki 7 000–9 000 zł) ≈1840 € (≈1610–2070 €) — uwaga: Bez extendera. Osobna klasa lekkiego wspomagania, nie pełny Levo.\n- 2021 profil: SL1.1 / Comp Carbon | carbon; Specialized SL 1.1, 35 Nm; 320 Wh; Fox 34 Rhythm; damper Fox DPS Performance; SRAM NX Eagle 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €) — uwaga: Bez extendera. Osobna klasa lekkiego wspomagania, nie pełny Levo.\n- 2022 profil: SL1.1 / Comp Carbon | carbon; Specialized SL 1.1, 35 Nm; 320 Wh; Fox 34 Rhythm; damper Fox DPS Performance; SRAM NX Eagle 12 | sprzedaż PL ~9 200 zł (widełki 7 700–10 700 zł) ≈2110 € (≈1770–2460 €) — uwaga: Bez extendera. Osobna klasa lekkiego wspomagania, nie pełny Levo.\n- 2023 profil: SL1.2 / GX / Fox | carbon; Specialized SL 1.2, 50 Nm; 320 Wh; Fox 36 Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~12 800 zł (widełki 10 800–14 800 zł) ≈2940 € (≈2480–3400 €) [słabe dopasowanie] — uwaga: Bez extendera; słabe bezpośrednie porównanie cen gen.2.\n- 2024 Comp Carbon gen.2 | carbon; Specialized SL 1.2, 50 Nm; 320 Wh; Fox 36 Rhythm; damper Fox Float X Performance; SRAM GX Eagle 12 | sprzedaż PL ~14 000 zł (widełki 12 000–16 000 zł) ≈3220 € (≈2760–3680 €) [słabe dopasowanie] — uwaga: Bez extendera; słabe bezpośrednie porównanie cen gen.2."
+  },
+  "emtb_trek": {
+   "name": "e-MTB Trek",
+   "text": "BAZA CEN — e-MTB Trek — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## Trek Powerfly HT — e-MTB\n- 2018 5 | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Judy Silver Air; Deore 10 | sprzedaż PL ~3 900 zł (widełki 2 900–4 900 zł) ≈900 € (≈670–1130 €)\n- 2019 profil: 5: Judy / Deore | AL; Bosch CX gen.2, 75 Nm; 500 Wh; RS Judy Silver Air; Deore 10 | sprzedaż PL ~4 300 zł (widełki 3 300–5 300 zł) ≈990 € (≈760–1220 €)\n- 2020 profil: średni, 500 Wh | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS Recon / Judy Air; Deore 10–12 | sprzedaż PL ~4 700 zł (widełki 3 700–5 700 zł) ≈1080 € (≈850–1310 €)\n- 2021 profil: średni, 500 Wh | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS Recon / Judy Air; Deore 10–12 | sprzedaż PL ~5 100 zł (widełki 4 100–6 100 zł) ≈1170 € (≈940–1400 €)\n- 2022 profil: średni, 500 Wh | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS Recon / Judy Air; Deore 10–12 | sprzedaż PL ~5 400 zł (widełki 4 400–6 400 zł) ≈1240 € (≈1010–1470 €)\n- 2023 profil: 625 Wh, Recon / XT–Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon Air; XT / Deore 12 | sprzedaż PL ~6 500 zł (widełki 5 500–7 500 zł) ≈1490 € (≈1260–1720 €) — uwaga: BES2/Smart zależy od wersji; ta wycena dotyczy BES2, nie zakłada Smart.\n- 2024 profil: 625 Wh, Recon / XT–Deore | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Recon Air; XT / Deore 12 | sprzedaż PL ~7 000 zł (widełki 6 000–8 000 zł) ≈1610 € (≈1380–1840 €) — uwaga: BES2/Smart zależy od wersji; ta wycena dotyczy BES2, nie zakłada Smart.\n## Trek Rail — e-MTB\n- 2020 5 / 500 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS 35 Gold RL 160; damper RS Deluxe Select+; SRAM SX Eagle 12 | sprzedaż PL ~6 300 zł (widełki 5 300–7 300 zł) ≈1450 € (≈1220–1680 €) — uwaga: Oferta porównawcza M09 ma 625 Wh; tu wyceniono słabszą baterię 500.\n- 2020 9.8 XT | carbon; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Select+; damper RS Deluxe Thru Shaft; XT 12 | sprzedaż PL ~10 000 zł (widełki 8 000–12 000 zł) ≈2300 € (≈1840–2760 €) [słabe dopasowanie]\n- 2021 5 / 500 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 500 Wh; RS 35 Gold RL 160; damper RS Deluxe Select+; SRAM SX Eagle 12 | sprzedaż PL ~6 800 zł (widełki 5 800–7 800 zł) ≈1560 € (≈1330–1790 €) — uwaga: Oferta porównawcza M09 ma 625 Wh; tu wyceniono słabszą baterię 500.\n- 2021 profil: 5: 625 Wh / 35 Gold | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS 35 Gold RL 160; damper RS Deluxe Select+; Deore / SRAM SX 12 | sprzedaż PL ~7 200 zł (widełki 6 200–8 200 zł) ≈1660 € (≈1430–1890 €) — uwaga: Wersje 5 i 5 625 różniły się napędem; profil wymaga zgodności faktycznych części.\n- 2021 7 / 625 | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Yari RC 160; damper RS Deluxe Select+; XT / SLX–Deore 12 | sprzedaż PL ~8 500 zł (widełki 7 500–9 500 zł) ≈1950 € (≈1720–2180 €)\n- 2021 profil: carbon 625 / Lyrik / XT | carbon; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Select+; damper RS Deluxe Thru Shaft; XT 12 | sprzedaż PL ~11 000 zł (widełki 9 000–13 000 zł) ≈2530 € (≈2070–2990 €) [słabe dopasowanie]\n- 2022 profil: 5: 625 Wh / 35 Gold | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS 35 Gold RL 160; damper RS Deluxe Select+; Deore / SRAM SX 12 | sprzedaż PL ~8 200 zł (widełki 7 200–9 200 zł) ≈1890 € (≈1660–2110 €) — uwaga: Wersje 5 i 5 625 różniły się napędem; profil wymaga zgodności faktycznych części.\n- 2022 profil: 7: Yari / XT | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Yari RC 160; damper RS Deluxe Select+; XT / SLX–Deore 12 | sprzedaż PL ~9 200 zł (widełki 7 700–10 700 zł) ≈2110 € (≈1770–2460 €)\n- 2022 profil: carbon 625 / Lyrik / XT | carbon; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS Lyrik Select+; damper RS Deluxe Thru Shaft; XT 12 | sprzedaż PL ~12 000 zł (widełki 10 000–14 000 zł) ≈2760 € (≈2300–3220 €) [słabe dopasowanie]\n- 2023 profil: 5: 625 Wh / 35 Gold | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS 35 Gold RL 160; damper RS Deluxe Select+; Deore / SRAM SX 12 | sprzedaż PL ~8 800 zł (widełki 7 800–9 800 zł) ≈2020 € (≈1790–2250 €) — uwaga: Wersje 5 i 5 625 różniły się napędem; profil wymaga zgodności faktycznych części.\n- 2023 9.8 XT gen.4 | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS ZEB Select+; damper RS Super Deluxe Select+; XT 12 | sprzedaż PL ~14 000 zł (widełki 12 500–15 500 zł) ≈3220 € (≈2870–3560 €) — uwaga: Dla M/L i 750 Wh; S może mieć 625 Wh.\n- 2024 profil: 5: 625 Wh / 35 Gold | AL; Bosch CX gen.4 (BES2), 75/85 Nm; 625 Wh; RS 35 Gold RL 160; damper RS Deluxe Select+; Deore / SRAM SX 12 | sprzedaż PL ~9 500 zł (widełki 8 000–11 000 zł) ≈2180 € (≈1840–2530 €) — uwaga: Wersje 5 i 5 625 różniły się napędem; profil wymaga zgodności faktycznych części.\n- 2024 9.8 XT gen.4 | carbon; Bosch CX gen.4 Smart, 85 Nm; 750 Wh; RS ZEB Select+; damper RS Super Deluxe Select+; XT 12 | sprzedaż PL ~15 000 zł (widełki 13 500–16 500 zł) ≈3450 € (≈3100–3790 €) — uwaga: Dla M/L i 750 Wh; S może mieć 625 Wh."
+  },
+  "emtb_yt": {
+   "name": "e-MTB YT",
+   "text": "BAZA CEN — e-MTB YT — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis ma pierwszeństwo przed liniami e-MTB we wpisie marki (te same modele i roczniki).\n## YT Decoy — e-MTB\n- 2019 profil: Base / E8000 540 | carbon / tył AL; E8000, 70 Nm; 540 Wh; RS Yari; damper RS Deluxe; SLX 11–12 | sprzedaż PL ~7 300 zł (widełki 6 300–8 300 zł) ≈1680 € (≈1450–1910 €) — uwaga: MX i 29 mają inny skok. Wycena referencyjna średniego wyposażenia; wysoka pojedyncza oferta nie wyznacza ceny.\n- 2020 profil: Base / E8000 540 | carbon / tył AL; E8000, 70 Nm; 540 Wh; RS Yari; damper RS Deluxe; SLX 11–12 | sprzedaż PL ~7 900 zł (widełki 6 900–8 900 zł) ≈1820 € (≈1590–2050 €) — uwaga: MX i 29 mają inny skok. Wycena referencyjna średniego wyposażenia; wysoka pojedyncza oferta nie wyznacza ceny.\n- 2021 profil: Base / E8000 540 | carbon / tył AL; E8000, 70 Nm; 540 Wh; RS Yari; damper RS Deluxe; SLX 11–12 | sprzedaż PL ~8 400 zł (widełki 7 400–9 400 zł) ≈1930 € (≈1700–2160 €) — uwaga: MX i 29 mają inny skok. Wycena referencyjna średniego wyposażenia; wysoka pojedyncza oferta nie wyznacza ceny.\n- 2022 profil: Core średni / EP8 540 | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 540 Wh; Fox 36 Performance / Rhythm; damper Fox Float X / DPX2 Performance; SLX 12 | sprzedaż PL ~9 500 zł (widełki 8 000–11 000 zł) ≈2180 € (≈1840–2530 €) — uwaga: 540 Wh, nie automatycznie 720. MX i 29 sprawdź osobno.\n- 2023 profil: Core średni / EP8 540 | carbon / tył AL; EP8 / DU-EP800, 85 Nm; 540 Wh; Fox 36 Performance / Rhythm; damper Fox Float X / DPX2 Performance; SLX 12 | sprzedaż PL ~10 200 zł (widełki 8 700–11 700 zł) ≈2340 € (≈2000–2690 €) — uwaga: 540 Wh, nie automatycznie 720. MX i 29 sprawdź osobno.\n- 2024 profil: Core premium / EP801 720 | carbon; EP801, 85 Nm; 720 Wh; Fox 38 Factory; damper Fox Float X2 Factory; XT / SRAM GX 12 | sprzedaż PL ~13 500 zł (widełki 11 500–15 500 zł) ≈3100 € (≈2640–3560 €) [słabe dopasowanie] — uwaga: Porównanie z ofertą custom Öhlins. Nie Decoy SN na Fazua."
+  },
+  "emtb_core": {
+   "name": "e-MTB — zasady i kategorie",
+   "text": "BAZA CEN — e-MTB: ZASADY I KATEGORIE (modele spoza katalogu) — 11.2026 (katalog e-MTB 13.11.2026; ceny w zł = szacunek sprzedaży w PL po negocjacjach na podstawie ofert, nie potwierdzone transakcje; „profil” = konfiguracja do wyceny, nie potwierdzony fabryczny wariant)\nTen wpis zastępuje pasma „E-MTB” z ogólnych zasad bazy, gdy wpis modelu e-MTB nie pasuje.\nZASADY\n- Cena bazowa = rower sprawny, bez wad ramy, silnik bez błędów, bateria ok. 85%+ pojemności, napęd i zawieszenie bez pilnego serwisu, ładowarka i klucze, typowy rozmiar M/L. Widełki są orientacyjne (zwykle ±1000–1500 zł); poniżej bazy przy brakach, powyżej tylko przy wyraźnie lepszym stanie / osprzęcie.\n- Rocznik = rok modelowy ramy / generacja systemu, nie data zakupu. Wymiana silnika nie odmładza roweru.\n- Model spoza katalogu: najpierw kategoria po silniku, baterii, ramie i zawieszeniu, potem rocznik. Nie doliczaj drugi raz baterii ani premium, które kategoria już zawiera.\n- Wady istotne (pęknięta rama, błędy napędu, zalany silnik, bateria uszkodzona lub objęta nierozwiązaną akcją serwisową): ceny bazowej nie stosuj → niepewne / odrzuć.\n- Canyon Spectral:ON / Torque:ON z baterią 720 / 900 Wh: sprawdź zakończenie akcji serwisowej baterii; rower z nową baterią 800 Wh wyceniaj wg faktycznej baterii. Torque:ON AL od 2021, CF od 2023 (CF 2020 nie istnieje).\n- Nowe rowery na wyprzedaży ograniczają cenę używanych — porównuj bieżącą cenę nowego odpowiednika, nie dawne MSRP.\nKATEGORIE (rocznik: cena bazowa zł, widełki)\n- HT podstawowy, stary układ | AL; Bosch gen.2 / Yamaha PW; 400–500 Wh; sprężyna, Deore | 2018: 3 000 (2 000–4 000); 2019: 3 400 (2 400–4 400); 2020: 3 800 (2 800–4 800); 2021: 4 200 (3 200–5 200); 2022: 4 600 (3 600–5 600); 2023: 5 000 (4 000–6 000); 2024: 5 400 (4 400–6 400)\n- HT średni, duża bateria | AL; Bosch gen.4 / Yamaha / Shimano; 625–750 Wh; widelec powietrzny | 2020: 4 800 (3 800–5 800); 2021: 5 300 (4 300–6 300); 2022: 5 800 (4 800–6 800); 2023: 6 400 (5 400–7 400); 2024: 7 000 (6 000–8 000)\n- Full podstawowy, stara generacja | AL; 100–150 mm; 400–504 Wh; Deore/SX, podstawowe powietrze | 2018: 4 200 (3 200–5 200); 2019: 4 700 (3 700–5 700); 2020: 5 200 (4 200–6 200); 2021: 5 700 (4 700–6 700); 2022: 6 200 (5 200–7 200); 2023: 6 700 (5 700–7 700); 2024: 7 200 (6 200–8 200)\n- Full trail/enduro, E8000 / starszy Yamaha | AL; 140–170 mm; 500–504 Wh; Yari/Fox Rhythm; SLX/XT/NX | 2018: 5 500 (4 500–6 500); 2019: 6 000 (5 000–7 000); 2020: 6 500 (5 500–7 500); 2021: 7 000 (6 000–8 000); 2022: 7 500 (6 500–8 500); 2023: 8 000 (6 500–9 500); 2024: 8 500 (7 000–10 000)\n- Full Bosch gen.4 / EP8, klasa podstawowa | AL lub CF/AL; 140–170 mm; 625–630 Wh; Recon/35 Gold; Deore/SX | 2020: 6 500 (5 500–7 500); 2021: 7 000 (6 000–8 000); 2022: 7 600 (6 600–8 600); 2023: 8 200 (6 700–9 700); 2024: 8 800 (7 300–10 300)\n- Full Bosch gen.4 / EP8, klasa średnia | AL lub CF/AL; 625–630 Wh; Fox Rhythm/Lyrik/ZEB Select; SLX/XT/GX | 2020: 7 600 (6 600–8 600); 2021: 8 200 (6 700–9 700); 2022: 8 800 (7 300–10 300); 2023: 9 500 (8 000–11 000); 2024: 10 200 (8 700–11 700)\n- Full nowa generacja, duża bateria | AL lub CF/AL; Bosch Smart / EP8 / PW-X3; 720–900 Wh; średni osprzęt | 2022: 9 800 (8 300–11 300); 2023: 10 800 (9 300–12 300); 2024: 11 800 (10 300–13 300)\n- Full carbon premium | 720–900 Wh; Factory/Ultimate; XT/GX/X01; dobre koła | 2022: 12 500 (10 500–14 500); 2023: 14 000 (12 000–16 000); 2024: 15 000 (13 000–17 000)\n- Light eMTB, pierwsza generacja | SL1.1 / EP8 RS; 320–360 Wh; carbon; Fox Rhythm/Performance | 2020: 7 800 (6 800–8 800); 2021: 8 500 (7 000–10 000); 2022: 9 200 (7 700–10 700); 2023: 9 800 (8 300–11 300); 2024: 10 500 (9 000–12 000)\n- Light eMTB, nowsze lub większa bateria | SL1.2 / EP801 RS; 320–540 Wh; średni osprzęt; bez extendera | 2023: 11 000 (9 500–12 500); 2024: 12 500 (10 500–14 500)\n- Full z małą baterią wewnętrzną | Focus JAM²/SAM² i podobne; E8000; 360–400 Wh; bez drugiej baterii | 2018: 4 400 (3 400–5 400); 2019: 4 900 (3 900–5 900); 2020: 5 400 (4 400–6 400); 2021: 5 900 (4 900–6 900); 2022: 6 400 (5 400–7 400); 2023: 6 900 (5 900–7 900); 2024: 7 400 (6 400–8 400)\nKOREKTY (orientacyjne, nie zmierzone)\n- Stan bardzo dobry i pełna dokumentacja: +0 do +500 zł. Względem dobrego stanu bazowego; nie zwracaj całej wartości faktur za serwis.\n- Szybka sprzedaż: -500 do -1500 zł. Robocza strategia ceny; zależy od modelu i lokalnego popytu, nie pomiar rynku.\n- Bateria 75–84% zmierzonej pojemności: -500 do -1500 zł. Orientacyjnie; zależy od pojemności, dostępności zamiennika i potrzeb kupującego.\n- Bateria poniżej 75%, błędy lub brak testu pod obciążeniem: Indywidualnie. Brak testu nie dowodzi zużycia. Przy słabej baterii uwzględnij ofertę wymiany; nie stosuj jednej zniżki procentowej.\n- Przejście 500/504 → 625/630 Wh: +500 do +900 zł. Tylko kompatybilny, zdrowy akumulator; jeśli cena w wierszu już dotyczy 630, nie dodawaj ponownie.\n- Przejście 625/630 → 720/750/800 Wh: +500 do +1000 zł. Przy tej samej generacji i podobnym stanie. Nie wycenia całej zmiany silnika i ramy.\n- Przejście 720 → 900 Wh: +300 do +700 zł. Dla sprawnej i dopuszczonej do użytkowania baterii; nie automatycznie wartość nowej części.\n- Druga bateria / extender: Wyceń oddzielnie. Tylko po potwierdzeniu modelu, kondycji i legalnego pochodzenia. Katalog zakłada jeden akumulator, chyba że opis mówi inaczej.\n- SLX/Deore → XT albo NX/SX → GX: +200 do +600 zł. Przy podobnym zużyciu. Liczy się komplet, a nie sama przerzutka.\n- Rhythm/Select → Factory/Ultimate: +500 do +1200 zł za zestaw. Orientacyjnie, z uwzględnieniem serwisu; nie suma nowych cen sklepowych.\n- Lepsze hamulce lub koła: +200 do +800 zł. Za przydatny, sprawny upgrade; tuning nie musi odzyskać kosztu zakupu.\n- Zużyty napęd / luzy / serwis zawieszenia: Minus faktyczna wycena naprawy. Zbierz kosztorys i nie odejmuj ponownie całej korekty za ogólny stan.\n- Nietypowy rozmiar / problematyczny kolor: 0 do -500 zł lub dłuższa sprzedaż. Nie każdy XS/XL jest tańszy; zależy od popytu. Nie mechaniczny rabat.\n- Wymieniony silnik z dokumentem: Zwykle bliżej góry widełek. Nie dodawaj pełnej ceny motoru. Stan baterii, ramy i zawieszenia nadal ma znaczenie."
   }
  },
  "entryNames": [
@@ -212,7 +272,22 @@ const KB = {
   "Santa Cruz, YT",
   "Commencal, Propain, Norco",
   "NS Bikes, Nukeproof, Rocky Mountain, Marin, Transition, Evil, Intense, Raaw",
-  "Giant"
+  "Giant",
+  "e-MTB Cannondale",
+  "e-MTB Canyon",
+  "e-MTB Commencal",
+  "e-MTB Cube",
+  "e-MTB Focus",
+  "e-MTB Giant",
+  "e-MTB Haibike",
+  "e-MTB Merida",
+  "e-MTB Orbea",
+  "e-MTB Santa Cruz",
+  "e-MTB Scott",
+  "e-MTB Specialized",
+  "e-MTB Trek",
+  "e-MTB YT",
+  "e-MTB — zasady i kategorie"
  ]
 };
 // ==KB_END==
@@ -246,6 +321,35 @@ const KB_BRAND_PATTERNS = {
   evil_intense_raaw: /\bevil\b|\bintense\b|\braaw\b/i,
   giant:       /\bgiant\b|\breign\b|\btrance\b/i,
 };
+// v6.4: modele marek wyszukiwanych w całości („cała marka”) — tytuł z takim modelem to znany rower: odrzucenie
+// samego Groqa („inny”, „stary” bez dowodu) nie wystarcza, decyduje analiza AI (pełny opis, zdjęcia, twarde reguły)
+const BRAND_MODEL_NAMES = {
+  santa_cruz:     /\b(nomad|bronson|hightower|megatower|5010|tallboy|blur|v10|heckler|bullit|vala|chameleon|jackal)\b/i,
+  yt:             /\b(capra|jeffsy|tues|izzo|decoy|dirt\s*love)\b/i,
+  commencal:      /\b(meta\s*(am|tr|sx|ht|power)|clash|supreme|furious|absolut|tempo)\b/i,
+  dartmoor:       /\b(blackbird|bluebird|hornet|gamer|two6player|shine)\b/i,
+  propain:        /\b(tyee|spindrift|hugene|ekano|rage|trickshot)\b/i,
+  norco:          /\b(sight|range|optic|fluid|torrent|aurum)\b/i,
+  ns_bikes:       /\b(snabb|define|eccentric|soda|movement|zircus|decade|metropolis)\b/i,
+  nukeproof:      /\b(mega|giga|reactor|dissent|megawatt|scout)\b/i,
+  rocky_mountain: /\b(altitude|instinct|slayer|element|reaper|powerplay|growler)\b/i,
+  marin:          /\b(alpine\s*trail|rift\s*zone|hawk\s*hill|alcatraz)\b/i,
+  transition:     /\b(patrol|sentinel|spire|scout|smuggler|tr11|pbj)\b/i,
+  evil:           /\b(wreckoning|offering|following|insurgent|calling|chamois|sovereign)\b/i,
+  intense:        /\b(tracer|primer|carbine|m29|m16|spider)\b/i,
+  raaw:           /\b(madonna|jibb|yalla)\b/i,
+  giant:          /\b(reign|trance|stance|anthem|glory|faith|fathom)\b/i,
+};
+// v6.4: marki występujące tylko w katalogu e-MTB (wpisy „emtb_<marka>”)
+const KB_EMTB_ONLY_PATTERNS = {
+  cannondale: /\bcannondale\b|\bmoterra\b/i,
+  haibike:    /\bhaibike\b|\ballmtn\b|\bfullseven\b|\b[sx]duro\b/i,
+  merida:     /\bmerida\b|\beone[\s-]?(sixty|forty)\b/i,
+  orbea:      /\borbea\b/i,
+  scott:      /\bscott\b.*\beride\b|\b(genius|patron|strike|ransom)\s*eride\b/i,
+};
+// v6.4: sygnały e-MTB w tytule / etykiecie — wtedy dołączamy wpis „e-MTB: zasady i kategorie” i katalog marki
+const KB_EMTB_RE = /\be[\s-]?(mtb|bike|fully|enduro)\b|\bpedelec\b|\bhybrid\b|:on\b|\bturbo\s*(levo|kenevo)\b|\blevo\b|\bkenevo\b|\brail\s*\d|\bpowerfly\b|\be\+|\bmoterra\b|\beone[\s-]?(sixty|forty)\b|\bwild\s*fs\b|\borbea\s+(wild|rise)\b|\bheckler\b|\bbullit\b|\bdecoy\b|\bizzo\b|\ballmtn\b|\bfullseven\b|\b[sx]duro\b|\bmeta\s*power\b|\beride\b|\bpowerplay\b|\b(jam|sam|thron)(²|2)\b|\bbosch\b|\be8000\b|\bep8\b|\bep801\b|\b\d{3}\s?wh\b|\bbrose\b|\byamaha\b/i;
 // Dirtówki i slopestyle (wpis o dirtach obejmuje m.in. Stitched, Ticket, P.3, Slush, Two6player, NS, Jackal)
 const KB_DIRT_RE = /\bdirt|slopestyle|pump\s*track|\bstitched\b|\bticket\b|\bp\.?\s?3\b|\bslush\b|two6player|\bgamer\b|streetfighter|\bbruce\b|\balcatraz\b|\bdecade\b|\bzircus\b|\bmetropolis\b|\bmovement\b|\btrickshot\b|commencal\s+absolut|dirt\s*love|\bjackal\b|\bbeddo\b|\bwhip\b|\bjump\s*bike\b|\bDJ\b/i;
 
@@ -257,11 +361,15 @@ const selectKbChunkIds = (texts, typ) => {
   const ids = [];
   if (typ === "dirt" || KB_DIRT_RE.test(list.slice(0, 2).join(" "))) ids.push("dirt");
   if (typ === "dirt") return ids; // pewna dirtówka: wystarcza wpis o dirtach (wpisy marek to fulle i e-MTB)
+  // v6.4: e-MTB — katalog marki (emtb_<marka>) + zasady i kategorie e-MTB; zwykły wpis marki zostaje (bike checki)
+  const isEmtb = typ === "elektryk_gorski" || KB_EMTB_RE.test(list.slice(0, 2).join(" "));
+  const emtbFor = (brandIds) => isEmtb ? ["emtb_core", ...brandIds.map(b => `emtb_${b}`).filter(id => KB.chunks[id])] : [];
   for (const txt of list) {
     const brands = Object.keys(KB_BRAND_PATTERNS).filter(id => KB.chunks[id] && KB_BRAND_PATTERNS[id].test(txt));
-    if (brands.length > 0) return [...ids, ...brands];
+    const emtbOnly = isEmtb ? Object.keys(KB_EMTB_ONLY_PATTERNS).filter(id => KB_EMTB_ONLY_PATTERNS[id].test(txt)) : [];
+    if (brands.length > 0 || emtbOnly.length > 0) return [...ids, ...brands, ...emtbFor([...brands, ...emtbOnly].filter((v, i, a) => a.indexOf(v) === i))].filter(id => KB.chunks[id]);
   }
-  return ids;
+  return [...ids, ...emtbFor([])].filter(id => KB.chunks[id]);
 };
 const kbChunksText = (ids) => ids.map(id => KB.chunks[id].text).join("\n\n");
 const kbChunkNames = (ids) => ids.map(id => KB.chunks[id].name).join(", ");
@@ -388,10 +496,14 @@ const NEAR_DEAL_MAX_DROP = 0.20;                  // v5.12 "na granicy": cena mu
 const NEAR_DEAL_OFFER_SHARE = 0.88;               // propozycja dla sprzedawcy: ok. 12% poniżej kwoty „opłaca się do”, w dół do 10 €
 // v5.12: wersja linków wyszukiwań. Po zmianie filtra (np. dodany typ E-Bike) nowo widoczne STARE oferty nie są
 // "nowe" — przy pierwszym skanie po zmianie analizujemy tylko te z ostatnich 24 h (jak po długiej przerwie).
-const SEARCH_URL_VERSION = 3;                     // v6.3: zakres cen (preis:min:max) w linkach wyszukiwań modeli/marek
+const SEARCH_URL_VERSION = 4;                     // v6.3: zakres cen (preis:min:max) w linkach wyszukiwań modeli/marek; v6.4: „tylko oferty” + górna cena w linkach kategorii
 const KA_MIN_GAP_MS = 4000;                       // v6.3: min. odstęp między DOWOLNYMI zapytaniami do Kleinanzeigen (+ losowo do 2 s) — wyszukiwania i strony ogłoszeń idą równolegle
 const JOB_AGING_MS = 15 * 60 * 1000;
-const EMPTY_SUSPICIOUS_MIN_CARDS = 5;             // v6.3: pusta lista tam, gdzie ostatnio było ≥ 5 ogłoszeń = podejrzana (powtórka na końcu cyklu)              // v6.3: oferta czekająca dłużej w kolejce wyprzedza nowsze (najstarsze najpierw)
+const EMPTY_SUSPICIOUS_MIN_CARDS = 5;
+const NIGHT_BATCH = 60;                           // v6.4: nocne sprawdzanie cen — tyle stron ogłoszeń na cykl (ok. 5 min przy odstępie 4–6 s)
+const NIGHT_WINDOW_H = 5;                         // v6.4: okno nocnego sprawdzania (od godziny z Ustawień)
+const NIGHT_SKIP_SEEN_MS = 12 * 60 * 60 * 1000;   // v6.4: widziane w wynikach w ostatnich 12 h — zmianę ceny skaner i tak zauważy
+const SEEN_HARD_REJ = new Set(["stary", "inny", "slowa", "czesc", "ebike", "sklep"]); // v6.4: odrzucone na stałe — obniżka nic nie zmienia             // v6.3: pusta lista tam, gdzie ostatnio było ≥ 5 ogłoszeń = podejrzana (powtórka na końcu cyklu)              // v6.3: oferta czekająca dłużej w kolejce wyprzedza nowsze (najstarsze najpierw)
 const SEARCH_GAP_MS = 6000;                       // v5.12: odstęp między wyszukiwaniami (+ losowo do 1,5 s); w v5.11 było 3 s — za szybko (blokady)
 const EVENTS_MAX = 300;                           // dziennik ważnych zdarzeń (Status → Dziennik) — trwały, przeżywa odświeżenie
 // Ważne zdarzenia do dziennika (oprócz wszystkich błędów): start/stop, wysłane alerty, blokady, budżet, autostart
@@ -563,7 +675,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.3 (2026-11-12)";
+const APP_VERSION = "v6.4 (2026-11-13)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -632,6 +744,7 @@ function ScanStatus({ statusRef, activityRef, aiRef }) {
   if (st.phase === "start") main = "początek cyklu — zaległe powiadomienia i kolejka";
   else if (st.phase === "search") main = `Wyszukiwanie ${st.i}/${st.n}: ${st.label}`;
   else if (st.phase === "detail") main = `Strona ogłoszenia: ${st.title}`;
+  else if (st.phase === "night") main = `🌙 Nocne sprawdzanie cen ${st.i}/${st.n}`;
   else if (st.phase === "ai") main = `Analiza AI: ${st.title}`;
   else if (st.phase === "pause") {
     const left = Math.round((st.until - now) / 1000);
@@ -698,6 +811,11 @@ function App() {
   const [aiBudgetPln, setAiBudgetPln] = useState(cfg.aiBudgetPln ?? 400);
   // Koszt transportu jednego roweru do PL (€) — program odejmuje go od zysku przy każdej wycenie.
   const [transportCostEur, setTransportCostEur] = useState(Number.isFinite(cfg.transportCostEur) ? cfg.transportCostEur : TRANSPORT_DEFAULT_EUR);
+  // v6.4: nocne sprawdzanie cen obserwowanych / za drogich ogłoszeń
+  const [nightCheckEnabled, setNightCheckEnabled] = useState(cfg.nightCheckEnabled !== false);
+  const [nightCheckHour, setNightCheckHour] = useState(Number.isFinite(cfg.nightCheckHour) ? cfg.nightCheckHour : 2);
+  const [nightCheckMax, setNightCheckMax] = useState(Number.isFinite(cfg.nightCheckMax) ? cfg.nightCheckMax : 1500);
+  const [nightOverMaxCap, setNightOverMaxCap] = useState(Number.isFinite(cfg.nightOverMaxCap) ? cfg.nightOverMaxCap : 2100);
   // v5.11: minimalna cena ogłoszenia, webhook komunikatów o problemach, webhook ofert "na granicy okazji"
   const [minListingPrice, setMinListingPrice] = useState(Number.isFinite(cfg.minListingPrice) ? cfg.minListingPrice : MIN_LISTING_PRICE_DEFAULT);
   const [statusWebhook, setStatusWebhook] = useState(cfg.statusWebhook || "");
@@ -759,8 +877,37 @@ function App() {
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatMessages]);
 
+  // ── v6.4 (B8): zapis do pamięci przeglądarki z obsługą przepełnienia ──
+  // Wcześniej każdy zapis był w cichym try/catch — po zapełnieniu limitu (ok. 5 mln znaków) skaner pracował dalej
+  // na danych z pamięci karty, a po odświeżeniu analizował i wysyłał to samo drugi raz. Teraz: przycięcie czatu,
+  // wyników i dziennika, ponowna próba, a gdy dalej się nie da — ostrzeżenie w logu i na kanale „problemy”.
+  const storageWarnAtRef = useRef(0);
+  const safeSetItem = (key, value) => {
+    try { localStorage.setItem(key, value); return true; } catch {}
+    const trims = [];
+    const trim = (k, keep, fromStart = false) => {
+      try {
+        const arr = JSON.parse(localStorage.getItem(k) || "null");
+        if (Array.isArray(arr) && arr.length > keep) { localStorage.setItem(k, JSON.stringify(fromStart ? arr.slice(0, keep) : arr.slice(-keep))); trims.push(k); }
+      } catch {}
+    };
+    trim("ddf_chat", 30); trim("ddf_results", 50, true); trim("ddf_events", 50);
+    try {
+      localStorage.setItem(key, value);
+      addLog(`💾 Pamięć przeglądarki była pełna — przycięto ${trims.join(", ") || "nic"}; zapis „${key}” się udał`, "error");
+      return true;
+    } catch {}
+    if (Date.now() - storageWarnAtRef.current > 10 * 60 * 1000) {
+      storageWarnAtRef.current = Date.now();
+      const msg = `💾 Pamięć przeglądarki pełna — nie udało się zapisać „${key}” (${Math.round(storageUsedChars() / 1e4) / 100} mln znaków zajęte). Po odświeżeniu karty skaner może analizować i wysyłać te same oferty drugi raz. Wyczyść czat (Ustawienia) albo użyj „Zacznij od zera”.`;
+      addLog(msg, "error");
+      notifyStatus("storage_full", msg);
+    }
+    return false;
+  };
+  const storageUsedChars = () => { let n = 0; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); n += k.length + (localStorage.getItem(k) || "").length; } } catch {} return n; };
   const saveChatHistory = (msgs) => {
-    try { localStorage.setItem("ddf_chat", JSON.stringify(msgs.slice(-200))); } catch {}
+    safeSetItem("ddf_chat", JSON.stringify(msgs.slice(-200)));
   };
 
   const savePriceKnowledge = (entries) => {
@@ -783,7 +930,8 @@ function App() {
   const [kbOpenId, setKbOpenId] = useState(null); // który wpis bazy wbudowanej jest rozwinięty w panelu
 
   const runningRef   = useRef(false);
-  const runCycleRef  = useRef(null);  // zawsze NAJNOWSZA wersja runOneCycle — zmiana ustawień działa od następnego cyklu
+  const runCycleRef  = useRef(null);
+  const runStage2Ref = useRef(null);  // v6.4 (B1): jak runCycleRef — wykonawca AI woła najnowszą wersję runStage2  // zawsze NAJNOWSZA wersja runOneCycle — zmiana ustawień działa od następnego cyklu
   const sessionAbortRef = useRef(null); // przerywa trwające zapytania (AI, Kleinanzeigen) po kliknięciu STOP
   const groqKeyIndexRef = useRef(0); // wskaźnik round-robin do rotacji kluczy Groq między wywołaniami
   const groqKeyCooldownsRef = useRef({}); // { [apiKey]: timestampMs } — cooldown PER KLUCZ po dziennym limicie (TPD)
@@ -841,7 +989,8 @@ function App() {
           ? { price: null, lowest: null, notifiedAt: null, type: null }
           : { price: item.price ?? null, lowest: item.lowest ?? null, notifiedAt: item.notifiedAt ?? null, type: item.type ?? null,
               overMax: item.overMax === true, noPrice: item.noPrice === true, nearMax: Number.isFinite(item.nearMax) ? item.nearMax : null,
-              watchSale: Number.isFinite(item.watchSale) ? item.watchSale : null, watchT: Number.isFinite(item.watchT) ? item.watchT : null };
+              watchSale: Number.isFinite(item.watchSale) ? item.watchSale : null, watchT: Number.isFinite(item.watchT) ? item.watchT : null,
+              rej: typeof item.rej === "string" ? item.rej : null, lastNightAt: Number.isFinite(item.lastNightAt) ? item.lastNightAt : null };
         e.lastSeenAt = Number.isFinite(item?.lastSeenAt) ? item.lastSeenAt : now;
         const prev = map.get(id);
         if (prev) { // ten sam rower zapamiętany pod dwoma linkami (sprzedawca zmienił tytuł) — scalamy
@@ -902,19 +1051,39 @@ function App() {
     scanStateRef.current = st;
   }
 
+  // v6.4 (B4): wczytanie stanu od nowa z localStorage — po przejęciu skanowania przez tę kartę (inna karta mogła
+  // w tym czasie zapisać widziane ogłoszenia, kolejkę, powiadomienia, stan wyszukiwań i licznik kosztów)
+  const reloadPersistedState = () => {
+    seenIdsRef.current = loadSeenMap();
+    pendingRef.current = loadPending();
+    try {
+      const raw = JSON.parse(localStorage.getItem("ddf_outbox") || "[]");
+      outboxRef.current = Array.isArray(raw) ? raw : [];
+      for (const o of outboxRef.current) if (o?.listing) o.listing.listingId = listingIdFromHref(o.listing.href) || o.listing.listingId;
+    } catch { outboxRef.current = []; }
+    try {
+      const st = JSON.parse(localStorage.getItem("ddf_scan_state") || "null");
+      if (st && typeof st.searches === "object" && st.searches !== null) scanStateRef.current = st;
+    } catch {}
+    try {
+      const sp = JSON.parse(localStorage.getItem("ddf_ai_spend") || "null");
+      if (sp && sp.month === currentMonthKey() && Number.isFinite(sp.usd)) { aiSpendRef.current = sp; setAiSpend({ ...sp }); }
+    } catch {}
+    setQueueInfo({ pending: pendingRef.current.size, outbox: outboxRef.current.length });
+  };
   const persistPending = () => {
     try {
       const arr = [...pendingRef.current.values()].slice(-PENDING_MAX).map(j => ({ ...j, listing: slimListing(j.listing) }));
-      localStorage.setItem("ddf_pending", JSON.stringify(arr));
+      safeSetItem("ddf_pending", JSON.stringify(arr));
     } catch {}
     setQueueInfo({ pending: pendingRef.current.size, outbox: outboxRef.current.length });
   };
   const persistOutbox = () => {
-    try { localStorage.setItem("ddf_outbox", JSON.stringify(outboxRef.current.slice(-OUTBOX_MAX))); } catch {}
+    safeSetItem("ddf_outbox", JSON.stringify(outboxRef.current.slice(-OUTBOX_MAX)));
     setQueueInfo({ pending: pendingRef.current.size, outbox: outboxRef.current.length });
   };
   const persistScanState = () => {
-    try { localStorage.setItem("ddf_scan_state", JSON.stringify(scanStateRef.current)); } catch {}
+    safeSetItem("ddf_scan_state", JSON.stringify(scanStateRef.current));
   };
   // Dodaj ofertę do kolejki (jeśli już w niej jest — tylko zaktualizuj cenę)
   const enqueueJob = (listing, source, cachedType = null) => {
@@ -930,11 +1099,25 @@ function App() {
   const knownModelInTitle = (listing) => {
     const t = String(listing.title || "").toLowerCase();
     if (DIRT_MODEL_RE.test(t)) return "dirt";
+    // v6.4: marka + model z listy BRAND_MODEL_NAMES w tytule — niezależnie od tego, które wyszukiwanie znalazło ofertę
+    // (ta sama oferta przychodzi też z „Dirt”, „Giant” itd., a wtedy etykieta wyszukiwania nie mówi nic o marce)
+    const KB_KEY = { ns_bikes: "ns", evil: "evil_intense_raaw", intense: "evil_intense_raaw", raaw: "evil_intense_raaw" };
+    for (const [id, re] of Object.entries(BRAND_MODEL_NAMES)) {
+      const brandRe = KB_BRAND_PATTERNS[KB_KEY[id] || id];
+      if (brandRe && brandRe.test(listing.title || "") && re.test(t)) return "model";
+    }
     const b = BIKE_MODELS.find(x => x.label === listing.bike);
+    if (b?.isCategory && BRAND_MODEL_NAMES[b.id]) return BRAND_MODEL_NAMES[b.id].test(t) ? "model" : null; // v6.4: Giant (link kategorii)
     if (!b || b.isCategory || !b.query) return null;
     const clean = (s) => s.replace(/[^a-z0-9äöüß.]+/g, " ");
     const words = clean(b.query.toLowerCase()).split(" ").filter(Boolean);
-    if (words.length < 2) return null; // samo "YT" / "Santa Cruz" to marka, nie model
+    if (words.length < 2 || BRAND_MODEL_NAMES[b.id]) {
+      // v6.4: wyszukiwanie całej marki — znany model to nazwa modelu tej marki w tytule (np. „YT Capra Carbon”;
+      // 13.11 Groq odrzucił ją jako „hardtail”). Sama marka bez modelu dalej nie wystarcza.
+      const models = BRAND_MODEL_NAMES[b.id];
+      if (!models) return null;
+      return models.test(t) ? "model" : null;
+    }
     const norm = ` ${clean(t)} `;
     return words.every(w => norm.includes(` ${w} `) || norm.includes(w)) ? "model" : null;
   };
@@ -955,12 +1138,12 @@ function App() {
       }
       const arr = [...m.entries()].map(([id, d]) => {
         const o = { id };
-        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt", "nearMax", "watchSale", "watchT"]) if (d[k] != null) o[k] = d[k];
+        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt", "nearMax", "watchSale", "watchT", "rej", "lastNightAt"]) if (d[k] != null) o[k] = d[k];
         if (d.overMax) o.overMax = true;
         if (d.noPrice) o.noPrice = true;
         return o;
       });
-      localStorage.setItem("ddf_seen", JSON.stringify(arr));
+      safeSetItem("ddf_seen", JSON.stringify(arr));
     } catch {}
   };
 
@@ -991,7 +1174,7 @@ function App() {
   }, [results]);
 
   const saveSettings = (silent = false) => {
-    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, filterMigratedV56: true };
+    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, filterMigratedV56: true };
     try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
     if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
@@ -1001,7 +1184,7 @@ function App() {
     if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
     const t = setTimeout(() => saveSettings(true), 600);
     return () => clearTimeout(t);
-  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur]);
+  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -1028,7 +1211,7 @@ function App() {
       b.inTok += u.promptTokenCount || 0; b.cacheRead += u.cachedContentTokenCount || 0;
       b.cacheWrite += u.cacheWriteTokenCount || 0; b.outTok += (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0);
     }
-    try { localStorage.setItem("ddf_ai_spend", JSON.stringify(sp)); } catch {}
+    safeSetItem("ddf_ai_spend", JSON.stringify(sp));
     setAiSpend({ ...sp });
   };
   // Koszt jednego wywołania z usageMetadata Gemini (promptTokenCount obejmuje też tokeny z cache).
@@ -1425,7 +1608,11 @@ function App() {
       if (numberContext(text, m.index) === "component") return;
       years.push(y);
     };
-    for (const m of text.matchAll(/\b(?:Baujahr|Bj|Jahrgang|Modell?jahr)\.?:?\s*(?:ca\.?\s*|etwa\s*)?(\d{4})\b/gi)) take(m, m[1]);
+    // v6.4 (B7): „Baujahr 2016/2017” / „Bj. 2016-17” — liczy się PÓŹNIEJSZY rok (jak w tytule), nie wcześniejszy
+    for (const m of text.matchAll(/\b(?:Baujahr|Bj|Jahrgang|Modell?jahr)\.?:?\s*(?:ca\.?\s*|etwa\s*)?(\d{4})(?:\s*[\/–-]\s*(\d{4}|\d{2})\b)?\b/gi)) {
+      take(m, m[1]);
+      if (m[2]) take(m, m[2].length === 2 ? m[1].slice(0, 2) + m[2] : m[2]);
+    }
     for (const m of text.matchAll(/\bMY\.?\s*'?(\d{2}|\d{4})\b/g)) take(m, m[1]); // tylko wielkie "MY"
     return years.length > 0 ? Math.max(...years) : null;
   };
@@ -1615,10 +1802,12 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     kaChainRef.current = p.catch(() => {});
     return p;
   };
+  // v6.3: zakres cen po stronie portalu — pierwsza strona wyników mieści więcej ofert, które i tak nas interesują.
+  // v6.4: „anzeige:angebote” (bez ogłoszeń „Suche …”) we wszystkich linkach i górna cena także w linkach kategorii
+  // (Giant, Dirt, Dirtbike) — sprawdzone na żywo 13.11.2026 (25 kart, ceny w zakresie, 0 „Suche”)
   const searchUrlFor = (bike) => bike.isCategory
-    ? bike.categoryUrl
-    // v6.3: zakres cen po stronie portalu — pierwsza strona wyników mieści więcej ofert, które i tak nas interesują
-    : `https://www.kleinanzeigen.de/s-fahrraeder/preis:${minListingPrice}:${maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
+    ? bike.categoryUrl.replace("/s-fahrraeder/", "/s-fahrraeder/anzeige:angebote/").replace(/preis:(\d+):\//, `preis:$1:${maxBuyPrice}/`)
+    : `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${minListingPrice}:${maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
   const scrapeKleinanzeigen = async (bike) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
     // Modele/marki konkretne używają wyszukiwania po frazie + DOPIĘTEGO filtra
@@ -1794,14 +1983,9 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     const doc = parser.parseFromString(html, "text/html");
     const items = [];
 
-    // Sprawdź czy Kleinanzeigen nie zablokował
+    // v6.4 (B3): blokadę/captchę rozpoznajemy dopiero na stronie BEZ żadnej karty ogłoszenia (niżej) — wcześniej słowo
+    // „robot” w treści karty („Mähroboter”, „Saugroboter”) dawało fałszywą captchę i 20 min przerwy
     const bodyText = doc.body?.innerText || doc.body?.textContent || "";
-    if (bodyText.includes("captcha") || bodyText.includes("robot") || bodyText.includes("blocked")) {
-      addLog("⚠️ Kleinanzeigen wykrył bota — captcha!", "error");
-      const blocked = [];
-      blocked.blocked = true; // pusty wynik z powodu blokady — NIE to samo co prawidłowo pusta strona
-      return blocked;
-    }
 
     // Próbuj różne selektory — Kleinanzeigen zmienia strukturę
     const articles = doc.querySelectorAll("article.aditem, li.aditem, [data-adid], .ad-listitem");
@@ -1915,6 +2099,13 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
       }
     }
 
+    if (items.length === 0 && doc.querySelectorAll("article[data-adid], article.aditem, li.ad-listitem").length === 0
+      && (/captcha|robot|blocked/.test(bodyText) || /zugriff verweigert|access denied/i.test(bodyText))) {
+      addLog("⚠️ Kleinanzeigen wykrył bota — captcha!", "error");
+      const blocked = [];
+      blocked.blocked = true; // pusty wynik z powodu blokady — NIE to samo co prawidłowo pusta strona
+      return blocked;
+    }
     // v6.3: nagłówek strony — przy pustej liście w logu widać, czy to „Es wurden keine Ergebnisse … gefunden”, czy coś innego
     items.pageHeading = (doc.querySelector("h1")?.textContent || doc.title || "").replace(/\s+/g, " ").trim().slice(0, 140);
     return items;
@@ -2266,6 +2457,12 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           if (rocznik != null) rocznik = Math.round(rocznik);
           const rocznikZrodlo = rocznik == null ? "brak" : (f.rocznik_zrodlo === "podany" ? "podany" : "oszacowany");
           const zakresM = typeof f.rocznik_zakres === "string" ? f.rocznik_zakres.match(/^\s*(\d{4})\s*[–-]\s*(\d{4})\s*$/) : null;
+          // v6.4 (B7): oszacowany rocznik z zakresem sięgającym ${MIN_BIKE_YEAR}+ (np. 2016, zakres 2016–2019) = ${MIN_BIKE_YEAR}
+          // — tak każe prompt (KROK 1), ale model czasem wpisuje najstarszy rok; bez tego dobry rower szedł do „stary”
+          if (rocznikZrodlo === "oszacowany" && rocznik != null && rocznik < MIN_BIKE_YEAR && zakresM && +zakresM[1] <= +zakresM[2] && +zakresM[2] >= MIN_BIKE_YEAR) {
+            addLog(`ℹ️ Oszacowany rocznik ${rocznik}, ale zakres ${zakresM[1]}–${zakresM[2]} sięga ${MIN_BIKE_YEAR} — liczę ${MIN_BIKE_YEAR} (zasada z promptu) — ${listing.title}`, "info");
+            rocznik = MIN_BIKE_YEAR;
+          }
           const fakty = {
             rocznik, rocznik_zrodlo: rocznikZrodlo,
             rocznik_zakres: rocznikZrodlo === "oszacowany" && zakresM && +zakresM[1] <= +zakresM[2]
@@ -2409,6 +2606,20 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             && typ !== "inny" && cenaNum > 0 && zyskLiczony != null && (zyskLiczony / cenaNum) * 100 < progZysku) {
             addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: "niepewne", ale liczby są kompletne — zysk ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% < próg ${progZysku}% → "nie" (sprawdzę „na granicy”) — ${listing.title}`, "info");
             parsed.decyzja = "nie";
+            parsed.niepewne_kategoria = null;
+          }
+
+          // ── v6.4: "NIEPEWNE" tylko dlatego, że zysk wyszedł TUŻ NAD progiem (liczby kompletne, bez twardego powodu) —
+          // w pierwszej analizie → "tak", czyli weryfikacja mocniejszym modelem ze wszystkimi zdjęciami (wcześniej taka oferta
+          // szła do listy niepewnych bez weryfikacji, choć oferta tuż POD progiem dostawała „na granicy” z propozycją ceny).
+          // U weryfikatora zostaje „niepewne” — niech oceni człowiek.
+          if (parsed.decyzja === "niepewne" && !opts.verify && (!parsed.niepewne_kategoria || parsed.niepewne_kategoria === "inne") && !parsed.odrzucenie
+            && typ !== "inny" && cenaNum > 0 && sprzedazNum != null && zyskLiczony != null && (zyskLiczony / cenaNum) * 100 >= progZysku
+            // tylko „tuż nad progiem” (do 10 pp nad progiem albo powód mówi o progu) — inne wątpliwości (np. możliwe
+            // uszkodzenie przy dużym zysku) idą jak dawniej: najpierw tańsza dokładna analiza ze wszystkimi zdjęciami
+            && ((zyskLiczony / cenaNum) * 100 < progZysku + 10 || /próg|progu|blisko|tuż nad/i.test(String(parsed.powod_decyzji || "")))) {
+            addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: "niepewne" tuż nad progiem — zysk ${((zyskLiczony / cenaNum) * 100).toFixed(1)}% ≥ próg ${progZysku}% → "tak", sprawdzi weryfikacja — ${listing.title}`, "info");
+            parsed.decyzja = "tak";
             parsed.niepewne_kategoria = null;
           }
 
@@ -2898,7 +3109,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   const saveDupes = (map) => {
     const ids = Object.keys(map);
     if (ids.length > DUPE_MAX) ids.sort((a, b) => map[a].t - map[b].t).slice(0, ids.length - DUPE_MAX).forEach(k => delete map[k]);
-    try { localStorage.setItem("ddf_dupes", JSON.stringify(map)); localStorage.removeItem("ddf_alert_keys"); } catch {}
+    safeSetItem("ddf_dupes", JSON.stringify(map)); try { localStorage.removeItem("ddf_alert_keys"); } catch {}
   };
   const dupeKeyFor = (map, id) => {
     id = String(id);
@@ -2960,21 +3171,49 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   };
 
   // ── Wspólne pomocnicze dla pętli ───────────────────────────────────────
-  const sleepWhileRunning = async (ms) => {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-      if (!runningRef.current) return false;
-      await sleep(Math.min(1000, end - Date.now()));
-    }
-    return runningRef.current;
-  };
+  // v6.4 (B2): czekanie JEDNYM odliczaniem do terminu, przerywane STOP-em. Łańcuch 1-sekundowych odliczań w karcie
+  // schowanej w tle Chrome budzi raz na minutę — „60 s” przerwy trwało kwadrans; jedno odliczanie spóźnia się najwyżej ok. 1 min.
+  const stopWaitersRef = useRef(new Set());
+  const sleepOrStop = (ms) => new Promise((resolve) => {
+    if (!runningRef.current) { resolve(); return; }
+    let done = false;
+    const fin = () => { if (done) return; done = true; stopWaitersRef.current.delete(fin); resolve(); };
+    stopWaitersRef.current.add(fin);
+    sleep(Math.max(0, ms)).then(fin);
+  });
+  const wakeAllWaiters = () => { for (const f of [...stopWaitersRef.current]) f(); };
+  // Czekanie na limit (Discord 429, Groq/AI) — prawdziwy czas (nie skrócony w testach), STOP przerywa od razu
+  const sleepWhileRunning = (ms) => new Promise((resolve) => {
+    if (!runningRef.current) { resolve(false); return; }
+    let done = false;
+    const fin = () => { if (done) return; done = true; stopWaitersRef.current.delete(fin); clearTimeout(t); resolve(runningRef.current); };
+    const t = setTimeout(fin, Math.max(0, ms));
+    stopWaitersRef.current.add(fin);
+  });
   const pushResult = (listing, analysis, status = "skip") => {
     const id = Date.now() + Math.random();
     setResults(prev => [{ id, listing, analysis, status, at: Date.now(), timestamp: new Date().toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }) }, ...prev].slice(0, 400));
     return id;
   };
   // Trwałe odrzucenie oferty — zawsze z konkretnym powodem widocznym w Wynikach
-  const rejectJob = (job, analysis) => { removeJob(job.listing.listingId); pushResult(job.listing, analysis); };
+  // v6.4: powód odrzucenia zapisujemy w pamięci widzianych (rej) — nocne sprawdzanie cen pomija odrzucone na stałe
+  const rejectReasonOf = (txt) => {
+    const t = String(txt || "");
+    if (/filtrem słów/i.test(t)) return "slowa";
+    if (/filtrem roku|rocznik|sprzed \d{4}/i.test(t)) return "stary";
+    if (/e-MTB wykluczone/i.test(t)) return "ebike";
+    if (/Groq/i.test(t) && /nie full|po przeczytaniu|inny/i.test(t)) return "inny";
+    if (/poniżej progu/i.test(t)) return "tanio_niepewny";
+    if (/brak ceny|cena zniknęła/i.test(t)) return "brak_ceny";
+    if (/bez AI/i.test(t)) return "bez_ai";
+    return null;
+  };
+  const rejectJob = (job, analysis) => {
+    const e = seenIdsRef.current.get(job.listing.listingId);
+    const rej = rejectReasonOf(analysis?.krotki_opis);
+    if (e && rej) e.rej = rej;
+    removeJob(job.listing.listingId); pushResult(job.listing, analysis);
+  };
 
   // Usuń z kolejki i z listy do wysłania pozycje tak stare, że i tak są już nieaktualne
   const cleanupQueues = () => {
@@ -3244,7 +3483,18 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         }
         // v5.12: Groq odrzuca znany model ("Rose The Bruce" → "stary", dirt → "inny") — gdy tytuł to znany model,
         // a nie sama część, decyzję zostawiamy analizie AI (pełny opis + zdjęcia + twarda reguła rocznika)
-        if (!cachedTrusted && (typ === "inny" || typ === "stary") && !PART_TITLE_RE.test(listing.title)) {
+        // v6.4 (B7): „stary” od Groqa przy dircie bez rocznika PODANEGO w ogłoszeniu — Twoja reguła: dirty odrzucamy
+        // tylko przy podanym roczniku, a Groq szacuje rok z samego tytułu → decyzję zostawiamy analizie AI
+        if (!cachedTrusted && typ === "stary" && KB_DIRT_RE.test(listing.title) && extractMarkedYear(`${listing.title} ${listing.desc || ""}`) == null
+          && !/\b(19\d\d|20(0\d|1[0-6]))\b/.test(listing.title)) {
+          addLog(`↩️ Groq: "stary" przy dircie bez podanego rocznika — decyzję zostawiam analizie AI — ${listing.title}`, "info");
+          typ = "dirt";
+          job.knownModel = true;
+        }
+        // v6.4: wyjątek — Groq uznał ogłoszenie za samą ramę/części, a cena jest niska (poniżej progu niepewnych):
+        // to zwykle naprawdę rama znanego modelu, więc odrzucenie zostaje (jak w v5.14)
+        const cheapPart = typ === "inny" && GROQ_PART_REASON_RE.test(listing._groqReason || "") && listing.price != null && listing.price < minUncertainPrice;
+        if (!cachedTrusted && (typ === "inny" || typ === "stary") && !PART_TITLE_RE.test(listing.title) && !cheapPart) {
           const known = knownModelInTitle(listing);
           if (known) {
             addLog(`↩️ Groq: "${typ}", ale tytuł to znany model (${known === "dirt" ? "dirt" : listing.bike}) — decyzję zostawiam analizie AI — ${listing.title}`, "info");
@@ -3598,6 +3848,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           // która przy progach zależnych od ceny bywała zła w obie strony.
           const seenE = seenIdsRef.current.get(listing.listingId);
           if (seenE) {
+            seenE.rej = analysis.odrzucenie || (analysis.typ_roweru === "inny" ? "inny" : null); // v6.4
             const w = watchOf(analysis, listing.price);
             seenE.watchSale = w?.watchSale ?? null;
             seenE.watchT = w?.watchT ?? null;
@@ -3627,6 +3878,93 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // ── One full scan cycle ────────────────────────────────────────────────
   // Zwykła funkcja (nie useCallback): pętla woła zawsze NAJNOWSZĄ wersję przez runCycleRef, więc
   // zmiany w Ustawieniach (zaznaczone modele, budżet, model AI…) działają od następnego cyklu.
+  // ── v6.4: NOCNE SPRAWDZANIE CEN ──
+  // Wyszukiwania czytają tylko pierwszą stronę wyników (25 najnowszych), więc obniżki starszych ogłoszeń przechodzą
+  // niezauważone. W nocy (od godziny z Ustawień, przez NIGHT_WINDOW_H h) skaner zagląda na stronę ogłoszeń, przy których
+  // obniżka coś zmienia: z zapamiętaną wyceną (watchSale / nearMax) oraz „za drogich” do górnej granicy z Ustawień.
+  // Po NIGHT_BATCH stron na cykl, w tym samym odstępie co inne zapytania (kaSlot) — wyszukiwania działają dalej.
+  // Analiza AI tylko wtedy, gdy przy nowej cenie wycena przechodzi próg albo cena zeszła do zakresu zakupu.
+  const nightStateRef = useRef((() => { try { return JSON.parse(localStorage.getItem("ddf_night") || "null"); } catch { return null; } })());
+  const persistNight = () => safeSetItem("ddf_night", JSON.stringify(nightStateRef.current));
+  const nightKey = () => new Date(Date.now() - nightCheckHour * 3600e3).toLocaleDateString("sv-SE"); // jedna „noc” = jeden klucz
+  const inNightWindow = () => { const h = new Date().getHours(); return ((h - nightCheckHour + 24) % 24) < NIGHT_WINDOW_H; };
+  const nightCandidates = () => {
+    const now = Date.now(), out = [];
+    for (const [id, e] of seenIdsRef.current) {
+      if (e.rej && SEEN_HARD_REJ.has(e.rej)) continue;
+      if (now - (e.lastSeenAt || 0) < NIGHT_SKIP_SEEN_MS) continue;
+      const watched = e.watchSale != null || e.nearMax != null;
+      const overMax = e.overMax && e.price != null && e.price <= nightOverMaxCap;
+      if (watched || overMax) out.push({ id, pri: watched ? 0 : 1, price: e.price ?? 0 });
+    }
+    // najpierw z wyceną, potem „za drogie” od najbliższych limitu zakupu
+    return out.sort((a, b) => a.pri - b.pri || a.price - b.price).map(x => x.id);
+  };
+  const inferBikeLabel = (title) => {
+    const t = ` ${String(title || "").toLowerCase().replace(/[^a-z0-9äöüß.]+/g, " ")} `;
+    const m = BIKE_MODELS.find(b => !b.isCategory && b.query && b.query.toLowerCase().split(/\s+/).every(w => t.includes(` ${w} `)));
+    return m ? m.label : "Nocne sprawdzanie cen";
+  };
+  const runNightCheck = async () => {
+    if (!nightCheckEnabled || !inNightWindow()) return;
+    const key = nightKey();
+    let st = nightStateRef.current;
+    if (!st || st.key !== key) {
+      const queue = nightCandidates().slice(0, nightCheckMax);
+      st = nightStateRef.current = { key, queue, total: queue.length, checked: 0, drops: 0, queued: 0, gone: 0, startedAt: Date.now(), finishedAt: null };
+      persistNight();
+      addLog(`🌙 Nocne sprawdzanie cen: ${queue.length} ogłoszeń (z wyceną do obserwacji i „za drogie” do ${nightOverMaxCap} €) — po ${NIGHT_BATCH} na cykl, bez AI, chyba że obniżka coś zmienia`, "info");
+    }
+    if (st.finishedAt) return;
+    let n = 0;
+    while (st.queue.length > 0 && n < NIGHT_BATCH && runningRef.current) {
+      const id = st.queue.shift(); n++; st.checked++;
+      const e = seenIdsRef.current.get(id);
+      if (!e) continue;
+      setScanStatus({ phase: "night", i: st.checked, n: st.total });
+      const href = `https://www.kleinanzeigen.de/s-anzeige/${id}`; // krótki adres przekierowuje na pełny (sprawdzone 13.11.2026)
+      const det = await fetchListingDetails({ listingId: id, href, title: "" });
+      touchActivity();
+      if (!runningRef.current) { st.queue.unshift(id); st.checked--; break; }
+      if (det.blocked) { st.queue.unshift(id); st.checked--; addLog(`⛔ Nocne sprawdzanie cen: Kleinanzeigen blokuje (${det.reason || "403"}) — przerywam do następnego cyklu`, "error"); break; }
+      if (det.gone) { seenIdsRef.current.delete(id); st.gone++; continue; }
+      if (!det.ok || det.price == null) continue;
+      e.lastNightAt = Date.now();
+      const old = e.price;
+      if (old != null && det.price < old) {
+        st.drops++;
+        const hitWatch = e.watchSale != null && meetsProfit(e.watchSale, e.watchT, det.price);
+        const hitLegacy = !hitWatch && e.nearMax != null && det.price <= e.nearMax;
+        const intoRange = e.overMax && det.price <= maxBuyPrice && det.price >= minListingPrice;
+        e.lowest = e.lowest == null ? det.price : Math.min(e.lowest, det.price);
+        e.price = det.price;
+        if (hitWatch || hitLegacy || intoRange) {
+          const listing = {
+            listingId: id, title: det.title || `Ogłoszenie ${id}`, price: det.price, href,
+            desc: String(det.desc || "").replace(/\s+/g, " ").slice(0, 300), location: "", bike: inferBikeLabel(det.title), postedAt: null,
+            prevPrice: old, _hitWatch: hitWatch || undefined, _hitNearMax: hitLegacy ? e.nearMax : undefined, _night: true,
+          };
+          e.notifiedAt = det.price; e.overMax = false; e.nearMax = null; e.watchSale = null; e.watchT = null;
+          const queued = intoRange ? enqueueJob(listing, "new") : enqueueJob(listing, "price_drop", e.type || null);
+          if (queued) {
+            st.queued++;
+            addLog(`🌙📉 Nocne sprawdzanie: ${listing.title} — ${old}€ → ${det.price}€ (${intoRange ? "zeszła do zakresu zakupu" : "według wcześniejszej wyceny zakup spełnia próg"}) — do analizy`, "info");
+          }
+        }
+      } else if (old == null || det.price !== old) {
+        e.price = det.price;
+        if (det.price > maxBuyPrice) e.overMax = true;
+      }
+    }
+    if (n > 0) { persistSeenMap(); persistPending(); }
+    if (st.queue.length === 0 && !st.finishedAt) {
+      st.finishedAt = Date.now();
+      addLog(`🌙 Nocne sprawdzanie cen zakończone: sprawdzono ${st.checked}/${st.total} · obniżek ${st.drops} · do analizy ${st.queued} · usuniętych z Kleinanzeigen ${st.gone} (wypadły z pamięci)`, "success");
+      if (st.queued > 0) wakeAiWorker();
+    }
+    persistNight();
+  };
+
   const runOneCycle = async (cycleN) => {
     const cycleStartedAt = Date.now();
     const selBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
@@ -3655,6 +3993,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const cb = { analyses: 0, detailFetches: 0, lastDetailFetchAt: 0, halted: false, attempted: new Set() }; // wspólny limit analiz/stron na cykl
     cycleBudgetRef.current = cb; // v6.3: wykonawca AI liczy analizy i strony ogłoszeń w ramach bieżącego cyklu
     await runStage1(phase1Stats); // zaległe oferty etapu 1 (np. przerwane STOP-em)
+    wakeAiWorker();
+    // v6.4: w nocy — porcja sprawdzania cen starszych ogłoszeń (przed wyszukiwaniami tego cyklu)
+    try { await runNightCheck(); } catch (e) { addLog(`⚠️ Nocne sprawdzanie cen: błąd ${String(e?.message || e).slice(0, 150)} — spróbuję w następnym cyklu`, "error"); }
+    if (!runningRef.current) return;
+    await runStage1(phase1Stats); // oferty z nocnego sprawdzania, które zeszły do zakresu zakupu → etap 1
     wakeAiWorker();
 
     // ── FAZA 1: pobieranie wyników + kolejka + etap 1 (+ od razu analiza nowych ofert) ──
@@ -3780,7 +4123,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       if (!st || !st.baselineAt) {
         fresh.forEach(l => saveSeenEntry(l, false));
         persistSeenMap();
-        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, lastCards: listings.length, urlVersion: SEARCH_URL_VERSION, ...(bike.isCategory ? {} : { priceRange: `${minListingPrice}:${maxBuyPrice}` }) };
+        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, lastCards: listings.length, urlVersion: SEARCH_URL_VERSION, priceRange: `${minListingPrice}:${maxBuyPrice}` };
         persistScanState();
         addLog(`📌 ${bike.label}: pierwsze skanowanie tego wyszukiwania — zapamiętano ${fresh.length} istniejących ogłoszeń (bez analizy)`, "info");
         await sleep(3000);
@@ -3796,7 +4139,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       let toQueue = fresh;
       // v6.3: zmiana zakresu cen w Ustawieniach zmienia link — nowo widoczne stare oferty traktujemy jak po zmianie filtra
       const rangeKey = `${minListingPrice}:${maxBuyPrice}`;
-      const urlChanged = !bike.isCategory && (st.urlVersion !== SEARCH_URL_VERSION || (st.priceRange != null && st.priceRange !== rangeKey));
+      const urlChanged = st.urlVersion !== SEARCH_URL_VERSION || (st.priceRange != null && st.priceRange !== rangeKey); // v6.4: także kategorie (górna cena w linku)
       if ((gapMs > RESUME_WINDOW_MS || emptyBurst || urlChanged) && fresh.length > 0) {
         const recent = fresh.filter(l => l.postedAt != null && now - l.postedAt <= RESUME_WINDOW_MS);
         // Brak daty na karcie ≠ stara oferta: kilka pierwszych bez daty (lista jest od najnowszych) też analizujemy
@@ -3811,7 +4154,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       st.lastScanAt = now;
       st.lastCards = listings.length; // v6.3: do wykrywania podejrzanie pustych wyników
       st.urlVersion = SEARCH_URL_VERSION;
-      if (!bike.isCategory) st.priceRange = rangeKey;
+      st.priceRange = rangeKey;
       persistScanState();
 
       // ── Spadki cen na JUŻ widzianych ogłoszeniach (spadek o co najmniej PRICE_DROP_THRESHOLD) ──
@@ -3896,6 +4239,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     addLog(`✔ Cykl #${cycleN} zakończony w ${fmtDuration(took)} — czekam 60 s przed kolejnym${pendingRef.current.size ? ` · w kolejce: ${pendingRef.current.size}` : ""}${outboxRef.current.length ? ` · do wysłania: ${outboxRef.current.length}` : ""}${avgDelay != null ? ` · średnio ${fmtDuration(avgDelay)} od wykrycia do alertu (ostatnie ${delays.length})` : ""}`, "info");
   };
   runCycleRef.current = runOneCycle;
+  runStage2Ref.current = runStage2; // v6.4 (B1): wykonawca AI zawsze z NAJNOWSZYMI ustawieniami
 
   // ── v6.3: wykonawca AI — osobny przebieg obok pętli zbierania ofert ──
   // Pętla zbierania pobiera listy wyników, etap 1 (filtry + Groq) i dopisuje oferty do kolejki; wykonawca bierze z kolejki
@@ -3908,7 +4252,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     while (runningRef.current) {
       const cb = cycleBudgetRef.current;
       if (cb) {
-        try { await runStage2(cb, { worker: true }); }
+        try { await runStage2Ref.current(cb, { worker: true }); } // v6.4 (B1): nie wersja z chwili Startu
         catch (e) { if (runningRef.current) addLog(`❌ Nieoczekiwany błąd analizy w tle: ${e?.message || e} — oferty zostają w kolejce`, "error"); }
       }
       if (!runningRef.current) break;
@@ -3959,6 +4303,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     }
     if (runningRef.current) { releaseScanLock(); return; }
     setOtherTabActive(false);
+    reloadPersistedState(); // v6.4 (B4): karta mogła być otwarta wcześniej (podgląd) — skanujemy na AKTUALNYM stanie
 
     sessionAbortRef.current = typeof AbortController !== "undefined" ? new AbortController() : null;
     runningRef.current = true;
@@ -3987,9 +4332,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         }
         if (!runningRef.current) break;
         setScanStatus({ phase: "pause", until: Date.now() + 60000 });
-        for (let i = 60; i > 0 && runningRef.current; i--) {
-          await sleep(1000);
-        }
+        await sleepOrStop(60000); // v6.4 (B2): jedno odliczanie zamiast 60 po 1 s
         n++;
       }
     } finally {
@@ -4017,6 +4360,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     runningRef.current = false;
     setStopping(true);
     try { sessionAbortRef.current?.abort(); } catch {}
+    wakeAllWaiters(); // v6.4: przerwa i inne oczekiwania kończą się od razu
+    wakeAiWorker();
   };
 
   // v5.12: autostart — jeśli skaner działał przed odświeżeniem/zamknięciem karty, wznawiamy go po 5 s
@@ -4038,7 +4383,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // "Zacznij od zera": zapomnij widziane ogłoszenia, kolejkę i stan wyszukiwań. Następny start najpierw
   // zapamięta to, co jest teraz na Kleinanzeigen (bez analizy), a od kolejnego cyklu analizuje tylko nowe.
   const resetFromZero = () => {
-    if (runningRef.current) return;
+    if (runningRef.current || otherTabActive) return; // v6.4 (B4): nie czyścimy pamięci, gdy skanuje inna karta
     const ok = window.confirm("Zacząć od zera?\n\nProgram zapomni wszystkie widziane ogłoszenia, wyczyści kolejkę ofert i niewysłane powiadomienia.\nPrzy następnym starcie zapamięta to, co jest teraz na Kleinanzeigen (bez analizy), a od kolejnego cyklu będzie analizował tylko nowe oferty.");
     if (!ok) return;
     seenIdsRef.current = new Map();
@@ -4245,7 +4590,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   </div>
                 </div>
               )}
-              <button onClick={resetFromZero} disabled={running} title={running ? "Najpierw zatrzymaj skanowanie" : "Zapomnij widziane ogłoszenia i kolejkę — następny start zapamięta istniejące oferty bez analizy"} style={{
+              <button onClick={resetFromZero} disabled={running || otherTabActive} title={running ? "Najpierw zatrzymaj skanowanie" : otherTabActive ? "Skanuje inna karta — zatrzymaj ją najpierw" : "Zapomnij widziane ogłoszenia i kolejkę — następny start zapamięta istniejące oferty bez analizy"} style={{
                 width: "100%", marginTop: 10, padding: "7px 0", borderRadius: 8,
                 border: "1px solid #1e293b", background: "transparent",
                 color: "#475569", fontSize: 11, fontWeight: 600, opacity: running ? 0.5 : 1,
@@ -4784,6 +5129,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                       <span style={{ color: "#334155" }}> — podział liczony od v5.14</span>
                     </div>
                   )}
+                  <div style={{ fontSize: 12, color: "#64748b", width: "100%" }} data-testid="storage-usage">
+                    💾 Pamięć przeglądarki: {(storageUsedChars() / 1e6).toFixed(2)} mln znaków z ok. 5,2 ({Math.round(storageUsedChars() / 52000)}%) — przy zapełnieniu program przytnie czat i stare wyniki i ostrzeże na kanale „problemy”
+                  </div>
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
                   Po wyczerpaniu budżetu analizy AI się zatrzymują (przed każdym wywołaniem program sprawdza, czy zmieści się ono w budżecie) — oferty czekają w kolejce do zwiększenia budżetu albo do 1. dnia miesiąca. Wcześniej aplikacja sama dobiera moc analizy. Premium (wydatki w tempie budżetu): solidne myślenie przy każdej analizie, a trudne przypadki i weryfikacja okazji na modelu weryfikacji z sekcji AI Provider. Normalny (wydatki wyprzedzają tempo): lżejsza analiza, okazje nadal weryfikuje model weryfikacji. Oszczędny (od {Math.round(ECO_FROM_BUDGET_SHARE * 100)}% budżetu): tanio, ale okazje dalej są weryfikowane. Licznik liczy Gemini i Claude (bez Groqa) i tylko w tej przeglądarce — źródłem prawdy są rachunki w Google AI Studio i w console.anthropic.com.
@@ -4840,6 +5188,25 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   style={{ width: 110 }} />
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
                   Odejmowany od zysku przy każdej wycenie: zysk = sprzedaż w PL − zakup − transport. Jeśli masz transport wpisany w polu „Kontekst” albo w notatce przypiętej w czacie — usuń go stamtąd, żeby AI nie odejmowało go drugi raz.
+                </div>
+              </div>
+
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid #1a2d4a" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                  <input type="checkbox" checked={nightCheckEnabled} onChange={e => setNightCheckEnabled(e.target.checked)}
+                    style={{ width: 18, height: 18, accentColor: "#f59e0b" }} />
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>🌙 Nocne sprawdzanie cen starszych ogłoszeń</span>
+                </label>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginTop: 10, fontSize: 12, color: "#94a3b8" }}>
+                  <label>od godziny <input type="number" min="0" max="23" value={nightCheckHour}
+                    onChange={e => setNightCheckHour(Math.min(23, Math.max(0, Math.round(Number(e.target.value) || 0))))} style={{ width: 60 }} /></label>
+                  <label>limit stron na noc <input type="number" min="0" step="100" value={nightCheckMax}
+                    onChange={e => setNightCheckMax(Math.max(0, Math.round(Number(e.target.value) || 0)))} style={{ width: 80 }} /></label>
+                  <label>„za drogie” do (€) <input type="number" min="0" step="50" value={nightOverMaxCap}
+                    onChange={e => setNightOverMaxCap(Math.max(0, Math.round(Number(e.target.value) || 0)))} style={{ width: 80 }} /></label>
+                </div>
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  Wyszukiwania czytają tylko pierwszą stronę wyników, więc obniżki starszych ogłoszeń przechodzą niezauważone. W nocy (przez {NIGHT_WINDOW_H} h od podanej godziny) skaner otwiera strony ogłoszeń z zapamiętaną wyceną i „za drogich” do podanej kwoty — po {NIGHT_BATCH} na cykl, w tym samym odstępie co inne zapytania. Bez kosztu AI; analiza tylko wtedy, gdy przy nowej cenie zysk przechodzi próg albo cena zeszła do limitu zakupu. Usunięte ogłoszenia wypadają z pamięci.
                 </div>
               </div>
 

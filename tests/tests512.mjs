@@ -27,7 +27,7 @@ await test("Usunięte ogłoszenie (strona zastępcza 200 z innymi ofertami) → 
 await test("Groq „stary” dla znanej dirtówki → nie odrzuca, analiza AI", async () => {
   const B = { id: "2000000003", title: "Rose the Bruce zwei", price: 600 };
   await twoPhase({ newOnes: [B], cfg: { groqClassifierKey: "gsk_x" }, world: { groq: () => groqResp("stary"), ai: okAi({ typ_roweru: "dirt", decyzja: "nie", szacowana_sprzedaz_eur: 650 }) } }, async (app) => {
-    await app.waitLog(/tytuł to znany model \(dirt\)/);
+    await app.waitLog(/tytuł to znany model \(dirt\)|„stary” przy dircie bez podanego rocznika|"stary" przy dircie bez podanego rocznika/); // v6.4: nowa reguła dla dirtów łapie to wcześniej
     await app.waitUntil(() => genReqs(app.st).length >= 1, 15000, "analiza AI");
   });
 });
@@ -106,7 +106,7 @@ await test("Nowy filtr wyszukiwania: stare, nowo widoczne oferty nie idą do ana
   await app.start(); await app.waitLog(/Cykl #1 zakończony/, 30000);
   await app.waitLog(/nowy filtr wyszukiwania \(zakres cen \/ typ roweru\) — analizuję 1 ofert z ostatnich 24 h, pomijam 1 starszych/);
   const st = JSON.parse(await app.ls("ddf_scan_state"));
-  assert.equal(st.searches.canyon_torque.urlVersion, 3); // v6.3: wersja 3 = zakres cen w linku
+  assert.equal(st.searches.canyon_torque.urlVersion, 4); // v6.4: wersja 4 = „tylko oferty” + zakres cen
   assert.equal(st.searches.canyon_torque.priceRange, "200:1400");
   await app.stop(); await app.waitStopped(); await app.close();
 });

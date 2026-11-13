@@ -19,11 +19,11 @@ Szczegółowa wiedza (HTML Kleinanzeigen, przebieg analizy, decyzje, historia we
 - `tests/` — testy (Playwright + atrapy Kleinanzeigen/AI/Discorda). `node tests/run-all.mjs` albo pojedynczy plik: `node tests/run-all.mjs tests512.mjs`. Na nowym komputerze: `cd tests && npm run setup` (esbuild + playwright + Chromium), potem `npm test`.
 
 ## Stan w przeglądarce (localStorage — osobny dla każdej przeglądarki i adresu!)
-`ddf_cfg` (ustawienia, klucze API, webhooki), `ddf_seen` (widziane ogłoszenia po numerze, z `lastSeenAt`; od v6.1 `watchSale`/`watchT` — wycena do obserwacji spadku ceny), `ddf_pending` (kolejka analiz),
+`ddf_cfg` (ustawienia, klucze API, webhooki), `ddf_seen` (widziane ogłoszenia po numerze, z `lastSeenAt`; od v6.1 `watchSale`/`watchT` — wycena do obserwacji spadku ceny; od v6.4 `rej` — powód odrzucenia, `lastNightAt`), `ddf_pending` (kolejka analiz),
 `ddf_outbox` (niewysłane powiadomienia), `ddf_scan_state` (stan wyszukiwań, `urlVersion`), `ddf_price_knowledge` (notatki cenowe z czatu),
 `ddf_events` (dziennik zdarzeń), `ddf_autorun` (autostart po odświeżeniu), `ddf_ai_spend` (licznik kosztów, od v5.14 z `byStage`), `ddf_chat`,
 `ddf_results` (ostatnie 200 wyników, v5.14), `ddf_dupes` (v6.1, zastąpił `ddf_alert_keys`; od v6.2 rekord roweru: tytuł+cena, sprzedawca, odciski opisu i zdjęć, powiązane numery, wycena do obserwacji, stan alertu pending/sent/lost).
-Tylko jedna karta skanuje (v6.2, Web Locks `ddf-scanner`) — druga karta tego samego adresu jest podglądem.
+`ddf_night` (v6.4: stan nocnego sprawdzania cen). Tylko jedna karta skanuje (v6.2, Web Locks `ddf-scanner`) — druga karta tego samego adresu jest podglądem; po przejęciu skanowania wczytuje stan od nowa (v6.4).
 Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia; uruchomiona obok produkcji dublowałaby alerty.
 
 ## Dostęp i narzędzia
@@ -35,4 +35,5 @@ Wersja testowa (preview) Vercela ma inny adres → pustą pamięć i ustawienia;
 ## Ustawienia właściciela (11.2026)
 Analiza: Claude Haiku 5.5 · weryfikacja okazji: Claude Sonnet 5.5 · Groq gpt-oss-120b (12 kluczy) jako etap 1 · minimalny zysk po transporcie zależny od ceny zakupu — od v6 4 progi: 200–450 / 450–800 / 800–1100 / 1100–1400 € (`profitTiers` w `ddf_cfg`; start = dawne 35%) ·
 cena zakupu 200–1400 € · transport 70 € · budżet AI 400 zł/mies. (realnie kilka zł) · e-MTB analizowane · rowery sprzed 2017 odrzucane (dirty tylko przy roczniku podanym w ogłoszeniu) ·
-38 wyszukiwań modeli/marek + „Dirt” i „Dirtbike” ogólne · kanały Discord: okazje, niepewne, na granicy, problemy.
+38 wyszukiwań modeli/marek + „Dirt” i „Dirtbike” ogólne · kanały Discord: okazje, niepewne, na granicy, problemy ·
+„niepewne” tuż nad progiem → weryfikacja (v6.4) · nocne sprawdzanie cen od 2:00, „za drogie” do 2100 €, max 1500 stron/noc (v6.4) · katalog e-MTB w bazie (v6.4).

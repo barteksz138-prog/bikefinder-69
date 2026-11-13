@@ -18,4 +18,5 @@ const { code } = await esbuild.transform(m[1], { loader: "jsx" });
 fs.writeFileSync(path.join(OUT, "app.js"), code);
 fs.copyFileSync(path.join(ROOT, "api/gemini.js"), path.join(OUT, "gem.mjs"));
 fs.copyFileSync(path.join(ROOT, "api/discord.js"), path.join(OUT, "disc.mjs"));
+fs.copyFileSync(path.join(ROOT, "api/scrape.js"), path.join(OUT, "scr.mjs")); // v6.4
 console.log("build OK →", OUT);

@@ -73,7 +73,7 @@ await test("Rotacja: każdy cykl zaczyna od innego wyszukiwania; linki modeli z 
     const firsts = [urls[0], urls[n], urls[2 * n]];
     assert.notEqual(firsts[0], firsts[1], "cykl 2 zaczyna od innego wyszukiwania");
     assert.notEqual(firsts[1], firsts[2], "cykl 3 też");
-    assert.ok(urls.some(u => u.includes("/s-fahrraeder/preis:200:1400/Canyon%20Torque/") || u.includes("/s-fahrraeder/preis:200:1400/Canyon Torque/")), urls.find(u => /Torque/.test(u)));
+    assert.ok(urls.some(u => u.includes("/s-fahrraeder/anzeige:angebote/preis:200:1400/Canyon%20Torque/") || u.includes("/s-fahrraeder/anzeige:angebote/preis:200:1400/Canyon Torque/")), urls.find(u => /Torque/.test(u)));
   } finally { await app.stop().catch(() => {}); await app.waitStopped().catch(() => {}); await app.close(); }
 });
 
