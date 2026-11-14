@@ -976,7 +976,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.9 (2026-11-14)";
+const APP_VERSION = "v6.10 (2026-11-14)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -2258,18 +2258,20 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
 
   // ── Zdjęcia z galerii ogłoszenia ───────────────────────────────────────
   // Adresy typu https://img.kleinanzeigen.de/api/v1/prod-ads/images/<xx>/<uuid>?rule=$_59.AUTO
-  // (galeria) albo ?rule=$_1.AUTO (miniatury). Ujednolicamy do "$_59.JPG" — ten sam rozmiar co
-  // galeria na stronie, zawsze JPEG (format "AUTO" bywa WebP/AVIF zależnie od przeglądarki).
+  // (galeria) albo ?rule=$_1.AUTO (miniatury). Ujednolicamy do "$_57.JPG" (v6.10; wcześniej $_59) — 1200×1600 zamiast
+  // 720×960: napisy na widelcu / ramie czytelne dla AI; zawsze JPEG (format "AUTO" bywa WebP/AVIF zależnie od przeglądarki).
+  // Odciski (contentKey, imgKey) liczone z adresów w postaci $_59 — zgodne z zapisanymi przed v6.10.
   // Kolejność = kolejność w galerii (pierwsze zdjęcie zwykle pokazuje cały rower).
   // Najpierw og:image (= pierwsze zdjęcie galerii) i galeria; dopiero gdy galerii nie znaleziono
   // (Kleinanzeigen zmienił układ strony) — wszystkie <img> z adresem zdjęcia ogłoszenia.
+  const LISTING_IMG_RULE = "$_57.JPG";
   const IMG_RE = /^https:\/\/img\.kleinanzeigen\.de\/api\/v1\/prod-ads\/images\/[0-9a-f]{2}\/[0-9a-f-]{36}/i;
   const extractListingImages = (doc) => {
     const out = [];
     const add = (u) => {
       const m = String(u || "").trim().match(IMG_RE);
       if (!m) return;
-      const url = `${m[0]}?rule=$_59.JPG`;
+      const url = `${m[0]}?rule=${LISTING_IMG_RULE}`;
       if (!out.includes(url)) out.push(url);
     };
     const fromImg = (img) => { add(img.getAttribute("src")); add(img.getAttribute("data-imgsrc")); add(img.getAttribute("data-src")); };
@@ -2565,7 +2567,7 @@ Wiele ogłoszeń (szczególnie rowerów budowanych indywidualnie/na zamówienie)
 
 === KROK 1 — NAJPIERW USTAL FAKTY (pole "fakty") ===
 Zanim ocenisz opłacalność, ustal fakty z tytułu, opisu i swojej wiedzy o modelach. Program sprawdza je potem twardymi regułami — podawaj je rzetelnie, a nie "pod" decyzję.
-• rocznik — rok modelowy. Opis go podaje (Baujahr/Bj./Modelljahr/MY) → "podany". Jeśli nie, OSZACUJ z nazwy i generacji modelu oraz osprzętu → "oszacowany": użyj części ogólnej bazy (ROZPOZNAWANIE ROCZNIKA — daty wprowadzenia podzespołów) i bike checków modelu we wpisach marki — porównaj osprzęt z opisu z seryjnym osprzętem kolejnych roczników. Dodatkowe wskazówki: koła 26" w enduro/trail = zwykle do 2014–2016 (wyjątek: dirt jump, gdzie 26" to standard do dziś); 650B/27,5" opisywane jako nowość albo cytowany test z tamtych lat = ok. 2014-2016; Fox CTD = 2013-2015; oś Boost = od ok. 2016. Gdy pasuje kilka lat — wybierz rok według ZASADY ROCZNIKA I PASMA podanej przy ogłoszeniu, ALE gdy pasujący przedział obejmuje zarówno lata sprzed ${MIN_BIKE_YEAR}, jak i ${MIN_BIKE_YEAR} lub późniejsze — wpisz ${MIN_BIKE_YEAR} (cenę i tak licz z najniższego pasma); rocznik sprzed ${MIN_BIKE_YEAR} wpisuj tylko wtedy, gdy rower na pewno jest starszy. "Jak nowy"/"neuwertig" NIE mówi nic o roczniku — stary rower też bywa zadbany. Gdy naprawdę nie masz żadnych przesłanek → null i "brak". Brak rocznika w ogłoszeniu to norma (podaje go mało kto) — sam w sobie NIE jest powodem do "niepewne".
+• rocznik — rok modelowy. Opis go podaje (Baujahr/Bj./Modelljahr/MY) → "podany". Jeśli nie, OSZACUJ z nazwy i generacji modelu oraz osprzętu → "oszacowany": użyj części ogólnej bazy (ROZPOZNAWANIE ROCZNIKA — daty wprowadzenia podzespołów) i bike checków modelu we wpisach marki — porównaj osprzęt z opisu z seryjnym osprzętem kolejnych roczników. Dodatkowe wskazówki: koła 26" w enduro/trail = zwykle do 2014–2016 (wyjątek: dirt jump, gdzie 26" to standard do dziś); 650B/27,5" opisywane jako nowość albo cytowany test z tamtych lat = ok. 2014-2016; Fox CTD = 2013-2015; oś Boost = od ok. 2016. Gdy pasuje kilka lat — wybierz rok według ZASADY ROCZNIKA I PASMA podanej przy ogłoszeniu, ALE gdy pasujący przedział obejmuje zarówno lata sprzed ${MIN_BIKE_YEAR}, jak i ${MIN_BIKE_YEAR} lub późniejsze — wpisz ${MIN_BIKE_YEAR} (cenę i tak licz z najniższego pasma); rocznik sprzed ${MIN_BIKE_YEAR} wpisuj tylko wtedy, gdy rower na pewno jest starszy. "Jak nowy"/"neuwertig" NIE mówi nic o roczniku — stary rower też bywa zadbany. CZĘŚCI WYMIENIONE NIE DATUJĄ ROWERU: część opisana jako wymieniona, dołożona albo z przeróbki („nachgerüstet”, „neu verbaut”, „getauscht”, „upgegradet”, „Umbau”, „custom build”, „Aufbau”, „davor …”, singlespeed kit itp.) nie wskazuje rocznika ani w górę, ani w dół — rocznik ustalaj z ramy, nazwy modelu i części seryjnych; gdy zostają tylko części z przeróbki → szeroki zakres z ramy albo null. Gdy naprawdę nie masz żadnych przesłanek → null i "brak". Brak rocznika w ogłoszeniu to norma (podaje go mało kto) — sam w sobie NIE jest powodem do "niepewne".
 • PRZEDNIA PRZERZUTKA = ROWER STARY: przednia przerzutka (niem. „Umwerfer”) albo 2–3 tarcze przy korbie (np. 2x10, 2x11, 3x9, „2-fach”, „3-fach”, korba 36/26) w fullu albo e-MTB — widoczne na zdjęciu albo podane w opisie — oznacza rower sprzed ${MIN_BIKE_YEAR}: wpisz rocznik "oszacowany" najpóźniej ${MIN_BIKE_YEAR - 1} (zakres kończący się najpóźniej na ${MIN_BIKE_YEAR - 1}). Wyjątek TYLKO z dowodem w tytule/opisie: rocznik ${MIN_BIKE_YEAR}+ PODANY w ogłoszeniu (wygrywa podany) albo — przy modelach, które według bike checków w bazie miały seryjnie 2x także później (np. Trek Fuel EX 9.8 2017–2018 z XT 2x11) — wprost napisane cechy nowszej ramy (np. „Boost”, „130 mm”). Ze zdjęcia nowszej ramy nie rozpoznasz — bez dowodu w opisie przednia przerzutka = rower sprzed ${MIN_BIKE_YEAR}, także w Fuel EX 9.8. Przeróbka napędu na 1x nie odmładza ramy.
 • e_bike — true, jeśli rower ma silnik i akumulator (Wh, Motor, Fazua, Bosch, Shimano Steps/EP, Brose, Yamaha, TQ).
 • sprzedawca — "sklep" (Onlineshop, Lieferzeit, MwSt, wiele dostępnych rozmiarów, sklepowe warunki sprzedaży), "prywatny" albo "nieznany".
@@ -2848,7 +2850,10 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           parsed.odrzucenie = !fakty.kompletny_rower ? "czesc"
             : (typ === "dirt" && parsed.widelec.sztywny) ? "sztywny"
             // v5.14: w dircie tylko rocznik PODANY w ogłoszeniu (oszacowany rocznik dirta bywa losowy — 26" i proste ramy to tam norma)
-            : (rocznik != null && rocznik < minYear && !(typ === "dirt" && rocznikZrodlo !== "podany")) ? "stary"
+            : (rocznik != null && rocznik < minYear && !(typ === "dirt" && rocznikZrodlo !== "podany"))
+              // v6.10: próg MARKI (Cube 2020) przy roczniku tylko oszacowanym (≥ ${MIN_BIKE_YEAR}) — „nie”, ale nie na stałe:
+              // oszacowanie bywa błędne (np. z części z przeróbki), więc obniżka ceny wraca do sprawdzenia
+              ? (rocznikZrodlo === "oszacowany" && brandMin && !brandMin.model && rocznik >= MIN_BIKE_YEAR ? "stary_oszac" : "stary")
             : (typ === "elektryk_gorski" && excludeElektryk) ? "ebike"
             : (fakty.sprzedawca === "sklep" && fakty.stan === "nowy") ? "sklep"
             // v6.9 (decyzja właściciela 14.11.2026): dirt nieznanej marki + widelec nierozpoznany + wygląda staro → do kosza
@@ -3051,6 +3056,13 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             parsed.krotki_opis = `Dirt nieznanej marki z nierozpoznanym widelcem, wygląda na stary — odrzucone.`;
           } else if (parsed.odrzucenie === "stary") {
             parsed.krotki_opis = `${rocznikZrodlo === "podany" ? "Podany" : "Oszacowany"} rocznik ${rocznik} (< ${minYear}${brandMin ? ` dla ${BRAND_NAMES[brandMin.brand] || brandMin.brand}` : ""}) — odrzucone.`;
+          } else if (parsed.odrzucenie === "stary_oszac") {
+            // v6.10: gdy i tak się nie opłaca — najpierw zysk, rocznik jako dopisek
+            const brandTxt = BRAND_NAMES[brandMin?.brand] || brandMin?.brand || "";
+            const tooLow = sprzedaz != null && cenaNum > 0 && zyskLiczony != null && (zyskLiczony / cenaNum) * 100 < progZysku;
+            parsed.krotki_opis = tooLow
+              ? `Zakup ${cena}€${descTxt} → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zyskLiczony}€ po transporcie ${transport}€, próg ${progZysku}%) · oszacowany rocznik ${rocznik} (< ${minYear} dla ${brandTxt}; niepewny — po obniżce ceny wraca do sprawdzenia).`
+              : `Oszacowany rocznik ${rocznik} (< ${minYear} dla ${brandTxt}) — nie. Rocznik niepewny — po obniżce ceny ogłoszenie wraca do sprawdzenia.${sprzedaz != null ? ` (Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€.)` : ""}`;
           } else if (parsed.odrzucenie === "ebike") {
             parsed.krotki_opis = `E-bike — wykluczone w Ustawieniach.`;
           } else if (parsed.odrzucenie === "sklep") {
@@ -3495,7 +3507,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // v6.1: tytuł do porównań — bez wielkości liter, znaków i dopisków „Reserviert •” / „Gelöscht •”
   const normTitle = (t) => String(t || "").toLowerCase().replace(/^\s*(reserviert|gelöscht)\s*[•·|-]\s*/g, "").replace(/[^a-z0-9äöüß]+/g, " ").trim();
   // v5.14: odcisk treści ogłoszenia (opis + zdjęcia, opcjonalnie cena) — czy wynik analizy jest nadal aktualny; v6.1: także tytuł
-  const contentKey = (l, withPrice = true) => hashStr(`${normTitle(l.title)}|${withPrice ? l.price ?? "" : ""}|${l.fullDesc || ""}|${(l.images || []).join(",")}`);
+  // v6.10: adresy zdjęć do odcisków zawsze w postaci $_59 (rozmiar zmieniony w v6.10) — stare odciski dalej pasują
+  const imgKeyForm = (u) => String(u).replace(/\?rule=\$_\d{1,3}\.(JPG|AUTO)$/i, "?rule=$_59.JPG");
+  const contentKey = (l, withPrice = true) => hashStr(`${normTitle(l.title)}|${withPrice ? l.price ?? "" : ""}|${l.fullDesc || ""}|${(l.images || []).map(imgKeyForm).join(",")}`);
 
   // ── Duplikaty — ten sam rower pod innym numerem ogłoszenia (v6.1, przebudowane w v6.2) ──
   // Sam tytuł + cena to tylko podejrzenie (dwa takie same modele w tej samej cenie to normalna rzecz).
@@ -3505,7 +3519,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   // analiza z ostrzeżeniem. Wpis = rekord roweru: numery ogłoszeń, aktywny link, wycena do obserwacji, stan alertu.
   const titlePriceKey = (l) => `${normTitle(l.title)}|${l.price ?? ""}`;
   const descKey = (desc) => { const d = String(desc || "").toLowerCase().replace(/[^a-z0-9äöüß]+/g, ""); return d.length >= 40 ? hashStr(d) : null; };
-  const imgKey = (images) => (images || []).length >= 2 ? hashStr(images.join(",")) : null;
+  const imgKey = (images) => (images || []).length >= 2 ? hashStr(images.map(imgKeyForm).join(",")) : null;
   const loadDupes = () => {
     let map = {};
     try { map = JSON.parse(localStorage.getItem("ddf_dupes") || "{}") || {}; } catch {}
@@ -4251,6 +4265,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             : analysis.odrzucenie === "sztywny" ? `sztywny widelec (bez amortyzacji)`
             : analysis.odrzucenie === "dirt_stary" ? `dirt nieznanej marki, widelec nierozpoznany, wygląda na stary`
             : analysis.odrzucenie === "stary" ? `rocznik ${analysis.fakty?.rocznik ?? "?"} sprzed ${minYearFor(listing)}`
+            : analysis.odrzucenie === "stary_oszac" ? (/zysk za mały/.test(analysis.krotki_opis || "") ? `zysk za mały; rocznik oszacowany ${analysis.fakty?.rocznik ?? "?"} < ${minYearFor(listing)}` : `rocznik oszacowany ${analysis.fakty?.rocznik ?? "?"} < ${minYearFor(listing)} — niepewny, obniżka wróci do sprawdzenia`)
             : analysis.odrzucenie === "ebike" ? `e-bike — wykluczone w Ustawieniach`
             : analysis.odrzucenie === "sklep" ? `nowy rower ze sklepu`
             : analysis.typ_roweru === "inny" ? `typ: inny — odrzucone automatycznie`

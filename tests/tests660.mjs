@@ -35,9 +35,10 @@ await test("Cube z oszacowanym rocznikiem 2017–2019 → odrzucony (Cube od 202
     assert.equal(deals(app.st).length, 0, "bez okazji");
     assert.equal(genReqs(app.st).filter(isVer).length, 0, "bez weryfikacji");
     const a = await resultOf(app, B.id);
-    assert.equal(a.odrzucenie, "stary");
-    assert.match(a.krotki_opis, /Oszacowany rocznik 2017 \(< 2020 dla Cube\) — odrzucone/);
-    assert.ok(await app.countLogs(/NIE opłaca się \(rocznik 2017 sprzed 2020\)/) >= 1, "log z progiem marki");
+    // v6.10: rocznik tylko oszacowany → „nie”, ale nie na stałe (stary_oszac)
+    assert.equal(a.odrzucenie, "stary_oszac");
+    assert.match(a.krotki_opis, /Oszacowany rocznik 2017 \(< 2020 dla Cube\) — nie\. Rocznik niepewny/);
+    assert.ok(await app.countLogs(/NIE opłaca się \(rocznik oszacowany 2017 < 2020 — niepewny/) >= 1, "log z progiem marki");
   } finally { await close(app); }
 });
 
