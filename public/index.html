@@ -784,31 +784,38 @@ const brandMinYearOf = (title, label) => {
 };
 const BRAND_NAMES = { cube: "Cube" };
 
-// ==GENSHEET_START== v6.7: ŚCIĄGA GENERACJI RAM — tylko dla weryfikatora (Sonnet). Test 14.11.2026 na 18 ogłoszeniach z podanym
+// ==GENSHEET_START== v6.7 (v6.8: +21 modeli i kolory): ŚCIĄGA GENERACJI RAM — tylko dla weryfikatora (Sonnet). Test 14.11.2026 na 18 ogłoszeniach z podanym
 // rocznikiem: Sonnet bez ściągi 3/18 trafionych generacji, ze ściągą 13/18; Haiku ze ściągą „dopisywał” sobie cechy i w 7/18
 // dawał za nową generację — dlatego Haiku jej nie dostaje. Źródła: testy i premiery producentów (Pinkbike, Blister, Bikeradar,
 // Flow, Vital, enduro-mtb, archiwum Cube) — szczegóły w docs/NOTATKI.md. Modele, w których generacje różnią się za mało
-// (Spectral 2018–20 vs 2022–23, Nomad 4 vs 5, Trek Remedy), mają tylko pewne granice.
+// (Spectral 2018–20 vs 2022–23, Nomad 4 vs 5), mają tylko pewne granice. v6.8: partie 1–2 (testy 14.11.2026: bez ściągi
+// 6/12 i 3/14, ze ściągą 9/12 i 8/14); rozmiar kół ze zdjęć bywa mylony (i przerabiany na mullet) — sam nie przesądza o nowszej
+// generacji. Kolory tylko pomocniczo (ten sam kolor bywa w kilku latach, rower mógł być przemalowany).
 const GEN_SHEETS = [
   { name: "Specialized Stumpjumper", test: (t) => /stump\s*jumper|stumpy/i.test(t), text:
 `- 2016–2018: amortyzator w przednim trójkącie, BEZ bocznego łącznika „Sidearm”.
 - 2019–2020: rama „Sidearm” — boczny łącznik rury górnej z podsiodłową po stronie napędu, amortyzator obok niego; 27,5" albo 29".
 - 2021–2024: nowa rama karbonowa (Stumpjumper 130 mm, Stumpjumper EVO 150 mm), nadal z Sidearm; tańszy Stumpjumper ALLOY / Comp Alloy 2021–2022 ma jeszcze ramę 2019–2020.
-- 2025+ (Stumpjumper 15): BEZ Sidearm (symetryczny przedni trójkąt), amortyzator Fox GENIE; karbon albo alu.` },
+- 2025+ (Stumpjumper 15): BEZ Sidearm (symetryczny przedni trójkąt), amortyzator Fox GENIE; karbon albo alu.
+Kolory (pomocniczo): 2021 Comp Gloss White Mountains/Black, Satin Smoke/Cool Grey/Carbon (te same 2022); Expert Gloss Satin Carbon/Smoke, Gloss Spruce/Sage Green/Black; S-Works Satin Redwood/Smoke/Carbon, Gloss Black/Carbon. EVO Comp 2021 Gloss Clay/Black, Satin Black/Smoke; EVO Comp 2022 Satin Doppio/Sand, Gloss Arctic Blue/Black; EVO Comp Alloy 2022 Gloss Raspberry/Black, Satin Smoke/Black. Stumpjumper Alloy (rama 2019–20, sprzedawany 2021–22): Gloss White Sage/Black, Satin Black/Smoke, Satin Blaze/Black.` },
   { name: "Specialized Enduro", test: (t) => /\b(specialized|s-works)\b[^|,]{0,25}\benduro\b/i.test(t), text:
 `- 2017–2019: rama „X-Wing” — poprzeczka pod rurą górną, amortyzator prawie pionowo w przednim trójkącie; 27,5" albo 29"; także aluminium.
-- 2020+: amortyzator NISKO, prawie poziomo nad suportem, bez poprzeczki X-Wing; tylko 29" i tylko karbon; 170/170 mm. Aluminiowe Enduro = do 2019. Kolejne lata od 2020 rozróżnia tylko osprzęt i kolor.` },
+- 2020+: amortyzator NISKO, prawie poziomo nad suportem, bez poprzeczki X-Wing; tylko 29" i tylko karbon; 170/170 mm. Aluminiowe Enduro = do 2019. Kolejne lata od 2020 rozróżnia tylko osprzęt i kolor.
+Kolory (pomocniczo — od 2020 rama bez zmian, kolor pomaga): 2020 Expert Gloss Red Tint/Dove Grey/Satin Black, Satin Cool Grey/Copper, Elite White Mountains; 2021 Comp Aqua/Red/Black, Expert Satin Maroon/White Mountains, Gloss White/Black/Smoke; 2022 Comp Gloss Redwood/Smoke, Satin Cool Grey/White, Expert Gloss Dove Grey/Smoke, Satin Doppio/Sand.` },
   { name: "Trek Slash", test: (t) => /\btrek\b/i.test(t) && /\bslash\b/i.test(t), text:
 `- 2017–2020: 29", 150/160 mm; PROSTA rura dolna (Straight Shot) z Knock Block — przy główce odbojniki na koronę widelca; brak schowka w rurze dolnej; amortyzator często RE:aktiv.
 - 2021–2023 (Gen 5): 29", 160/170 mm; rura dolna lekko WYGIĘTA (korona widelca mieści się pod nią), schowek z klapką pod koszykiem bidonu (także w alu), Knock Block 2.0 bez odbojników; RockShox Super Deluxe Thru-Shaft; hak UDH.
-- 2024+ (Gen 6): high pivot — kółko (idler) prowadzące łańcuch nad zębatką korby, mullet (29"/27,5"), 170/170 mm.` },
+- 2024+ (Gen 6): high pivot — kółko (idler) prowadzące łańcuch nad zębatką korby, mullet (29"/27,5"), 170/170 mm.
+Kolory (pomocniczo): 2021 m.in. miedziany (9.7), Lithium Grey; 2022 Slash 9.8 Lithium Grey, Matte Battleship Blue, Radioactive Coral to Yellow Fade; Slash 8 Lithium Grey/Dnister Black, Miami Green.` },
   { name: "Canyon Torque", test: (t) => /\btorque\b/i.test(t) && !/torque\s*:?\s*on\b/i.test(t), text:
 `- 2018–2021: TYLKO 27,5"; 175/180 mm; amortyzator poziomo (od tylnych rurek do rury dolnej); wersja CF = karbonowy przód + ALUMINIOWY tylny trójkąt; brak miejsca na bidon pod amortyzatorem.
-- 2022+: 29", 27,5" albo mullet; miejsce na bidon pod amortyzatorem (koszyk Sideloader); CF ma karbonowy tylny trójkąt. Koło 29" z przodu → 2022+.` },
+- 2022+: 29", 27,5" albo mullet; miejsce na bidon pod amortyzatorem (koszyk Sideloader); CF ma karbonowy tylny trójkąt. Koło 29" z przodu → 2022+.
+Nazwa: „CF 8.0” (z „.0”) = do 2020, „CF 8” bez „.0” = od 2021. Kolory (pomocniczo): Purple Trasher i blue fade = czasy „CF 8.0” (rama 2018–21); Mullet CF 8 2022 szaro-czarny; Taro Tornado = nowsze lata.` },
   { name: "YT Capra", test: (t) => /\bcapra\b/i.test(t), text:
 `- do 2017 (gen 1): tylko 27,5"; wersja AL z karbonowymi górnymi rurkami tylnego trójkąta.
 - 2018–2021 (gen 2): 27,5" albo 29"; „skrzydło” łączące rurę dolną z podsiodłową PO OBU STRONACH ramy — brak miejsca na bidon w przednim trójkącie; amortyzator poziomo, mocowany bezpośrednio do tylnego trójkąta.
-- 2022+ (gen 3, w sprzedaży od maja 2021 — sprzedawcy podają czasem rok zakupu 2021): 29" albo MX (29"/27,5"); „skrzydło” TYLKO po stronie napędu → miejsce na bidon w przednim trójkącie; małe jarzmo (yoke) łączy amortyzator z tylnym trójkątem.` },
+- 2022+ (gen 3, w sprzedaży od maja 2021 — sprzedawcy podają czasem rok zakupu 2021): 29" albo MX (29"/27,5"); „skrzydło” TYLKO po stronie napędu → miejsce na bidon w przednim trójkącie; małe jarzmo (yoke) łączy amortyzator z tylnym trójkątem.
+Kolory (pomocniczo): 2019 CF Pro Race candy red/white albo magnesium white/black magic, 29 CF Pro Race deep petrol, AL Comp ember orange/night blue albo concrete grey/black magic, AL Base concrete grey/deep blue; 2020 Pro Race titan silver, Pro ghostship green, Comp dune grey, Base twotone blue (każdy też black magic); 2021 gen 3 (Core): żółty, czerwony, czarny.` },
   { name: "Santa Cruz Bronson", test: (t) => /\bbronson\b/i.test(t), text:
 `- 2016–2018 (V2): amortyzator napędzany GÓRNYM łącznikiem (wysoko przy rurze podsiodłowej); 27,5".
 - 2019–2021 (V3): amortyzator przy DOLNYM łączniku, nisko nad suportem, przechodzi przez rurę podsiodłową; 27,5"; karbon C/CC albo alu.
@@ -818,15 +825,103 @@ const GEN_SHEETS = [
 `- AM V4.2 (do 2019): 27,5".
 - AM 29 2019–2020: 29", jeden główny pivot z łącznikiem, kształt jak V4.2.
 - AM 29 2021–2022 (i Meta SX 2022 — mullet): nowa rama — dłuższa, ostrzejsze, bardziej kanciaste linie, łożyska dwurzędowe, osłony rury dolnej.
-- Meta V5 2023+: DWA krótkie łączniki (VCS — wirtualny punkt obrotu) zamiast jednego pivota.` },
+- Meta V5 2023+: DWA krótkie łączniki (VCS — wirtualny punkt obrotu) zamiast jednego pivota.
+Kolory (pomocniczo): 2020 AM 29 Blue Moon; 2021 AM 29 Heritage Green, Graphite Blue, TR Warm Grey, Matte Graphite, Heritage Green, Sand, ramy High Polished, Gun Metal; 2022 Champagne, Dark Slate, Keswick Green, Ash Grey, Brushed.` },
   { name: "Canyon Spectral", test: (t) => /\bspectral\b/i.test(t) && !/spectral\s*:?\s*on\b|spectral\s*125/i.test(t), text:
 `- 2014–2017: amortyzator PIONOWO przed rurą podsiodłową, napędzany wahaczem (rocker) nad nim; 27,5".
-- 2018 i nowsze: amortyzator POZIOMO, od tylnych górnych rurek do rury dolnej. Generacji 2018–2020 i 2021–2023 NIE da się pewnie rozróżnić po ramie (obie są też w wersji 27,5") — przy wątpliwości starsza. Koło 29" z przodu sugeruje 2021+, ale koła bywają wymienione. Od 2024 (nowy Spectral CF): skok 150/140 mm i schowek w ramie.` },
+- 2018 i nowsze: amortyzator POZIOMO, od tylnych górnych rurek do rury dolnej. Generacji 2018–2020 i 2021–2023 NIE da się pewnie rozróżnić po ramie (obie są też w wersji 27,5") — przy wątpliwości starsza. Koło 29" z przodu sugeruje 2021+, ale koła bywają wymienione. Od 2024 (nowy Spectral CF): skok 150/140 mm i schowek w ramie.
+Nazwa: „CF 8.0” = do 2020, „CF 8” = od 2021. Kolory (pomocniczo): 2021 Non Forest, New Violet (i Stealth); Spectral 29 2021–22 Stealth, Red/Black, X-Ray Green, potem Exhaust Black, Korma Spice; 2024+ Orbit, Cream, Reflecting Grey.` },
   { name: "Santa Cruz Nomad", test: (t) => /\bnomad\b/i.test(t), text:
 `- do 2016 (Nomad 3): amortyzator napędzany GÓRNYM łącznikiem.
 - 2017–2020 (Nomad 4): amortyzator przy DOLNYM łączniku, nisko, przechodzi przez rurę podsiodłową; 27,5"; karbon C/CC albo ALU — rama aluminiowa = Nomad 4.
 - 2021–2022 (Nomad 5): wygląda jak Nomad 4 (tylko karbon) — po ramie nie odróżnisz; przy wątpliwości starsza.
 - 2023+ (Nomad 6): 29" z przodu, 27,5" z tyłu (mullet), schowek Glovebox w rurze dolnej.` },
+  { name: "Cube Stereo", test: (t) => /\bstereo\b/i.test(t) && !/hybrid/i.test(t), text:
+`- Cube sprzed 2020 i tak jest odrzucany — ważne jest odróżnienie 2019 od 2020+ i 2020–2022 od 2023+.
+- 2018–2022: Stereo 120 / 140 HPC (karbonowy przód + aluminiowy tył) / 150 C:62 i C:68 (29") / 170 (29"); przewody wchodzą z boku główki ramy; BEZ schowka w rurze dolnej. Rama 140 HPC bez zmian 2018–2022 — rok rozróżnia głównie kolor.
+- 2023+: Stereo ONE22 / ONE44 (140/140, 29") / ONE55 (160/150, następca 150) / ONE77 (170) — karbon C:62/C:68X albo ALUMINIUM (np. ONE77 Pro), przewody PRZEZ STERY (górną pokrywkę), schowek w rurze dolnej pod koszykiem bidonu. Nazwa „ONE44/ONE55/ONE77” = 2023+.
+Kolory (pomocniczo): 2019: 140 HPC Race grey´n´white, SL carbon´n´grey, TM grey´n´orange (=rocznik 2019 → przed 2020!). 2020: 140 HPC Race bluegrey´n´red, SL carbon´n´grey, TM grey´n´orange; 150 C:62 Race grey´n´carbon, SL actionteam, C:68 TM grey´n´orange, SLT carbon´n´red; 170 Race green´n´sharpgreen, TM grey´n´red, SL black anodized. 2021: 140 HPC Race petrol´n´red, SL polarsilver´n´black, TM flashgrey´n´orange. 2022: 140 HPC Race grey´n´orange lub deepblue´n´white, SL polarsilver´n´black, SLT carbon´n´black / green´n´flashgreen. Uwaga: grey´n´orange (TM) był w 2019 i 2020.` },
+  { name: "Cube AMS", test: (t) => /\bams\b/i.test(t) && !/hybrid/i.test(t), text:
+`- 2018–2021: AMS 100 C:68 (100 mm; wersja TM od 2019 ze 120 mm widelcem i sztycą regulowaną) — jedna rama przez wszystkie lata, rocznik tylko po kolorze/osprzęcie.
+- 2022+: AMS ZERO99 (100 mm) i AMS ONE11 (110/120 mm), karbon C:68X, DWA koszyki bidonu jeden nad drugim na rurze dolnej, hak UDH. Nazwa ZERO99/ONE11 = 2022+.
+Kolory (pomocniczo): 2019: Race blackline, TM grey´n´orange, SL teamline, SLT zeroblack. 2020: Race carbon´n´grey, TM grey´n´orange, SL teamline, SLT carbon´n´blue. ONE11 2023: liquidred´n´carbon, flashgrey´n´olive.` },
+  { name: "Canyon Neuron", test: (t) => /\bneuron\b/i.test(t) && !/neuron\s*:?\s*on/i.test(t), text:
+`- 2017–2019 AL: amortyzator PIONOWO, napędzany wahaczem (rocker); rura górna wygięta w łuk; możliwy przedni przerzutnik.
+- 2019–2022 CF i 2020–2022 AL: amortyzator POZIOMO pod rurą górną (mocowanie widełkowe/clevis), czysta prosta linia od tylnej osi do główki; CF ma kanał (rynienkę) na przewody na rurze dolnej i wygiętą rurę podsiodłową.
+- 2023+: CF ma PROSTĄ rurę podsiodłową, cieńszą rurę dolną, przewody PRZEZ STERY, bez kanału na rurze dolnej, hak UDH, mocowanie torby (Load Bag) na rurze dolnej. AL 2023+ prowadzi przewody klasycznie przez rurę dolną — od AL 2020–2022 odróżnisz go słabo (przy wątpliwości starsza).
+- Nazwa: „CF 8.0 / AL 7.0” (z „.0”) = do 2020; „CF 8 / Neuron 7” bez „.0” = od 2021. Neuron:ON = e-bike.
+Kolory (pomocniczo): 2019–2020 CF: Stealth, Flash Blue (CF 8.0, 9.0 SL), Matcha Green (CF 9.0), Carbon Blue (Unlimited); 2020 AL: Flash Blue, Stealth, Alert Orange, Frozen Valentine. 2021: m.in. zielono-czarny (CF 8), czarno-biały (CF SLX 9), szaro-pomarańczowy (Neuron 7). 2024+: Pale Lavender, Slate Silver.` },
+  { name: "Trek Fuel EX", test: (t) => /\bfuel\s*-?\s*ex\b/i.test(t) && !/fuel\s*-?\s*ex\s*-?\s*e\b|\bfuel\s*\+/i.test(t), text:
+`- 2017–2019 (Gen 4): „Full Floater” — dolne mocowanie amortyzatora NIE na ramie, tylko na przedłużeniu tylnych dolnych rurek (pływa); 130 mm; brak schowka.
+- 2020–2022 (Gen 5): amortyzator mocowany na stałe do ramy; 130/140 mm; prosta rura dolna z Knock Block; schowek w rurze dolnej TYLKO w karbonie (alu Gen 5 bez schowka). Fuel EX 5 Gen 5 sprzedawany jeszcze 2023–2024 (ta sama rama Gen 5!).
+- 2023+ (Gen 6): 140/150 mm, masywniejsza rama w stylu Slasha, schowek w rurze dolnej także w ALU, hak UDH, rozmiarowe tylne widełki; napis „Gen 6” często w ogłoszeniu.
+- 2026: Fuel EX Gen 7 — nowa rama, brak szczegółów.
+Kolory (pomocniczo): 2021 (Gen 5, EX 5): Lithium Grey/Marigold, Dark Aquatic/Trek Black. 2022 (Gen 5, EX 8): Alpine Blue/Deep Dark Blue, Dark Aquatic/Trek Black, Rage Red to Dnister Black Fade (ten ostatni także 2023 Gen 5). 2024 (Gen 6, EX 8): Galactic Grey/Black Fade.` },
+  { name: "Trek Remedy", test: (t) => /\bremedy\b/i.test(t), text:
+`- 2017–2018: „Full Floater” — dolne mocowanie amortyzatora na przedłużeniu tylnych dolnych rurek (pływa), 27,5".
+- 2019+: dolne mocowanie amortyzatora NA STAŁE do ramy (sylwetka jak Slash), 27,5", opony 2,6", Knock Block. Rama bez zmian do ok. 2023 — rok po kolorze i amortyzatorze: 2019–2021 RockShox Deluxe RT3 RE:aktiv Thru-Shaft, 2022–2023 Fox Float X.
+Kolory (pomocniczo): rama karbonowa (frameset): 2019 Matte Dnister Black/Gloss Black, 2020–2021 Matte Emerald Iris, 2022+ Matte Trek Black; Remedy 9.9 2019: Miami Green.` },
+  { name: "Canyon Strive", test: (t) => /\bstrive\b/i.test(t) && !/strive\s*:?\s*on\b/i.test(t), text:
+`- do 2018: 27,5", Shapeshifter 1.0 (przełączany „przysiadem”).
+- 2019–2021: 29", 150/160 mm, Shapeshifter 2.0 z manetką pod kierownicą; modele „Strive CF 8.0/9.0” i „CFR 9.0 Team”.
+- 2022+: 29", 160/170 mm, sylwetka prawie taka sama, ale nowe kształty rur, regulacja reach w sterach; tylko modele „Strive CFR” i „CFR Underdog”. Shapeshifter (siłownik przy amortyzatorze) mają OBIE generacje od 2019 — brak manetki na zdjęciu nic nie znaczy. Po ramie trudno — przy wątpliwości 2019–2021.` },
+  { name: "Trek Session", test: (t) => /\btrek\b/i.test(t) && /\bsession\b/i.test(t), text:
+`- do 2020: niski punkt obrotu, BEZ kółka napinacza; wersje 27,5" i 29"; karbon albo alu (Session 8).
+- 2021+: TYLKO aluminium, wysoki punkt obrotu (high pivot) z kółkiem (idler) nad zębatką korby; seryjnie 29".` },
+  { name: "Radon Swoop", test: (t) => /\bswoop\b/i.test(t), text:
+`- do 2018: Swoop 170, cały aluminiowy, 27,5", flip-chip 3-pozycyjny.
+- 2019–2022 alu: ta sama aluminiowa rama na 29" (Swoop AL), flip-chip, miejsce na bidon w przednim trójkącie.
+- 2021+ (premiera połowa 2020) karbon: KARBONOWY przedni trójkąt + aluminiowy tył, inne położenie amortyzatora, BRAK miejsca na bidon w przednim trójkącie, regulowane stery zamiast flip-chipa.` },
+  { name: "Radon Slide", test: (t) => /\bradon\b/i.test(t) && /\bslide\b/i.test(t), text:
+`- do 2018: Slide 130/150/160 — 27,5", aluminium (Slide Trail 27,5" od 2014 — 160 mm).
+- 2019+: Slide Trail 29" — karbonowy przód + aluminiowy tył, flip-chip na łączniku, 140/150 mm; od 2019/2020 także Slide Trail AL (całość alu). Koło 29" i „Trail” → 2019+. Późniejsze zmiany — brak pewnych danych.` },
+  { name: "Ghost Riot", test: (t) => /\briot\b/i.test(t) && !/e-?\s*riot|path\s*riot/i.test(t), text:
+`- 2021–2022: Riot (EN 160/170, AM 150/160, Trail 130/140 — osobna rama) TYLKO aluminium, przewody pod osłoną na rurze dolnej, zawieszenie TractionLink (dwa łączniki), prosta rura podsiodłowa 34,9 mm (zastąpił serię AMR).
+- 2023+: dochodzi Riot CF (Trail / AM, 140 mm z tyłu, 29") — karbon; aluminiowe Riot EN/AM/Trail sprzedawane dalej (2023–2025), po ramie alu rocznika nie rozróżnisz — przy wątpliwości starszy. Uwaga: Path Riot i E-Riot to e-bike'i o prawie identycznym wyglądzie (silnik przy suporcie).` },
+  { name: "Propain Tyee", test: (t) => /\btyee\b/i.test(t), text:
+`- do 2018: starsza rama z mocowaniem przedniego przerzutnika.
+- 2019–2022: nowa rama (bez przedniego przerzutnika, miejsce na amortyzator sprężynowy), od 2020 także Tyee 29; przewody wchodzą przez OTWORY z boku główki ramy.
+- 2023+: przewody PRZEZ STERY (Sixpack), rozmiary XS–XL, M jako 27,5" albo 29", flip-chip 29"/MX na górnym łączniku, nowe kolory.` },
+  { name: "YT Jeffsy", test: (t) => /\bjeffsy\b/i.test(t), text:
+`- 2016–2018 (gen 1): 27,5" albo 29"; starsza sylwetka, inna niż Capra 2018.
+- 2019–2023 (gen 2): wygląd jak Capra 2018 — „skrzydło”/łącznik między rurą górną a podsiodłową; 27,5" albo 29"; magnetyczny koszyk bidonu Fidlock; od 2022 nazwy Core 1–4 (rama bez zmian).
+- 2024+ (MK3, premiera X 2023): BEZ łącznika rura górna–podsiodłowa, płynne kształty rur; tylko 29"; 145 mm z tyłu; karbon ma schowek STASH w rurze dolnej pod koszykiem (alu bez schowka).` },
+  { name: "YT Tues", test: (t) => /\btues\b/i.test(t), text:
+`- do 2017: Tues CF z aluminiowymi tylnymi dolnymi rurkami (chainstay).
+- 2018–2023 (gen 3): CF w całości z karbonu (także chainstay i wahacz), 27,5"; od 2019 także Tues 29 (osobna rama); jest też Tues AL. Pełny 27,5" albo pełny 29" — NIE mullet.
+- 2024+ (MK4): wygląda prawie tak samo, ale jedna rama do 29" i MX (mullet) z odwracanym łącznikiem, hak UDH, 5 rozmiarów. Mullet sam w sobie NIE dowodzi MK4 — starsze Tues są często przerabiane na mullet (widelec 29"); szukaj haka UDH i odwracanego łącznika, a przy wątpliwości podaj starszą.` },
+  { name: "Specialized Demo", test: (t) => /\bdemo\b/i.test(t) && /speciali[sz]ed|s-works/i.test(t), text:
+`- 2017–2019: Demo 8 — 27,5"; karbon (S-Works / Carbon) albo alu (Demo 8 Alloy).
+- 2020+ (premiera VII 2019 jako Demo 29): nowa rama TYLKO aluminium M5, amortyzator trunnion, 200 mm; najpierw tylko 29", od 2021 (premiera VI 2020) flip-chip przy tylnym przegubie i mullet 29"/27,5" — wygląd prawie ten sam. Karbonowe Demo → do 2019.` },
+  { name: "Propain Rage", test: (t) => /\brage\b/i.test(t) && /propain/i.test(t), text:
+`- do 2020: Rage CF (27,5" albo 29") — inny łącznik niż PRO10 z Tyee (szczegóły niepewne); Rage AL 2019–2020: nowa aluminiowa rama tylko 27,5", rozmiary S/M/L.
+- 2021+ (premiera VII 2021, często sprzedawany jako 2022): Rage CF — tylko 29" albo mullet, amortyzator W przednim trójkącie, łącznik PRO10 jak w Tyee, przewody nad suportem, odbojniki widelca przy główce. Rage 3 R CF (2024) wygląda tak samo.
+Kolory: 2021/22 CF: badmint, carbon raw, moongrey dark (połysk).` },
+  { name: "Propain Spindrift", test: (t) => /\bspindrift\b/i.test(t), text:
+`- do 2020: tylko aluminium, 27,5"; brak mocowania bidonu. Rozmiar kół trudno ocenić ze zdjęć — przy aluminiowej ramie bez mocowania bidonu podaj starszą.
+- 2021+: nowa rama — karbon (CF) albo alu; 29", mix albo 27,5"; mocowanie bidonu w ramie, przewody wewnątrz, hak UDH, wymienna plakietka na główce.` },
+  { name: "Santa Cruz Hightower", test: (t) => /\bhigh\s*tower\b/i.test(t), text:
+`- 2016–2018 (V1): amortyzator napędzany GÓRNYM łącznikiem (wysoko), 29" lub 27,5"+; był też Hightower LT.
+- 2019(2020)–2021 (V2): amortyzator przy DOLNYM łączniku, nisko nad suportem, przechodzi przez rurę podsiodłową; bez schowka.
+- 2022–2024 (V3): wygląda prawie jak V2, ale ma schowek Glovebox (klapka w rurze dolnej pod koszykiem bidonu) i okienko do ustawiania sag; tylko karbon.
+- 2025+ (V4): nowa rama — brak szczegółów.
+Kolory: V3 2022: Translucent Purple, Matte Evergreen.` },
+  { name: "Santa Cruz Megatower", test: (t) => /\bmega\s*tower\b/i.test(t), text:
+`- 2019–2021 (V1): 29", 160 mm, dolny łącznik, BEZ schowka.
+- 2022+ (V2): wygląda podobnie, ale ma schowek Glovebox w rurze dolnej i rozmiarowe tylne widełki; nadal pełne 29".` },
+  { name: "Santa Cruz 5010", test: (t) => /\b5010\b/.test(t), text:
+`- 2018–2020 (V3): 27,5"; amortyzator napędzany GÓRNYM łącznikiem.
+- 2021–2022 (V4): 27,5"; amortyzator przy DOLNYM łączniku, nisko, w tunelu rury podsiodłowej; widelec 140 mm.
+- 2023+ (V5): mullet — 29" z przodu, 27,5" z tyłu; dolny łącznik. Uwaga: V4 bywa przerabiany na mullet — samo duże przednie koło nie przesądza o V5 (V5 ma dłuższy przedni trójkąt, wyższy przód); przy wątpliwości V4.` },
+  { name: "Commencal Supreme", test: (t) => /\bsupreme\b/i.test(t) && /commencal|supreme\s*(dh|v\s*\d)/i.test(t), text:
+`- do 2022 (V4 / V4.2, Supreme DH 29 od 2019, mullet od 2020): wysoki pojedynczy punkt obrotu z kółkiem (idler), łącznik do amortyzatora; aluminium.
+- 2023+ (V5, sprzedaż od początku 2023; zespół jeździł od 2022): sześcioprzegubowy układ z wirtualnym wysokim punktem obrotu (więcej krótkich łączników przy suporcie), wygląda zupełnie inaczej niż V4; mullet (XS = 27,5"); aluminium; regulacje flip-chipem na dolnym mocowaniu amortyzatora.
+Kolory: V5 2024: Glittery Black, Glittery White.` },
+  { name: "Giant Trance", test: (t) => /\btrance\b/i.test(t) && !/\be\s*\+|trance\s*e\b/i.test(t), text:
+`- Nazwa rozstrzyga więcej niż rama: Trance (27,5") — starsza linia; Trance 29 od 2019 (115/130 mm, amortyzator trunnion, kompozytowy wahacz); Trance X 29 od 2021 (aluminium, 135/150 mm, flip-chip Maestro); Trance X 27,5" od 2022 (aluminium, 145/160 mm).
+- 2022+: Trance Advanced Pro 29 (karbon) ze schowkiem w rurze dolnej; aluminiowe Trance 29 z 2022 ma flip-chip i 120 mm (wcześniej 115 mm, bez flip-chipa).
+- Wszystkie generacje mają układ Maestro (dwa krótkie łączniki) — kształt zawieszenia nie wskazuje roku.
+Kolory: Trance X 29 2 2021: Gloss Balsam Green/Black; Trance X 29 1 2022: Panther/Phantom Green/Chrome, Chameleon Blue/Black/Chrome.` },
 ];
 // Ściąga z tytułu; nazwa wyszukiwania tylko, gdy tytuł nie wymienia żadnej znanej marki (np. „Enduro Fully 27,5 Gr. L”
 // w wyszukiwaniu „Trek Slash”) — tytuł „Canyon Strive” z wyszukiwania „Canyon Torque” nie dostanie ściągi Torque.
@@ -869,7 +964,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.7 (2026-11-14)";
+const APP_VERSION = "v6.8 (2026-11-14)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
