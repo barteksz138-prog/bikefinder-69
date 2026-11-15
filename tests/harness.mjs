@@ -60,6 +60,7 @@ export async function openApp({ cfg = {}, ls = {}, world, keepContext }) {
       const key = /Trek%20Slash|Trek Slash/.test(target) ? "slash" : /Canyon%20Torque|Canyon Torque/.test(target) ? "torque" : "other";
       st.searchCalls[key] = (st.searchCalls[key] || 0) + 1;
       const cards = world.search(key, st.searchCalls[key], st, decodeURIComponent(target)); // v6.3: + adres wyszukiwania
+      if (cards && cards.status) return route.fulfill({ status: cards.status, body: "", contentType: "text/html" }); // v6.15: blokada wyszukiwania (np. 403)
       for (const c of cards) st.cardPrices[c.id] = c.price; // v5.14: strona ogłoszenia pokazuje tę samą cenę co karta (jak na prawdziwym Kleinanzeigen)
       return route.fulfill({ body: `<html><body>${cards.map(card).join("")}</body></html>`, contentType: "text/html" });
     }
