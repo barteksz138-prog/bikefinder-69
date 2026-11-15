@@ -862,7 +862,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "niepewne_kategoria": "nisza_custom" | "za_malo_opisu" | "nieznany_model" | "inne" | null,
   "ostrzezenia": "krótko PO POLSKU (max 15 słów): podejrzenia do sprawdzenia przez użytkownika albo null",
   "rozmiar_ramy": "rozmiar ramy z tytułu / opisu, np. \\"56 cm\\", \\"M\\", \\"RH 54\\" — albo null",
-  "argumenty_negocjacji": "TYLKO gdy decyzja \\"nie\\" z powodu za małego zysku: 1–3 krótkie, PRAWDZIWE powody niższej ceny, PO NIEMIECKU, rozdzielone średnikiem — w pozostałych przypadkach null",
+  "argumenty_negocjacji": "TYLKO gdy decyzja \\"nie\\" z powodu za małego zysku: 1–2 konkretne rzeczy do naprawy / wymiany w TYM rowerze (widoczne w opisie lub na zdjęciach), PO NIEMIECKU, krótko jak w rozmowie (2–5 słów), rozdzielone średnikiem — np. \\"Kette verschlissen; Bremsbeläge fällig\\". BEZ rocznika, porównań z rynkiem / innymi ofertami, cen, cytatów ze sprzedawcy i nazw osprzętu. Gdy nic takiego nie ma albo w pozostałych przypadkach: null",
   "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów): które pasmo z bazy (np. 'baza: karbon, szczękowe, Ultegra 11s') i co przeważyło. Dla \\"niepewne\\": prawdziwa przyczyna."
 }
 
@@ -1567,7 +1567,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.16 (2026-11-15)";
+const APP_VERSION = "v6.17 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -3294,7 +3294,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
   "niepewne_kategoria": "nisza_custom" | "za_malo_opisu" | "nieznany_model" | "inne" | null,
   "ostrzezenia": "krótko PO POLSKU (max 15 słów, nie cytuj niemieckiego opisu): podejrzenia do sprawdzenia przez użytkownika — np. cena podejrzanie niska, zdjęcia katalogowe, możliwe ukryte wady — albo null",
   "rozmiar_ramy": "rozmiar ramy z tytułu/opisu, np. \"L\", \"M/L\", \"48 cm\" — albo null",
-  "argumenty_negocjacji": "TYLKO gdy decyzja \"nie\" z powodu za małego zysku: 1–3 krótkie, PRAWDZIWE (wynikające z ogłoszenia lub rynku) powody niższej ceny, PO NIEMIECKU, rozdzielone średnikiem — np. \"Baujahr 2018; Kette und Bremsbeläge bald fällig; vergleichbare Räder werden günstiger angeboten\" — w pozostałych przypadkach null",
+  "argumenty_negocjacji": "TYLKO gdy decyzja \"nie\" z powodu za małego zysku: 1–2 konkretne rzeczy do naprawy / wymiany w TYM rowerze (widoczne w opisie lub na zdjęciach), PO NIEMIECKU, krótko jak w rozmowie (2–5 słów każda), rozdzielone średnikiem — np. \"Kette und Kassette verschlissen; Sattelstütze defekt\" albo \"Lager in den Laufrädern müssen getauscht werden\". NIE podawaj rocznika, porównań z rynkiem ani z innymi ofertami, cen, cytatów ze sprzedawcy (np. o cenie specjalnej) ani nazw / modeli osprzętu — wiadomość ma brzmieć jak od zwykłego kupującego. Gdy takich rzeczy nie ma albo w pozostałych przypadkach: null",
   "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów) — konkretnie co przeważyło. Dla \"niepewne\" MUSISZ podać PRAWDZIWĄ przyczynę: 'opis nie mówi nic o stanie/wyposażeniu' / 'nierozpoznawalny model/marka' / 'niejasny rok produkcji' — NIE pisz 'brak informacji o osprzęcie' jeśli opis faktycznie wymienia komponenty, to musi być zgodne z prawdą. Dla \"tak\"/\"nie\": źródło ceny — pasmo z bazy (np. 'baza: Torque AL 2018–2021'), notatka użytkownika, wycena kategorii z bazy albo własna wiedza rynkowa."
 }
 
@@ -4158,13 +4158,26 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (offer == null || offer < 50 || !meetsProfit(pi.sale, pi.transport, offer)) offer = maxPrice;
     return { maxPrice, offer, profitAtOffer: Math.round(pi.sale - offer - pi.transport) };
   };
-  const sellerMessage = (near, args) => [
-    "Hallo,",
-    `ist das Fahrrad noch zu haben? Ich hätte Interesse und würde Ihnen ${near.offer} € anbieten.`,
-    ...(args ? [`Mein Preisvorschlag berücksichtigt: ${args.replace(/\s*;\s*/g, ", ").replace(/[.\s]+$/, "")}.`] : []),
-    "Über eine kurze Rückmeldung würde ich mich freuen.",
-    "Viele Grüße",
-  ].join("\n");
+  // v6.17: wiadomość jak od zwykłego kupującego. Z powodów AI zostają najwyżej 2 konkretne rzeczy do zrobienia przy rowerze;
+  // odpada rocznik, porównania z rynkiem / innymi ofertami, ceny, cytaty ze sprzedawcy („Sonderpreis”) i nazwy osprzętu (liczby).
+  const NEGOTIATION_BAD = /vergleichbar|angeboten|günstiger|preis|markt|baujahr|jahrgang|modelljahr|€|\beur\b|\d/i;
+  const negotiationReasons = (args) => String(args || "")
+    .split(/\s*[;\n]\s*/)
+    .map(x => x.trim().replace(/^[-•*–\s]+/, "").replace(/[.,!\s]+$/, ""))
+    .filter(x => x.length >= 4 && x.length <= 60 && !NEGOTIATION_BAD.test(x))
+    .slice(0, 2);
+  const sellerMessage = (near, args) => {
+    const reasons = negotiationReasons(args);
+    return [
+      "Hallo,",
+      "ist das Fahrrad noch zu haben? Ich hätte Interesse.",
+      reasons.length
+        ? `Es ist allerdings noch etwas zu machen (${reasons.join(", ")}), daher würde ich Ihnen ${near.offer} € anbieten.`
+        : `Wären ${near.offer} € für Sie in Ordnung?`,
+      "Ich könnte es kurzfristig abholen und bar bezahlen.",
+      "Viele Grüße",
+    ].join("\n");
+  };
   const sendNearToDiscord = async (item) => {
     const { listing, analysis: a, near } = item;
     const msg = sellerMessage(near, a.argumenty_negocjacji);

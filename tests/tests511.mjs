@@ -110,7 +110,8 @@ await test("Na granicy: 900 € / sprzedaż 1100 € → propozycja 750 € (v5.
     assert.equal(f("Opłaca się do"), "**858€**");
     assert.ok(f("Proponuj").startsWith("**750€**"));
     const msg = f("Wiadomość");
-    assert.ok(msg.includes("750 € anbieten") && msg.includes("Baujahr 2018, Kette bald fällig."), msg);
+    // v6.17: rocznik odpada, zostaje konkret do zrobienia — w naturalnym zdaniu
+    assert.ok(msg.includes("(Kette bald fällig), daher würde ich Ihnen 750 € anbieten.") && !msg.includes("Baujahr") && !msg.includes("Preisvorschlag"), msg);
     assert.ok(!app.st.discord.some(d => d.payload.embeds?.[0]?.title?.startsWith("🚲")), "bez alertu okazji");
   });
 });
