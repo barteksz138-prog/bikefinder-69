@@ -615,8 +615,31 @@ const fmtDuration = (ms) => {
   return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s` : `${s} s`;
 };
 
+// ==FORK_START== (blok testowany osobno: tests/tests6130.mjs)
+// v6.13 (decyzja właściciela 15.11.2026): dirty, które fabrycznie mają widelec z wysokiej półki. Gdy opis nie podaje widelca,
+// a ze zdjęć nie da się go ustalić — AI wycenia jak z widelcem seryjnym (pasmo „Pike DJ / Bomber DJ”, źródło „seryjny”).
+// Tylko wersje, w których KAŻDY rocznik miał Pike DJ albo Bomber DJ (sprawdzone 15.11.2026: strony producentów, 99spokes,
+// Vital MTB, bike-magazin). Bez: Bruce 1 (Manitou Circus Expert), Stitched 360 bez „Pro” (od 2020 Manitou Circus Sport;
+// tylko 2019 miał Pike DJ), Two6player bez „Pro”, Absolut bez „RS” / „Pike” (Manitou Circus Expert), Specialized P.3 (różnie).
+const DIRT_STOCK_FORKS = [
+  { id: "bruce2", re: /(?:\bthe|\b)bruce\s*(?:2|ii)(?![\da-z])/i, other: /(?:\bthe|\b)bruce\s*(?:1|i)(?![\da-z])/i, name: "Rose (The) Bruce 2", fork: "RockShox Pike DJ (wszystkie roczniki)" },
+  { id: "stitched360pro", re: /stitched\s*360\s*°?\s*-?\s*pro\b/i, name: "Canyon Stitched 360 Pro", fork: "RockShox Pike DJ (2020–2021) albo Marzocchi Bomber DJ (od 2022)" },
+  { id: "stitched360cllctv", re: /stitched\s*360\s*°?\s*-?\s*cllctv\b/i, name: "Canyon Stitched 360 CLLCTV", fork: "RockShox Pike DJ" },
+  { id: "two6playerpro", re: /two\s*-?\s*6\s*-?\s*player\s*-?\s*pro\b/i, name: "Dartmoor Two6player Pro", fork: "RockShox Pike DJ albo Marzocchi Bomber DJ (zależnie od rocznika)" },
+  { id: "absolutrs", re: /absolut\s*-?\s*(?:rs|pike)\b/i, name: "Commencal Absolut RS / Absolut Pike", fork: "RockShox Pike DJ" },
+];
+// Model z tytułu; z opisu tylko wtedy, gdy tytuł nie wymienia innej (tańszej) wersji tego modelu (np. „Bruce 1”).
+// src: "tytul" | "opis" — sam opis nie włącza trybu dirta (np. „Tausch gegen Stitched 360 Pro” w ogłoszeniu fulla)
+const dirtStockFork = (title, desc) => {
+  const t = String(title || ""), d = String(desc || "");
+  const inTitle = DIRT_STOCK_FORKS.find(m => m.re.test(t));
+  if (inTitle) return { ...inTitle, src: "tytul" };
+  const inDesc = DIRT_STOCK_FORKS.find(m => m.re.test(d) && !(m.other && m.other.test(t)));
+  return inDesc ? { ...inDesc, src: "opis" } : null;
+};
+
 // v5.13: pole "widelec" z analizy AI → { model | null, zrodlo, sztywny }
-const FORK_SOURCES = ["napis", "opis", "wyglad", "nieznany"];
+const FORK_SOURCES = ["napis", "opis", "wyglad", "seryjny", "nieznany"];
 const normalizeFork = (w) => {
   const o = w && typeof w === "object" ? w : {};
   let model = typeof o.model === "string" ? o.model.trim().slice(0, 60) : "";
@@ -625,7 +648,8 @@ const normalizeFork = (w) => {
   if (!model) zrodlo = "nieznany";
   else if (zrodlo === "nieznany") zrodlo = "wyglad";
   // v5.14: sama marka bez modelu ("RockShox (model nieznany)", "X-Fusion (wersja nieczytelna)", "Fox") — model NIE jest rozpoznany
-  const bezModelu = !!model && (FORK_PARTIAL_RE.test(model) || FORK_BRAND_ONLY_RE.test(model.replace(/[()]/g, "").trim()));
+  // v6.13: widelec „seryjny” jest przyjęty (model z listy DIRT_STOCK_FORKS), więc nie jest „bez modelu”
+  const bezModelu = zrodlo !== "seryjny" && !!model && (FORK_PARTIAL_RE.test(model) || FORK_BRAND_ONLY_RE.test(model.replace(/[()]/g, "").trim()));
   return { model, zrodlo, sztywny: o.sztywny === true, ...(bezModelu ? { bezModelu: true } : {}) };
 };
 const FORK_PARTIAL_RE = /nieznan|nieczyteln|nierozpozn|niewidoczn|unknown|bez\s+(napisu|nazwy)|\?/i;
@@ -636,12 +660,14 @@ const FORK_BRAND_MATTERS_RE = /rock\s*shox|\bfox\b|manitou|marzocchi|\bdvo\b|for
 const FORK_BRAND_WEAK_RE = /x-?fusion|suntour|\brst\b/i;
 const forkNeedsCheck = (w) => !w || w.sztywny ? null
   : !w.model || w.zrodlo === "nieznany" ? "sprawdź widelec (nie rozpoznano — liczone jak słabszy)"
+  : w.zrodlo === "seryjny" ? `sprawdź widelec (brak w opisie i na zdjęciach — przyjęto seryjny: ${w.model})`
   : w.bezModelu ? (FORK_BRAND_WEAK_RE.test(w.model) && !FORK_BRAND_MATTERS_RE.test(w.model) ? null : `sprawdź widelec (${w.model.replace(/\s*\(.*\)\s*$/, "")} bez rozpoznanego modelu — liczone jak słabszy)`)
   : w.zrodlo === "wyglad" ? `sprawdź widelec (${w.model} rozpoznany tylko z wyglądu)` : null;
-const FORK_SOURCE_LABELS = { napis: "napis na zdjęciu", opis: "z opisu", wyglad: "z wyglądu — sprawdź" };
+const FORK_SOURCE_LABELS = { napis: "napis na zdjęciu", opis: "z opisu", wyglad: "z wyglądu — sprawdź", seryjny: "seryjny w tym modelu — przyjęty, sprawdź" };
 const fmtFork = (w) => !w ? null : w.sztywny ? "sztywny (bez amortyzacji)"
   : w.model ? `${w.model} (${w.bezModelu ? "model nierozpoznany — liczone jak słabszy" : FORK_SOURCE_LABELS[w.zrodlo] || w.zrodlo})` : "nie rozpoznano";
 const forkField = (a) => a?.widelec && (a.typ_roweru === "dirt" || a.widelec.model) ? [{ name: "🔧 Widelec", value: String(fmtFork(a.widelec)).slice(0, 200), inline: true }] : [];
+// ==FORK_END==
 
 // ==FRAME_START== v6.5: MATERIAŁ RAMY (alu / karbon). Testy na 18 ogłoszeniach (11.2026): AI ze zdjęć bez napisu myli alu z karbonem
 // (Haiku 2–5 z 9 ram alu, Sonnet 1–2 z 9 — m.in. YT Capra AL, która miała „AL” w tytule), więc o wycenie decyduje kolejno: tekst ogłoszenia
@@ -991,7 +1017,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.12 (2026-11-15)";
+const APP_VERSION = "v6.13 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1017,15 +1043,19 @@ SŁABE (pasmo „słabszy widelec”, bez dopłaty):
 - RockShox Sektor, Recon, Judy, XC30/32 (widelce XC: cienkie lagi, często szybkozamykacz, długi skok). Złote albo szampańskie lagi RockShoxa to NIE Kashima — Kashima mają tylko Foxy z logo Fox.
 - SR Suntour, RST, X-Fusion inne niż Slant (np. MIG), widelce bez nazwy.
 
+WIDELEC SERYJNY (decyzja właściciela 15.11.2026) — modele, które fabrycznie mają widelec z wysokiej półki:
+${DIRT_STOCK_FORKS.map(m => `- ${m.name}: seryjnie ${m.fork}`).join("\n")}
+Gdy rower to jeden z tych modeli (wersja z tytułu, opisu albo napisu na ramie), a opis nie podaje widelca i na zdjęciach nie da się go ustalić (brak czytelnego napisu i brak cech innego widelca, albo widać tylko markę zgodną z seryjnym: RockShox przy Pike DJ, Marzocchi przy Bomber DJ) — przyjmij widelec seryjny: wyceniaj w paśmie „Pike DJ / Bomber DJ” i w polu "widelec" wpisz seryjny model z "zrodlo": "seryjny". Ta zasada ma pierwszeństwo przed „widelec nierozpoznany → słabszy widelec” (niżej i w bazie). Gdy opis albo zdjęcia pokazują INNY widelec (np. Manitou Circus, X-Fusion, cienkie lagi 32 mm, szybkozamykacz) — wyceniaj według niego, jak zwykle. Tańsze wersje tych modeli (np. Bruce 1, Stitched 360 bez „Pro”, Two6player bez „Pro”, Absolut bez „RS” / „Pike”) tej zasady NIE mają.
+
 REGUŁY:
 - Sztywny widelec (bez amortyzacji: brak lag i goleni, równe nogi) = rower odrzucony, decyzja „nie”, w polu "widelec" wpisz "sztywny": true.
 - Dirt z kołem 26" + RockShox z grubymi lagami ok. 35 mm, krótkim skokiem i osią 15 mm = Pike DJ ("zrodlo": "wyglad"), nawet bez napisu „DJ”. Cienkie lagi, oś 20 mm albo szybkozamykacz = NIE Pike DJ.
-- Nie da się ustalić widelca = "model": "nieznany": wyceniaj w paśmie „słabszy widelec”. Widzisz tylko markę (np. RockShox bez nazwy modelu) — wpisz samą markę, np. "RockShox", i wyceniaj w paśmie „słabszy widelec”.
+- Nie da się ustalić widelca = "model": "nieznany": wyceniaj w paśmie „słabszy widelec” (wyjątek: WIDELEC SERYJNY wyżej). Widzisz tylko markę (np. RockShox bez nazwy modelu) — wpisz samą markę, np. "RockShox", i wyceniaj w paśmie „słabszy widelec” (ten sam wyjątek).
 - Rocznik dirta: rocznik oszacowany (bez podanego w ogłoszeniu) NIE jest powodem do odrzucenia — wyceniaj dirta normalnie z pasma.
 - Marka dirta — pole "dirt": "marka": "znana", gdy marka jest w bazie dirtów albo to producent znany z dirtów / rowerów grawitacyjnych; "nieznana" — marka marketowa lub trekkingowa (np. Univega, Bulls, Fischer, McKenzie), no-name albo nieczytelna. Marka nieznana → wyceniaj w półce „Najtańsze dirty”.
 - "wyglada_staro": true tylko gdy na zdjęciach widać co najmniej dwie cechy starego roweru (sprzed ok. 2012): hamulce szczękowe V-brake albo mocowania pod nie, przednia przerzutka lub kilka tarcz z przodu, cienkie lagi widelca (ok. 28–30 mm) z kołem na szybkozamykacz, wąska kierownica z długim mostkiem, wyraźna korozja albo odpryski lakieru i wyblakłe naklejki. Bez zdjęć albo przy wątpliwości → false.
 - Marka nieznana + widelec nierozpoznany + "wyglada_staro": true → program odrzuca rower (decyzja właściciela).
-- Pole "widelec" w odpowiedzi: marka i model + źródło ("napis" na zdjęciu / "opis" / "wyglad" / "nieznany").`;
+- Pole "widelec" w odpowiedzi: marka i model + źródło ("napis" na zdjęciu / "opis" / "wyglad" / "seryjny" — przyjęty według WIDELEC SERYJNY / "nieznany").`;
 const MAX_PHOTOS_ALL = 20;     // górny limit "wszystkich zdjęć" (Claude przyjmuje do 20 zdjęć bez dodatkowych ograniczeń rozmiaru)
 const DETAILS_WAIT_MAX_MS = 2 * 60 * 60 * 1000;  // ile czekać na pełny opis (blokada / błąd strony), zanim ocenimy z fragmentu
 const DETAILS_MAX_AGE_MS = 30 * 60 * 1000;      // oferta czekająca dłużej niż 30 min: przed analizą/wysyłką pobieramy stronę ponownie (cena, dostępność)
@@ -2552,7 +2582,11 @@ ${kbChunksText(ids)}
 
     // ── ZDJĘCIA: tylko Gemini, tylko gdy włączone w Ustawieniach i strona ogłoszenia dała adresy zdjęć ──
     // v5.13: dirt (z Etapu 1 albo znany model dirtowy w tytule) → ściąga widelców i od razu wszystkie zdjęcia
-    let dirtGuide = groqType === "dirt" || DIRT_MODEL_RE.test(listing.title || "") || KB_DIRT_RE.test(listing.title || "");
+    // v6.13: dirt z widelcem seryjnym z wysokiej półki (Bruce 2, Stitched 360 Pro…) — model z tytułu albo opisu
+    const stockFork = dirtStockFork(listing.title, listing.fullDesc || listing.desc);
+    let dirtGuide = groqType === "dirt" || DIRT_MODEL_RE.test(listing.title || "") || KB_DIRT_RE.test(listing.title || "") || stockFork?.src === "tytul";
+    const stockForkNote = stockFork ? `=== WIDELEC SERYJNY TEGO MODELU ===
+Program rozpoznał w ogłoszeniu model: ${stockFork.name} — seryjnie ${stockFork.fork}. Jeśli opis nie podaje widelca, a na zdjęciach nie da się go ustalić (albo widać tylko markę zgodną z seryjnym) — przyjmij widelec seryjny: wyceniaj w paśmie „Pike DJ / Bomber DJ” i w polu "widelec" wpisz seryjny model z "zrodlo": "seryjny". Gdy opis albo zdjęcia pokazują inny widelec — wyceniaj według niego.` : null;
     const photoUrls = (provider !== "groq" && analyzePhotos && Array.isArray(listing.images))
       ? listing.images.slice(0, dirtGuide ? MAX_PHOTOS_ALL : MAX_PHOTOS_PER_CALL) : [];
     const descForWeak = String(listing.fullDesc || listing.desc || "").replace(/\s+/g, " ").trim();
@@ -2667,7 +2701,7 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
     "cena_nowego_eur": liczba lub null,
     "kompletny_rower": true | false
   },
-  "widelec": { "model": "marka i model widelca, np. \"RockShox Pike DJ\", albo \"nieznany\"", "zrodlo": "napis" | "opis" | "wyglad" | "nieznany", "sztywny": true | false },
+  "widelec": { "model": "marka i model widelca, np. \"RockShox Pike DJ\", albo \"nieznany\"", "zrodlo": "napis" | "opis" | "wyglad" | "seryjny" | "nieznany", "sztywny": true | false },
   "dirt": TYLKO dla typu "dirt": { "marka": "znana" | "nieznana", "wyglada_staro": true | false } — dla pozostałych typów null,
   "rama": { "material": "karbon" | "alu" | "nie_wiem", "zrodlo": "tekst" | "napis" | "wyglad" | "nieznany", "dowod": "max 20 słów PO POLSKU, bez podwójnych cudzysłowów: co i na którym zdjęciu (np. zdj. 4: spoina przy suporcie) albo null", "sprzedaz_alu_eur": liczba (gdy wyceniasz jako karbon: wartość tej samej generacji w wersji alu) lub null },
   "typ_roweru": "full" | "dirt" | "elektryk_gorski" | "inny",
@@ -2781,7 +2815,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
       let effectiveOverrides = { ...overrides };
       const modelForCall = opts.model && opts.model !== geminiModel ? opts.model : null;
       const images = Array.isArray(opts.images) && opts.images.length > 0 ? opts.images : null;
-      const dyn = [dynamicSuffix, dirtGuide ? DIRT_FORK_GUIDE : null, stageYearRule(opts), opts.extra, images ? photoNote(images.length) : null].filter(Boolean).join("\n\n");
+      const dyn = [dynamicSuffix, dirtGuide ? DIRT_FORK_GUIDE : null, dirtGuide ? stockForkNote : null, stageYearRule(opts), opts.extra, images ? photoNote(images.length) : null].filter(Boolean).join("\n\n");
       // Sprawdź RAZ przed pętlą retry czy mamy działający cache — nie warto próbować go tworzyć
       // ponownie przy każdej z 3 prób w razie błędu przejściowego (patrz cooldown w getCachedContentName).
       let cachedContentName = modelForCall ? null : await getCachedContentName();
@@ -3148,7 +3182,9 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
             ? parsed.ostrzezenia.trim().slice(0, 200) : null;
           // v5.13: w dircie widelec decyduje o cenie — nierozpoznany albo rozpoznany tylko z wyglądu → do sprawdzenia
           // v5.14: także sama marka bez modelu (RockShox / Fox / Manitou / Marzocchi — od modelu zależy półka)
-          const forkWarn = typ !== "dirt" || parsed.odrzucenie ? null : forkNeedsCheck(parsed.widelec);
+          let forkWarn = typ !== "dirt" || parsed.odrzucenie ? null : forkNeedsCheck(parsed.widelec);
+          // v6.13: model z seryjnym Pike DJ / Bomber DJ, a AI zostawiło widelec nierozpoznany — wycena mogła przyjąć słabszy
+          if (forkWarn && stockFork && (!parsed.widelec.model || parsed.widelec.bezModelu)) forkWarn += `; ${stockFork.name} ma seryjnie Pike DJ / Bomber DJ — wycena mogła przyjąć słabszy`;
           if (forkWarn && !(parsed.ostrzezenia || "").includes("widel")) parsed.ostrzezenia = [parsed.ostrzezenia, forkWarn].filter(Boolean).join("; ").slice(0, 240);
           // v6.5: materiał ramy — sprzeczność napisu z tekstem albo karbon tylko z wyglądu (z zyskiem, gdyby to było alu)
           const zyskAlu = fr.possibleCarbon && fr.saleAlu != null && cenaNum > 0 ? Math.round(fr.saleAlu - cenaNum - transport) : null;
@@ -3346,18 +3382,19 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     }
     } // koniec: pierwsza analiza (bez wznowienia)
 
-    // v6.7: „na granicy” też przechodzi weryfikację (wszystkie zdjęcia + ściąga generacji), zanim pójdzie alert —
-    // pierwsza analiza liczy teraz środkowy rocznik i środek pasma, więc jej „na granicy” bywa optymistyczne
-    const nearCheck = current.decyzja === "nie" && !!nearWebhook && !!nearDealOf(current);
-    if (current.decyzja !== "tak" && !nearCheck) return current;
-    const nearLabel = nearCheck ? "„na granicy”" : "okazji";
+    // v6.13 (decyzja właściciela 15.11.2026): „na granicy” ocenia TYLKO model analizy (Haiku — pierwsza analiza i ewentualna
+    // dokładniejsza przy wyniku tuż pod progiem), bez weryfikacji modelem weryfikacji (Sonnet, v6.7). Weryfikację przechodzi tylko „tak”.
+    if (current.decyzja !== "tak") {
+      // Bez pełnego opisu (strona ogłoszenia niedostępna) „na granicy” nie idzie — ocena z samego fragmentu jest za słaba
+      if (!listing.fullDesc && current.decyzja === "nie" && nearWebhook && nearDealOf(current)) {
+        addLog(`⚠️ „Na granicy” bez pełnego opisu — nie wysyłam — ${listing.title}`, "info");
+        return { ...current, _nearSkip: true };
+      }
+      return current;
+    }
     // v5.14: STOP przed weryfikacją — zapamiętujemy wynik pierwszej analizy, żeby po starcie nie płacić za nią drugi raz
     if (!runningRef.current) return { _aborted: true, _first: current }; // okazja bez weryfikacji nie jest wysyłana, wróci w kolejce
     // Bez pełnego opisu (strona ogłoszenia niedostępna) okazja nie przechodzi jako "tak" — do ręcznego sprawdzenia
-    if (!listing.fullDesc && nearCheck) {
-      addLog(`⚠️ „Na granicy” bez pełnego opisu — bez weryfikacji nie wysyłam — ${listing.title}`, "info");
-      return { ...current, _nearSkip: true };
-    }
     if (!listing.fullDesc) {
       addLog(`⚠️ Okazja oceniona tylko z krótkiego fragmentu (pełny opis niedostępny) — przenoszę do niepewnych — ${listing.title}`, "error");
       return { ...current, decyzja: "niepewne", oplaca_sie: false, niepewne_kategoria: "za_malo_opisu",
@@ -3370,7 +3407,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     // Jego odpowiedź przechodzi przez te same twarde reguły co pierwsza analiza.
     const fk = current.fakty || {};
     const verifyNote = `=== TRYB WERYFIKACJI — ADWOKAT DIABŁA ===
-Wcześniejsza analiza uznała to ogłoszenie za ${nearCheck ? `BLISKIE OKAZJI („na granicy” — zysk za mały przy obecnej cenie, ale niewiele brakuje)` : "OKAZJĘ"}: rocznik ${fk.rocznik ?? "?"} (${fk.rocznik_zrodlo || "brak"}), szacowana sprzedaż ${current.szacowana_sprzedaz_eur}€, zysk ~${current.przewidywany_zysk}€${current.powod_decyzji ? `, uzasadnienie: "${current.powod_decyzji}"` : ""}.
+Wcześniejsza analiza uznała to ogłoszenie za OKAZJĘ: rocznik ${fk.rocznik ?? "?"} (${fk.rocznik_zrodlo || "brak"}), szacowana sprzedaż ${current.szacowana_sprzedaz_eur}€, zysk ~${current.przewidywany_zysk}€${current.powod_decyzji ? `, uzasadnienie: "${current.powod_decyzji}"` : ""}.
 Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — tylko część zysku. Twoim zadaniem jest SZUKAĆ POWODÓW, dla których to NIE jest okazja. Sprawdź po kolei:
 1. ROCZNIK — czy nazwa modelu, standard kół (26"/650B), napęd (przednia przerzutka / 3x / 2x = rower sprzed ${MIN_BIKE_YEAR}, wyjątki jak w KROKU 1), zawieszenie albo cytowany test wskazują na rower sprzed ${MIN_BIKE_YEAR}? (W dircie liczy się tylko rocznik PODANY w ogłoszeniu — oszacowany nie jest powodem do "nie".) Porównaj osprzęt z bike checkami modelu, datami podzespołów i znacznikami roweru sprzed 2017 z bazy. (Sam brak rocznika w ogłoszeniu to norma — NIE jest powodem do odrzucenia.)${brandMin ? ` Dla marki ${BRAND_NAMES[brandMin.brand] || brandMin.brand} minimalny rocznik to ${minYear} — starszy → "nie".` : ""}
 2. E-BIKE — czy rower ma silnik/akumulator (Wh, Fazua, Bosch, Shimano Steps/EP, Brose)?
@@ -3383,14 +3420,10 @@ Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — t
 8. ZDJĘCIA — dołączono wszystkie zdjęcia z ogłoszenia (${allPhotos.length}). Czy pokazują TEN rower z opisu (model, generacja, karbon/alu, osprzęt), bez widocznych uszkodzeń (sprawdź też dalsze zdjęcia i zbliżenia)? Zdjęcia katalogowe zamiast prawdziwych → tylko wpis w "ostrzezenia", nie zmiana decyzji.` : ""}${typeConflictNote ? `
 9. TYP ROWERU — ${typeConflictNote}. Rozstrzygnij typ na podstawie zdjęć i opisu i napisz w "powod_decyzji", co o tym przesądza. Jeśli nie da się tego jednoznacznie ustalić — decyzja "niepewne".` : ""}
 Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej analizy. Decyzja "tak" tylko wtedy, gdy żaden punkt nie podważa okazji. Odpowiedz w tym samym formacie JSON co wyżej (z polem "fakty").`;
-    addLog(`🕵️ Weryfikacja ${nearLabel} — adwokat diabła (${stepLabel(plan.ver)}${allPhotos.length > 0 ? `, wszystkie zdjęcia: ${allPhotos.length}` : ""}${typeConflictNote ? ", do rozstrzygnięcia: sprzeczny typ" : ""}) — ${listing.title}`, "info");
+    addLog(`🕵️ Weryfikacja okazji — adwokat diabła (${stepLabel(plan.ver)}${allPhotos.length > 0 ? `, wszystkie zdjęcia: ${allPhotos.length}` : ""}${typeConflictNote ? ", do rozstrzygnięcia: sprzeczny typ" : ""}) — ${listing.title}`, "info");
     const [verOv, verOpts] = stepConfig(plan.ver);
     const verified = await attemptAnalysis(verOv, { ...verOpts, extra: verifyNote, images: allPhotos.length > 0 ? allPhotos : null, verify: true, stage: "weryfikacja" });
     if (verified?._aborted || verified?._fatal) return { ...verified, _first: current }; // v5.14: wznowimy od weryfikacji
-    if (nearCheck && (verified?._budget || !verified)) {
-      addLog(`⚠️ Weryfikacja „na granicy” ${verified?._budget ? "niemożliwa — budżet AI wyczerpany" : "nie powiodła się"} — bez weryfikacji nie wysyłam — ${listing.title}`, "error");
-      return { ...current, _nearSkip: true };
-    }
     if (verified?._budget) {
       // Nie wysyłamy niezweryfikowanej okazji, ale też jej nie chowamy do przyszłego miesiąca — do ręcznego sprawdzenia
       addLog(`💰 Weryfikacja okazji niemożliwa — budżet AI wyczerpany — przenoszę do niepewnych — ${listing.title}`, "error");
@@ -3414,9 +3447,6 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (verified.decyzja === "tak") {
       verified.krotki_opis = `${verified.krotki_opis} ✔ potwierdzone weryfikacją (${verified._verifyMode})`;
       addLog(`🕵️ Weryfikacja: okazja POTWIERDZONA (${verified._verifyMode}) — ${listing.title}`, verified._photos > 0 ? "success" : "error");
-    } else if (nearCheck) {
-      verified._nearVerified = true;
-      addLog(`🕵️ Weryfikacja „na granicy”: decyzja "${verified.decyzja}", sprzedaż ${verified.szacowana_sprzedaz_eur ?? "?"}€ (było ${current.szacowana_sprzedaz_eur ?? "?"}€)${nearDealOf(verified) ? " — nadal na granicy" : " — już nie na granicy, bez alertu"} — ${listing.title}`, "info");
     } else {
       addLog(`🕵️ Weryfikacja obaliła okazję → "${verified.decyzja}"${verified.powod_decyzji ? ` (${verified.powod_decyzji})` : ""} — ${listing.title}`, "info");
     }
@@ -4357,7 +4387,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             seenE.nearMax = null;
             persistSeenMap();
           }
-          const near = analysis._nearSkip ? null : nearDealOf(analysis); // v6.7: bez udanej weryfikacji nie wysyłamy
+          const near = analysis._nearSkip ? null : nearDealOf(analysis); // v6.13: „na granicy” z wyniku Haiku; bez pełnego opisu nie wysyłamy
           if (near) {
             analysis.krotki_opis = `${analysis.krotki_opis || ""} 🤏 Na granicy: opłaca się do ${near.maxPrice}€ — proponuj ${near.offer}€.`;
             addLog(`🤏 Na granicy okazji: ${listing.title} — ${listing.price}€, opłaca się do ${near.maxPrice}€, proponuj ${near.offer}€${nearWebhook ? "" : " (ustaw webhook „Na granicy okazji”, żeby dostawać to na Discord)"}`, "info");
