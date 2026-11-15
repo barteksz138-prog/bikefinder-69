@@ -1403,6 +1403,35 @@ const brandMinYearOf = (title, label) => {
 };
 const BRAND_NAMES = { cube: "Cube", canyon_spectral: "Canyon Spectral" };
 
+// v6.19: ŚCIĄGA WIDELCÓW — napisy, naklejki i kształt goleni ze zdjęć (decyzja właściciela 15.11.2026: tylko gdy AI jest pewne,
+// co widzi). Powód: Trek Slash „2022” z opisem „Fox 36 Rhythm”, a na zdjęciu RockShox — Haiku uznał czarne lagi za zgodne z opisem
+// i wziął rocznik z tytułu (faktycznie 2019/2020). Źródła: premiery RockShox MY2020 (Pinkbike, enduro-mtb, Bikerumor), ZEB 2021,
+// Pike/Lyrik/ZEB MY2023 (Pinkbike, Vital, Flow), Fox MY2017 (Pinkbike), Fox 36/38/40 MY2021 (Bikeradar, Bikerumor), Fox 36 MY2026
+// (Flow, Vital), forum Singletrack (Fox 36 Rhythm 2021–2023 na starym odlewie) — szczegóły w docs/NOTATKI.md.
+// Wniosek z researchu: sam KOLOR naklejek prawie nic nie mówi (zestawy w wielu kolorach są w sprzedaży), liczą się napisy i kształt.
+const FORK_SHEET = `=== ŚCIĄGA WIDELCÓW — NAPISY, NAKLEJKI I KSZTAŁT GOLENI (ze zdjęć) ===
+JAK UŻYWAĆ
+- Korzystaj ze ściągi TYLKO wtedy, gdy na zdjęciu naprawdę to widzisz: CZYTELNY napis (marka, model, wersja) albo wyraźną cechę kształtu opisaną niżej. Napis za mały, nieostry, zasłonięty albo niewidoczny → pomiń ściągę i nie zgaduj; w polu "zdjecia" nie pisz wtedy, że widelec „zgadza się z opisem” (napisz: „napis na widelcu nieczytelny”).
+- Markę ustalaj z NAPISU (FOX, ROCKSHOX, MARZOCCHI, SR SUNTOUR, MANITOU…), nie z koloru. Czarne lagi mają zarówno Fox Rhythm / Performance / Performance Elite, jak i prawie wszystkie RockShoxy (Pike, Lyrik, Yari, ZEB, Domain, Revelation) i wiele innych marek.
+- Sam kolor naklejek mało znaczy: RockShox i Fox sprzedają zestawy naklejek w wielu kolorach do samodzielnego naklejenia. Liczą się NAPISY na naklejkach i kształt goleni; kolor tylko pomocniczo, razem z napisem.
+- Widelec da się wymienić, więc ściąga mówi o roczniku WIDELCA, nie ramy. Widelec STARSZY niż rocznik z ogłoszenia = GÓRNA granica rocznika roweru (jak STARY podzespół w ROZPOZNAWANIU ROCZNIKA). Widelec nowszy niż reszta roweru = upgrade, rocznika nie podnosi.
+
+ROCKSHOX
+- Nazwy wersji na naklejkach: RC / RCT3 / RC2 (często z napisem „Charger 2”) = do MY2019. Select / Select+ / Ultimate = od MY2020. „Charger 2.1” = MY2020–2022. „Charger 3” albo „ButterCups” = od MY2023.
+- Kolory fabryczne od MY2020: Select = czarne golenie z CZARNYMI, ledwo widocznymi naklejkami (czarne na czarnym); Select+ = czarne ze srebrnymi / szarymi naklejkami; Ultimate = połyskujące naklejki foliowe — Pike Ultimate srebrny albo czarny połysk, Lyrik Ultimate czerwony albo czarny połysk, ZEB Ultimate szary („Slab Grey”) albo czarny połysk; od MY2023 także zielony Lyrik Ultimate („Heavy Meadow”). Czarne naklejki na czarnym widelcu bez czytelnej nazwy wersji NIE wyznaczają rocznika (bywają też naklejone z zestawu).
+- ZEB (lagi 38 mm — wyraźnie grubsze lagi, golenie i korona niż w Lyriku) = od MY2021.
+- Pike i Lyrik od MY2023: nowe golenie w stylu ZEB-a (rzeźbione, masywniejszy łuk), a w wersjach Ultimate i Select+ małe przyciski odpowietrzające z tyłu goleni, tuż pod uszczelkami. Te przyciski na Pike / Lyriku = widelec z MY2023+. Ich brak sam niczego nie dowodzi (Select i wersja podstawowa 2023+ ich nie mają).
+
+FOX
+- Lagi: złote Kashima tylko przy logo Fox = Factory; czarne = Performance / Performance Elite (od MY2017); Rhythm dostał w MY2017 szare lagi, ale w zdjęciach szare i czarne łatwo pomylić — Rhythm od Performance odróżnia napis, nie kolor lag.
+- Napisy: „CTD” = MY2013–2015; „Evolution” = do ok. MY2016; „GRIP2” = od MY2019; „GRIP X” / „GRIP X2” = od MY2025. „FIT4” i samo „GRIP” rocznika nie rozstrzygają.
+- Fox 36, 38 i 40 od MY2021: bardziej zaokrąglony łuk wysunięty do przodu, a z tyłu goleni przyciski odpowietrzające na wypukłych kanałach (żebrach) biegnących w górę. Te przyciski i kanały = widelec z MY2021+. Fox 38 (lagi 38 mm) = od MY2021. UWAGA: Fox 36 Rhythm jeszcze do ok. MY2023 miał stary odlew BEZ przycisków — brak przycisków przy Rhythm NIE dowodzi roweru sprzed 2021.
+- Fox 36 od MY2026: otwory (wycięcia) w łuku goleni.
+
+JAK TO WPŁYWA NA OCENĘ (tylko przy czytelnym napisie albo wyraźnej cesze kształtu)
+- Opis podaje inny widelec (marka albo model) niż napis na zdjęciu → wygrywa zdjęcie; w "ostrzezenia" wpisz „opis niezgodny ze zdjęciami: na zdjęciu <widelec>, w opisie <widelec>”. Sprzedawca, który przepisał osprzęt z katalogu innego roku, często podaje też zły rocznik.
+- Gdy widelec ze zdjęcia jest STARSZY, niż pozwala rocznik z tytułu / opisu (np. napis „RC” albo „Charger 2” przy „2022”, albo Fox z napisem CTD przy „2019”), a opis przy tym nie zgadza się ze zdjęciami — nie traktuj rocznika z ogłoszenia jako pewnego: wpisz "rocznik_zrodlo": "oszacowany", w "rocznik_zakres" zakres kończący się na górnej granicy z widelca i generacji ramy, wybierz rok według ZASADY ROCZNIKA I PASMA i tak wyceniaj. Gdy opis zgadza się ze zdjęciami, a sprzedawca wprost pisze o wymianie widelca — rocznik z ogłoszenia zostaje.`;
+
 // ==GENSHEET_START== v6.7 (v6.8: +21 modeli i kolory): ŚCIĄGA GENERACJI RAM — tylko dla weryfikatora (Sonnet). Test 14.11.2026 na 18 ogłoszeniach z podanym
 // rocznikiem: Sonnet bez ściągi 3/18 trafionych generacji, ze ściągą 13/18; Haiku ze ściągą „dopisywał” sobie cechy i w 7/18
 // dawał za nową generację — dlatego Haiku jej nie dostaje. Źródła: testy i premiery producentów (Pinkbike, Blister, Bikeradar,
@@ -1587,7 +1616,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.18 (2026-11-15)";
+const APP_VERSION = "v6.19 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -3134,6 +3163,8 @@ Którą liczbę z pasma wybrać: typowy stan i seryjny osprzęt → środek pasm
 
 ${KB.core}
 
+${FORK_SHEET}
+
 === KONIEC CZĘŚCI OGÓLNEJ BAZY ===
 
 ${kbNotes.length > 0 ? `=== NOTATKI UŻYTKOWNIKA (przypięte w czacie — realne transakcje i uwagi; mają PIERWSZEŃSTWO przed bazą) ===
@@ -3193,7 +3224,7 @@ Program rozpoznał w ogłoszeniu model: ${stockFork.name} — seryjnie ${stockFo
 Do tej analizy dołączono do ${n} pierwszych zdjęć z galerii ogłoszenia (pierwsze zwykle pokazuje cały rower). Jeśli żadnego nie widzisz — oceniaj wyłącznie z opisu. Użyj zdjęć, żeby:
 • rozpoznać model i generację (kształt ramy, układ amortyzatora, prowadzenie linek, malowanie typowe dla rocznika), rozmiar kół i materiał ramy (karbon czy alu);
 • sprawdzić napęd: przednia przerzutka albo 2–3 zębatki przy korbie w fullu = rower sprzed 2017 (zasada PRZEDNIA PRZERZUTKA z KROKU 1 — wpisz to w "rocznik" i "rocznik_zakres");
-• sprawdzić widoczny osprzęt i zgodność z opisem (np. złote lagi Kashima na widelcu z logo Fox = Fox Factory, czarne = Rhythm / Performance / Performance Elite — złote lagi RockShoxa i innych marek to NIE Kashima; liczba zębatek kasety; silnik / bateria = e-bike);
+• sprawdzić widoczny osprzęt i zgodność z opisem (np. złote lagi Kashima na widelcu z logo Fox = Fox Factory; czarne lagi mają i Foxy Rhythm / Performance / Performance Elite, i prawie wszystkie RockShoxy — markę i rocznik widelca ustalaj z czytelnego napisu według ŚCIĄGI WIDELCÓW; złote lagi RockShoxa i innych marek to NIE Kashima; liczba zębatek kasety; silnik / bateria = e-bike);
 • ocenić widoczny stan: rdza, głębokie rysy, wgniecenia, pęknięcia, braki części, krzywe koło;
 • wykryć zdjęcia katalogowe / stockowe zamiast prawdziwych (studyjne, białe tło, identyczne jak u producenta) — wpisz to w "ostrzezenia" (NIE zmieniaj przez to decyzji — użytkownik sam weryfikuje sprzedawcę).
 Ze zdjęć NIE odczytasz pewnie drobnych napisów ani ukrytych wad (luzy łożysk, stan amortyzatora od środka) — nie zgaduj ich. Gdy zdjęcia przeczą opisowi (inny model lub generacja, alu zamiast karbonu, uszkodzenia), ufaj zdjęciom i napisz to w "powod_decyzji". Opis nadal jest głównym źródłem informacji — zdjęcia go uzupełniają.
@@ -3246,7 +3277,7 @@ Renomowana marka/model ramy (Santa Cruz, Canyon, YT, Specialized, Commencal) NIE
 === WIDELEC (pole "widelec") ===
 • Złote lagi Kashima mają WYŁĄCZNIE widelce Fox z logo Fox (seria Factory). Złote, szampańskie albo brązowe lagi RockShoxa, Suntoura, RST itd. to zwykłe anodowanie — NIE Kashima i NIE drogi widelec. Sam kolor lag nie mówi o półce widelca.
 • Wersję widelca (Fox Factory / Performance Elite / Performance / Rhythm, RockShox Ultimate / Select+ / Select / Base) podawaj tylko z czytelnego napisu na zdjęciu albo z opisu. Bez tego przyjmij tańszą wersję i wyceniaj odpowiednio.
-• "widelec.zrodlo": "napis" (czytelny napis na zdjęciu), "opis" (z opisu ogłoszenia), "wyglad" (tylko z wyglądu, bez napisu), "nieznany". Gdy napis na zdjęciu przeczy opisowi — wygrywa napis; wpisz to krótko w "ostrzezenia".
+• "widelec.zrodlo": "napis" (czytelny napis na zdjęciu), "opis" (z opisu ogłoszenia), "wyglad" (tylko z wyglądu, bez napisu), "nieznany". Gdy CZYTELNY napis na zdjęciu przeczy opisowi — wygrywa napis; wpisz to krótko w "ostrzezenia" i sprawdź rocznik według ŚCIĄGI WIDELCÓW (część „JAK TO WPŁYWA NA OCENĘ”). Sam kolor lag albo naklejek to nie dowód niezgodności.
 • "widelec.sztywny": true tylko dla widelca bez amortyzacji (brak lag i goleni).
 
 === MATERIAŁ RAMY (pole "rama") ===
