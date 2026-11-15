@@ -79,6 +79,8 @@ calls.length = 0;
 res = mkRes();
 await handler({ method: "POST", body: { provider: "gemini", model: "gemini-2.5-flash", apiKey: "k", imageUrls: [IMG], messages: [{ role: "user", parts: [{ text: "S", cacheControl: true }, { text: "D" }] }] } }, res);
 const gb2 = JSON.parse(calls.find(c => c.url.includes("generativelanguage")).opts.body);
+// v6.11: klucz Gemini w nagłówku, nie w adresie
+{ const gc = calls.find(c => c.url.includes("generativelanguage")); assert.ok(!gc.url.includes("key="), "klucz nie w URL"); assert.equal(gc.opts.headers["x-goog-api-key"], "k"); }
 assert.equal(gb2.contents[0].parts[0].text, "S"); assert.ok(gb2.contents[0].parts[1].inlineData); assert.equal(gb2.contents[0].parts[2].text, "D");
 assert.ok(!("cacheControl" in gb2.contents[0].parts[0]));
 // bez znacznika cache — zdjęcia na początku (jak wcześniej)

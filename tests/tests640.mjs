@@ -23,7 +23,7 @@ await test("B1: zmiana transportu w Ustawieniach po Starcie działa w analizie w
     await app.start(); await app.waitLog(/Cykl #1 zakończony/);
     await app.page.getByRole("button", { name: "⚙️ Ustawienia" }).click();
     const inp = app.page.locator('label:has-text("Koszt transportu jednego roweru") + input');
-    await inp.fill("150");
+    await inp.fill("150"); await inp.press("Enter"); // v6.11: zapis po zatwierdzeniu pola
     await app.page.waitForTimeout(800);
     phase = 2;
     await app.waitUntil(() => genReqs(app.st).length >= 1, 20000, "analiza");

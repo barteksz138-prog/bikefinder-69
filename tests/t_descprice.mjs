@@ -38,4 +38,15 @@ assert.deepEqual(normalizeDescPrice({ eur: "1000", warunek: " tylko w ten weeken
 assert.equal(normalizeDescPrice({ eur: null, warunek: "x" }), null);
 assert.equal(normalizeDescPrice("1000"), null);
 assert.deepEqual(normalizeDescPrice({ eur: 999.6, warunek: "null" }), { eur: 1000, warunek: null });
+// v6.11: kwoty, które wcześniej dawały „tej kwoty nie ma w opisie”
+assert.ok(findDescPrices("Baujahr 2020 950€").includes(950), "Baujahr 2020 950€");
+assert.ok(!findDescPrices("Baujahr 2020 950€").includes(20950));
+assert.ok(findDescPrices("Wochenendpreis 1000").includes(1000), "Wochenendpreis");
+assert.ok(findDescPrices("Festpreis: 1100").includes(1100), "Festpreis");
+assert.ok(!findDescPrices("Neupreis 4500").includes(4500), "Neupreis nadal pomijany");
+assert.ok(findDescPrices("Fox 38 Gabel. 1000 € nur dieses Wochenende").includes(1000), "część w poprzednim zdaniu");
+assert.ok(!findDescPrices("Neue Gabel für 800 € verbaut").includes(800), "część w tym samym zdaniu nadal pomijana");
+assert.ok(findDescPrices("Sehr preiswert: 900€").includes(900), "preiswert ≠ Neuwert");
+assert.ok(!findDescPrices("Neuwert 3000€").includes(3000), "Neuwert nadal pomijany");
+assert.ok(findDescPrices("Preis 1.200 €").includes(1200));
 console.log("DESC PRICE TESTS OK");

@@ -226,7 +226,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "Brak treści do zcache'owania (messages/systemInstruction)" });
     }
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/cachedContents?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/cachedContents`;
       const createBody = {
         model: `models/${model}`,
         ttl: `${ttlSeconds || 3300}s`, // domyślnie 55 min — trochę mniej niż typowe 1h wygaśnięcia, żeby zdążyć odświeżyć
@@ -235,7 +235,7 @@ export default async function handler(req, res) {
       };
       const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey }, // v6.11: klucz w nagłówku, nie w adresie (adresy trafiają do logów)
         body: JSON.stringify(createBody),
       });
       const data = await resp.json();
@@ -248,8 +248,8 @@ export default async function handler(req, res) {
   if (action === "deleteCache") {
     try {
       if (!cacheName) return res.status(400).json({ error: "Brak cacheName" });
-      const url = `https://generativelanguage.googleapis.com/v1beta/${cacheName}?key=${apiKey}`;
-      const resp = await fetch(url, { method: "DELETE" });
+      const url = `https://generativelanguage.googleapis.com/v1beta/${cacheName}`;
+      const resp = await fetch(url, { method: "DELETE", headers: { "x-goog-api-key": apiKey } });
       const data = resp.status === 204 ? {} : await resp.json().catch(() => ({}));
       return res.status(resp.status).json(data);
     } catch (e) {
@@ -327,7 +327,7 @@ export default async function handler(req, res) {
 
     } else {
       // Gemini
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
       // Analiza zdjęć: pobierz zdjęcia ogłoszenia i dołącz je do ostatniej wiadomości (patrz attachImages)
       const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;
       const { contents, attached } = wantsImages ? await attachImages(messages, imageUrls) : { contents: messages, attached: 0 };
@@ -352,7 +352,7 @@ export default async function handler(req, res) {
       };
       const resp = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify(geminiBody),
       });
       const data = await resp.json();

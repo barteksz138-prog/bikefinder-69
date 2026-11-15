@@ -17,6 +17,8 @@ next = () => ({ ok: true, status: 204, headers: { get: () => null }, json: async
 res = mkRes(); await handler({ method: "POST", body: { webhookUrl: W, threadId: "1234567890123", payload: { content: "x" } } }, res);
 assert.deepEqual(res.body, { ok: true, status: 204, retryAfter: null, error: null });
 assert.ok(global.lastFetch.url.includes("thread_id=1234567890123"));
+// v6.11: wzmianki wyłączone — „@everyone” w tytule nie pingnie kanału
+assert.deepEqual(JSON.parse(global.lastFetch.opts.body).allowed_mentions, { parse: [] });
 // 403 zły webhook
 next = () => ({ ok: false, status: 403, headers: { get: () => null }, json: async () => ({ message: "Unknown Webhook", code: 10015 }) });
 res = mkRes(); await handler({ method: "POST", body: { webhookUrl: W, payload: { content: "x" } } }, res);

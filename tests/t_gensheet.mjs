@@ -22,6 +22,7 @@ const cases = [
   ["Commencal Meta AM 29 Gr. M 2022", "Commencal Meta"], ["Commencal Meta HT 24 Zoll", null], ["Commencal Meta Power SX", null],
   ["Canyon Spectral CF 7", "Canyon Spectral"], ["Canyon Spectral:ON CF 7", null], ["Canyon Spectral 125 AL 6", null],
   ["Fully Enduro 27,5 Zoll", null],
+  ["Specialized Status 160 Enduro", null], ["Specialized Turbo Kenevo Enduro 2021", null], ["Specialized Enduro Comp 29 2020", "Specialized Enduro"], // v6.11
   // v6.8: partie 1–2
   ["Trek Remedy 8 2019", "Trek Remedy"], ["Cube Stereo 140 HPC Race", "Cube Stereo"], ["Cube Stereo Hybrid 140 HPC 750", null],
   ["CUBE AMS 100 C:68 TM 29", "Cube AMS"], ["Cube AMS Hybrid ONE44", null],

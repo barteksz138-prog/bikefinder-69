@@ -40,6 +40,17 @@ assert.equal(mat("Canyon Spectral", "Canyon Spectral AL 6.0 aus 2019."), "alu");
 assert.equal(mat("Radon Swoop", "Kohlefaser-Rahmen, 170 mm."), "karbon");
 assert.equal(mat("Canyon Torque", "Laufradsatz Alu, Carbongabel? nein, Fox 38."), null, "laufradsatz / gabel to podzespoły");
 assert.equal(detectFrameMaterialText("YT Capra Al M 27.5", "").evidence, "tytuł: „Al”");
+// v6.11: „Carbon” daleko od nazwy części (lista osprzętu), „Carbon LRS”, „Carbonfolie” — to nie rama
+assert.equal(mat("Canyon Spectral 6.0 2019 Größe L", "Lenker: Renthal Fatbar Lite Carbon\nGabel: Fox 36"), null, "lista osprzętu");
+assert.equal(mat("Canyon Spectral 6.0", "Ausstattung:\n- Lenker Renthal Fatbar Lite Carbon 35 mm\n- Vorbau Renthal Apex"), null, "lista z myślnikami");
+assert.equal(mat("Canyon Torque", "Sehr gepflegt, mit Carbon LRS von DT Swiss."), null, "Carbon LRS w opisie");
+assert.equal(mat("Trek Slash mit Carbon LRS", ""), null, "Carbon LRS w tytule");
+assert.equal(mat("Canyon Torque", "Rahmen mit Carbonfolie geschützt, top Zustand."), null, "Carbonfolie");
+assert.equal(mat("Canyon Torque", "Carbonfolie überall, Bremshebel Carbon."), null, "folia i hebel");
+assert.equal(mat("Canyon Torque", "Lenker: Renthal Carbon; Rahmen: Carbon, Größe L"), "karbon", "osobny fragment o ramie zostaje");
+assert.equal(mat("YT Capra", "Carbon-Rahmen mit Alu-Laufrädern, Lenker Alu"), "karbon", "rama i części w jednym fragmencie");
+assert.equal(mat("Santa Cruz Heckler", "Santa Cruz Heckler CC, Carbon, 2021"), "karbon", "„Heckler” to nie „Heck”");
+assert.equal(mat("YT Capra", "Vollcarbon, Hinterbau Alu"), "karbon");
 
 // Który materiał liczy program
 const T = (material) => ({ material, conflict: false, evidence: null });
