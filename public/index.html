@@ -1017,7 +1017,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.13 (2026-11-15)";
+const APP_VERSION = "v6.14 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1867,7 +1867,9 @@ function App() {
     const ADULT_ONLY_BRANDS = ["yt", "commencal", "propain", "nukeproof", "raaw", "intense", "evil", "transition", "norco", "beddo"];
     const t = " " + title.toLowerCase().replace(/[^\p{L}\p{N}.]+/gu, " ") + " ";
     return BIKE_MODELS.some(b => {
-      const words = b.query.toLowerCase().split(/\s+/);
+      // v6.14: wyszukiwania-kategorie (Giant, Dirt, Dirtbike) nie mają pola query — wcześniej b.query.toLowerCase() wywracało cały cykl
+      const words = String(b.query || "").toLowerCase().split(/\s+/).filter(Boolean);
+      if (!words.length) return false;
       if (words.length < 2 && !ADULT_ONLY_BRANDS.includes(words[0])) return false;
       return words.every(w => t.includes(" " + w + " "));
     });
