@@ -456,14 +456,18 @@ const roadSearchUrl = (bike, minPrice, maxPrice) =>
   `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${minPrice}:${maxPrice}/${encodeURIComponent(bike.query)}/k0c217${bike.arts ? "+fahrraeder.art_s:(damen,herren)" : ""}`;
 
 // Filtr słów w TYTULE dla szos i graveli (osobny od filtra MTB — tamten odrzuca „Rennrad” i „Gravel”)
-const ROAD_FILTER_KEYWORDS_DEFAULT = "Mountainbike, MTB, Fully, Hardtail, Trekkingrad, Trekking, Hollandrad, Cityrad, Citybike, Stadtrad, Damenrad, Kinderfahrrad, Kinderrad, Kinder, Jugendrad, Laufrad, Klapprad, Faltrad, Liegerad, Dreirad, Lastenrad, Cargobike, Tandem, Fixie, Singlespeed, Bahnrad, Zeitfahrrad, Triathlonrad, Triathlon, Stahlrahmen, Stahlrenner, Halbrenner, Sportrad, Randonneur, Reiserad, Fitnessbike, Kinderrennrad, Vintagebike, Retrobike, Caferacer, Oldtimer, Eroica, nur Rahmen, Rahmen only, Rahmenset, Rahmenkit, Frameset, Laufradsatz, Laufräder, Felgen, Vorderrad, Hinterrad, Schaltgruppe, Groupset, Kurbel, Kurbelgarnitur, Schaltwerk, Umwerfer, Bremshebel, Powermeter, Cockpit, Schuhe, Schuh, Ersatzteile, Einzelteile, Bastlerrad, Schrott, gesucht, Tausch gegen, Vermietung, Verleih, Miete, Rollentrainer, Smarttrainer, Fahrradträger, E-Bike, Ebike, Pedelec, E-Gravel, E-Rennrad, Elektro, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, 26 Zoll";
+// v6.18: lista rozszerzona po teście na 780 prawdziwych ogłoszeniach (15.11.2026) — przez filtr przechodziły sztyce, kierownice,
+// widelce, same ramy („Rahmen Set”, „Carbonrahmen”, „Rennrad-Rahmen”) i rowery uszkodzone („Rahmen defekt”, „Rahmenbruch”).
+// Samego słowa „Rahmen” ani „Gabel” NIE ma na liście: „56 cm Rahmen”, „Alu-Rahmen, Carbon-Gabel” to opisy całych rowerów.
+const ROAD_FILTER_KEYWORDS_V616 = "Mountainbike, MTB, Fully, Hardtail, Trekkingrad, Trekking, Hollandrad, Cityrad, Citybike, Stadtrad, Damenrad, Kinderfahrrad, Kinderrad, Kinder, Jugendrad, Laufrad, Klapprad, Faltrad, Liegerad, Dreirad, Lastenrad, Cargobike, Tandem, Fixie, Singlespeed, Bahnrad, Zeitfahrrad, Triathlonrad, Triathlon, Stahlrahmen, Stahlrenner, Halbrenner, Sportrad, Randonneur, Reiserad, Fitnessbike, Kinderrennrad, Vintagebike, Retrobike, Caferacer, Oldtimer, Eroica, nur Rahmen, Rahmen only, Rahmenset, Rahmenkit, Frameset, Laufradsatz, Laufräder, Felgen, Vorderrad, Hinterrad, Schaltgruppe, Groupset, Kurbel, Kurbelgarnitur, Schaltwerk, Umwerfer, Bremshebel, Powermeter, Cockpit, Schuhe, Schuh, Ersatzteile, Einzelteile, Bastlerrad, Schrott, gesucht, Tausch gegen, Vermietung, Verleih, Miete, Rollentrainer, Smarttrainer, Fahrradträger, E-Bike, Ebike, Pedelec, E-Gravel, E-Rennrad, Elektro, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, 26 Zoll"; // lista domyślna z v6.16 — zapisana w ustawieniach bez zmian jest podmieniana na nową
+const ROAD_FILTER_KEYWORDS_DEFAULT = "Mountainbike, MTB, Fully, Hardtail, Trekkingrad, Trekking, Hollandrad, Cityrad, Citybike, Stadtrad, Damenrad, Kinderfahrrad, Kinderrad, Kinder, Jugendrad, Laufrad, Klapprad, Faltrad, Liegerad, Dreirad, Lastenrad, Cargobike, Tandem, Fixie, Singlespeed, Bahnrad, Zeitfahrrad, Triathlonrad, Triathlon, Stahlrahmen, Stahlrenner, Halbrenner, Sportrad, Randonneur, Reiserad, Fitnessbike, Kinderrennrad, Vintagebike, Retrobike, Caferacer, Oldtimer, Eroica, nur Rahmen, Rahmen only, Rahmenset, Rahmenkit, Rahmen Set, Rahmen-Set, Rennrad-Rahmen, Carbonrahmen, Rennradrahmen, Rahmen defekt, Rahmenbruch, Teilesatz, Frameset, Laufradsatz, Laufräder, Felgen, Vorderrad, Hinterrad, Schaltgruppe, Groupset, Kurbel, Kurbelgarnitur, Schaltwerk, Umwerfer, Bremshebel, Powermeter, Cockpit, Lenker, Vorbau, Sattelstütze, Schalthebel, Freilauf, Aufleger, Gabel für, Fahrradgabel, Rennradgabel, Satteltasche, Framebag, Schuhe, Schuh, Ersatzteile, Einzelteile, Bastlerrad, Bastler, defekt, Schrott, gesucht, Tausch gegen, Vermietung, Verleih, Miete, Rollentrainer, Smarttrainer, Fahrradträger, E-Bike, Ebike, Pedelec, E-Gravel, E-Rennrad, Elektro, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, 26 Zoll";
 
 // Wbudowana baza cen szos i graveli. Liczby pochodzą z cen OFERTOWYCH na OLX.pl (15.11.2026, 2322 oferty prywatne): pasmo
 // „dolna ćwiartka–mediana” przyjęte jako ostrożna cena sprzedaży. Dane źródłowe i metoda: docs/ceny-szosy-olx-2026-11.md.
 // core = zasady + wycena kategorii + ściągi osprzętu (zawsze w poleceniu); chunks = wpisy marek / modeli dobierane do ogłoszenia
 // (selectRoadKbChunkIds). Do skalibrowania na prawdziwych sprzedażach właściciela (etap 3).
 const KB_ROAD = {
-  version: "11.2026-e2",
+  version: "11.2026-e3",
   core: `BAZA CEN SZOS I GRAVELI — ZASADY I WYCENA KATEGORII — 11.2026
 
 ZASADY OGÓLNE
@@ -472,7 +476,8 @@ ZASADY OGÓLNE
 - Pule „karbon, tarczowe hydrauliczne” to głównie rowery z lat 2020+ — starszy rower z tej kombinacji (2015–2019) wyceniaj przy dolnej granicy albo niżej.
 - Kurs 4,35 zł/€. Warunki bazowe: kompletny, sprawny rower w dobrym stanie, bez pęknięć i ukrytych wad, normalne ślady użytkowania.
 - O cenie decydują, w tej kolejności: materiał ramy (karbon / alu), rodzaj hamulców (tarczowe hydrauliczne / tarczowe mechaniczne / szczękowe), GRUPA OSPRZĘTU, rocznik, koła. Marka znaczy mniej niż w MTB.
-- Grupa osprzętu nierozpoznana → licz najtańszą grupę, jaka pasuje do liczby biegów. Hamulce nieustalone → szczękowe (tańsze pasmo). Materiał ramy nieustalony → alu.
+- Grupa osprzętu nierozpoznana → licz najtańszą grupę, jaka pasuje do liczby biegów. Hamulce nieustalone → szczękowe (tańsze pasmo). Materiał ramy nieustalony → alu. Grupy Sensah, L-Twoo, microSHIFT na ramie z wyższej półki (rower przebudowany) → pasmo jak dla Claris / Sory, dolna granica.
+- „Alu / Carbon”, „Carbon / Alu”, „Hinterbau / Sitzstreben / Ausfallrohre aus Carbon” przy rurach z aluminium = rama ALU z karbonowymi wstawkami → pasmo alu.
 - Miejsce w paśmie: seryjny osprzęt i typowy stan → środek; skąpy opis, podstawowe koła, wyraźne ślady zużycia, mieszana grupa → dolna granica; górna granica tylko przy bardzo dobrym stanie i lepszych kołach.
 - Używany rower nie jest wart więcej niż ok. 65% ceny porównywalnego NOWEGO w aktualnej promocji. Punkty odniesienia (2026): nowa szosa alu z Claris ok. 2500–3000 zł, nowy gravel alu z GRX 400 ok. 3200–4500 zł.
 - Hamulce szczękowe: w Polsce sprzedają się wolniej i taniej niż tarczowe — stosuj pasma „szczękowe”, nie zawyżaj.
@@ -543,13 +548,28 @@ ROZPOZNAWANIE OSPRZĘTU NA ZDJĘCIACH
 - Liczba zębatek kasety (gdy zdjęcie napędu jest wyraźne): 8 = Claris, 9 = Sora, 10 = Tiagra albo GRX 400 (albo stare 105 / Ultegra → rower sprzed 2014), 11 = 105 / Ultegra / Dura-Ace / GRX 600 i 810 / SRAM 22 i 1x11, 12 = najnowsze grupy. Licz tylko wtedy, gdy zębatki da się policzyć — inaczej nie zgaduj.
 - Korba innej marki niż reszta grupy (FSA, Praxis, Prowheel, bez napisu) albo hamulce Tektro / Promax przy grupie Shimano = grupa mieszana → pół półki niżej.
 - Hamulce tarczowe HYDRAULICZNE: do zacisku dochodzi gładki przewód bez pancerza z linką, zacisk nie ma ramienia ani śruby zaciskającej linkę, górna część klamkomanetki jest wyraźnie wyższa / masywniejsza (zbiorniczek płynu). MECHANICZNE: do zacisku dochodzi linka w pancerzu, widać ramię i śrubę zaciskającą linkę (TRP Spyre, Avid BB5 / BB7, Tektro Mira, Promax). Zaciski linkowo-hydrauliczne (TRP HY/RD, Juin Tech) licz jak mechaniczne.
-- Hamulce SZCZĘKOWE: szczęki nad oponą przy koronie widelca i przy tylnym trójkącie, brak tarcz przy piastach; w przełajówkach cantilever albo mini-V (dwa ramiona po bokach opony).
+- Hamulce SZCZĘKOWE: szczęki nad oponą przy koronie widelca i przy tylnym trójkącie, brak tarcz przy piastach; w przełajówkach cantilever albo mini-V (dwa ramiona po bokach opony). „Hydraulische Bremsen Magura RT6 / RT8 / HS” to hydrauliczne hamulce NA OBRĘCZ — licz jak szczękowe, nie tarczowe.
 - Przerzutki elektroniczne: Di2 — cienkie przewody zamiast linek, grubsze korpusy przerzutek z silnikiem, skrzynka pod mostkiem albo w końcu kierownicy; SRAM eTap / AXS — brak jakichkolwiek przewodów do przerzutek, wyjmowane akumulatory na przerzutkach.
 - GRX: napis „GRX” na korbie i tylnej przerzutce, tylna przerzutka z przełącznikiem sprzęgła, korba 46/30 albo 48/31, albo jedna tarcza (1x).
 - Jedna tarcza z przodu i brak przedniej przerzutki = napęd 1x (SRAM Apex 1 / Rival 1 / Force 1, GRX 1x) — typowy dla graveli i przełajówek, nie jest wadą.
 - Datowanie po mocowaniach: koła na szybkozamykacze (dźwignia przy osi) przy hamulcach tarczowych → rower z lat ok. 2014–2017; osie przelotowe i zaciski flat mount (przykręcone płasko do widelca i dolnej rury tylnego trójkąta) → 2016+.
 - Koła: nazwa na obręczy (DT Swiss, Mavic Aksium / Ksyrium / Cosmic, Fulcrum Racing, Shimano RS / WH, Campagnolo Zonda / Scirocco / Bora, Zipp, Roval, Bontrager). Wysoki profil obręczy (od ok. 35 mm) z marką = koła karbonowe; wysoki profil bez marki → traktuj jak bez marki.
 - Opony ok. 35–50 mm z bieżnikiem + kierownica baranek = gravel / przełaj; opony 23–32 mm gładkie = szosa.
+
+DOWÓD ROCZNIKA 2014+ (bez niego nie ma decyzji „tak”)
+- Test na 780 prawdziwych ogłoszeniach (15.11.2026): prawie wszystkie tanie „karbony z Ultegrą” do 800 € to rowery z lat 2005–2013. Sama nazwa grupy („Ultegra”, „105”, „Dura-Ace”) bez numeru serii i bez liczby biegów NICZEGO nie dowodzi — te grupy istnieją od lat 90.
+- Rocznik 2014+ uznaj za ustalony tylko przy co najmniej jednym dowodzie: (a) rok / Modelljahr podany w ogłoszeniu; (b) napęd 11- albo 12-rzędowy (11-fach, 2x11, 22 Gänge, 1x11, 1x12); (c) numer serii 5800 / 6800 / 9100 / R7000 / R8000 / R9100 / 4700 / R3000 / R2000 albo GRX; (d) hamulce tarczowe w szosie; (e) model, który powstał w 2014 albo później: Canyon Endurace / Grail / Grizl, Trek Émonda / Checkpoint, Cannondale CAAD12 / CAAD13 / CAAD Optimo / Topstone, Cube Attain / Nuroad / Agree C:62, Giant Contend / Revolt / Defy Advanced z tarczami, Specialized Diverge / Allez Sprint / Tarmac SL6 i SL7, Focus Paralane / Atlas, Merida Silex, Rose Backroad, Triban RC / GRVL.
+- Dowody roweru SPRZED 2014 (wpisz rocznik sprzed 2014 → program odrzuci): Ultegra / 105 / Dura-Ace z kasetą 9- albo 10-rzędową (9-fach, 10-fach, 2x9, 3x9, 2x10, 3x10, 18 / 20 / 27 / 30 Gänge); numery części ST- / RD- / FC- z 5500, 5600, 5700, 6500, 6600, 6700, 7700, 7800, 7900; napęd 3x w szosie; zwroty „dem Alter entsprechend”, „altersgemäße Gebrauchsspuren”, „seinerzeit”, „Klassiker”, „stand lange in der Garage”.
+- Gdy nie ma dowodu w żadną stronę → "rocznik": null i "rocznik_zrodlo": "brak". Program zamieni wtedy „tak” na „niepewne”. NIE zgaduj roku, żeby tego uniknąć.
+
+STARSZE GENERACJE — NAZWY, KTÓRE ZWYKLE OZNACZAJĄ ROWER SPRZED 2014 (wskazówka; dowód 2014+ z listy wyżej ma pierwszeństwo)
+- Canyon: Ultimate F10, Ultimate CF bez „SL” / „SLX”, Ultimate AL bez „SLX”, Roadlite z kierownicą baranek.
+- Cube: Litening HPC / Super HPC, Agree GTC, Peloton, Attempt, Streamer, Aerial (część do 2015 — wymagaj dowodu).
+- Giant: TCR Composite, TCR Advanced z oznaczeniem C1–C3, TCR 0 / 1 / 2 / 3 alu, TCR Alliance, OCR, Defy 0–5 alu.
+- Specialized: Tarmac i Roubaix SL2 / SL3, Secteur, Allez z napędem 9- lub 10-rzędowym. Trek: liczby czterocyfrowe (1000–2300), Pilot, Madone 4.x / 5.x / 6.x, serie 1.x / 2.x z napędem 9- lub 10-rzędowym.
+- Cannondale: CAAD3–CAAD9, R500–R2000, Six13, SuperSix bez „EVO”, Synapse z napędem 3x10. Scott: Speedster z literą „S” (S10–S60), Addict R1–R4, CR1.
+- Merida: Scultura Evo 90x, Race Lite, Road Race. Focus: Cayo oraz Izalco Extended / Expert / Pro / Team, Culebro, Variado. Rose: „Red Bull” (dawna marka Rose). BMC: Streetfire, Road Racer SL01, Race Machine, SLT01.
+- Mało znane marki (Principia, Kuota, Cicli B, Carver, starsze Stevens i Bulls) bez roku i z napędem 9- lub 10-rzędowym → sprzed 2014.
 
 ROCZNIK (limit: od 2014)
 - Rower nie jest starszy niż jego najnowsza SERYJNA grupa: 105 5800 → 2014+, Ultegra 6800 → 2013+, Tiagra 4700 → 2015+, R7000 → 2018+, R8000 → 2017+, GRX → 2019+. Części wymienione po zakupie niczego nie dowodzą.
@@ -766,9 +786,9 @@ ZNANE SZOSY (= szosa): Canyon Endurace / Ultimate / Aeroad, Cube Attain / Agree 
 ZNANE GRAVELE I PRZEŁAJÓWKI (= gravel): Canyon Grail / Grizl / Inflite, Cube Nuroad / Cross Race, Rose Backroad, Giant Revolt / TCX, Trek Checkpoint / Boone / Crockett, Specialized Diverge / CruX, Cannondale Topstone / CAADX / SuperX, Scott Speedster Gravel / Addict Gravel / Addict CX, Focus Atlas / Mares, Merida Silex / Mission CX, Stevens Prestige / Gavere / Super Prestige, Ridley X-Trail / Kanzo / X-Ride, Marin Nicasio / Gestalt / Headlands, Kona Rove / Jake, Bergamont Grandurance, Triban GRVL, Bulls Grinder / Machete, Fuji Jari, Felt Broam, Orbea Terra, Bombtrack Hook.
 UWAGA: Canyon Roadlite, Cube SL Road, Specialized Sirrus, Trek FX, Giant FastRoad / Escape, Scott Sub / Metrix i inne rowery z PROSTĄ kierownicą to "inny".
 
-CZĘŚCI vs CAŁY ROWER: wymienienie osprzętu w opisie całego roweru (np. „Shimano 105, Laufräder Mavic Aksium”) to normalny opis — klasyfikuj po typie. Odpowiedz "inny" TYLKO gdy z tytułu albo opisu WPROST wynika, że sprzedawana jest sama część: „nur Rahmen”, „Rahmenset”, „Laufradsatz”, „Schaltgruppe”, „Teile”. „Rahmen 56 cm” / „Rahmenhöhe 54” / „RH 58” to ROZMIAR RAMY całego roweru. W razie wątpliwości → niepewne, NIE inny.
+CZĘŚCI vs CAŁY ROWER: wymienienie osprzętu w opisie całego roweru (np. „Shimano 105, Laufräder Mavic Aksium”) to normalny opis — klasyfikuj po typie. Odpowiedz "inny" TYLKO gdy z tytułu albo opisu WPROST wynika, że sprzedawana jest sama część: „nur Rahmen”, „es wird lediglich / nur der Rahmen verkauft”, „Rahmenset”, „Rahmen inkl. Gabel”, „Carbonrahmen”, tytuł kończący się słowem „Rahmen” bez żadnego osprzętu, „Laufradsatz”, „Schaltgruppe”, „Sattelstütze”, „Lenker”, „Teile”. „Rahmen 56 cm” / „56 cm Rahmen” / „60er Rahmen” / „Alu-Rahmen” / „Rahmenhöhe 54” / „RH 58” to ROZMIAR RAMY całego roweru. W razie wątpliwości → niepewne, NIE inny.
 
-ROK PRODUKCJI: odpowiedz jednym słowem "stary" (zamiast typu) TYLKO wtedy, gdy tytuł albo opis daje KONKRETNY dowód, że rower jest sprzed ${ROAD_MIN_YEAR}: podany rok, rama stalowa z mufami, manetki na ramie (Rahmenschalthebel), mostek na gwint, koła 27", grupy Shimano 600 / Exage / RSX / RX100 / Sora 8-fach / Tiagra 9-fach / 105 9-fach / 105 5600 / 5700 / Ultegra 6500 / 6600 / 6700 / Dura-Ace 7700 / 7800 / 7900, Campagnolo Mirage / Xenon, napęd 3x w szosie, słowa Klassiker / Vintage / Retro / 80er / 90er. Sama nazwa modelu bez takiego dowodu to NIE powód — klasyfikuj normalnie; wiek oceni dokładniejsza analiza.
+ROK PRODUKCJI: odpowiedz jednym słowem "stary" (zamiast typu) TYLKO wtedy, gdy tytuł albo opis daje KONKRETNY dowód, że rower jest sprzed ${ROAD_MIN_YEAR}: podany rok, rama stalowa z mufami, manetki na ramie (Rahmenschalthebel), mostek na gwint, koła 27", Ultegra / 105 / Dura-Ace z napędem 9- albo 10-rzędowym (9-fach, 10-fach, 2x9, 3x9, 2x10, 3x10, 27 / 30 Gänge), numery ST-5600 / 5700 / 6600 / 6700, stare modele: Rose „Red Bull”, Giant TCR Composite / OCR, Canyon Ultimate F10, Scott Speedster S10–S60 / Addict R1–R4, Merida Scultura Evo 90x, Cannondale CAAD3–CAAD9 / R500–R2000, Trek 1000–2300, Specialized Tarmac / Roubaix SL2 / SL3, Principia, grupy Shimano 600 / Exage / RSX / RX100 / Sora 8-fach / Tiagra 9-fach / 105 9-fach / 105 5600 / 5700 / Ultegra 6500 / 6600 / 6700 / Dura-Ace 7700 / 7800 / 7900, Campagnolo Mirage / Xenon, napęd 3x w szosie, słowa Klassiker / Vintage / Retro / 80er / 90er. Sama nazwa modelu bez takiego dowodu to NIE powód — klasyfikuj normalnie; wiek oceni dokładniejsza analiza.
 
 Brak wystarczających informacji → odpowiedz: niepewne
 
@@ -795,7 +815,7 @@ Sprzedający często podają cenę nowego roweru (Neupreis / NP / UVP / „koste
 • "naped.grupa": pełna nazwa głównej grupy z numerem serii, jeśli da się ją ustalić (np. "Shimano 105 R7000", "Shimano Ultegra 6800", "Shimano GRX RX400", "SRAM Rival 1") — z opisu albo z czytelnego napisu na zdjęciu. Nie wiesz → "nieznana".
 • "naped.biegi": układ biegów, np. "2x11", "1x11", "2x10"; nie wiesz → null.
 • "naped.zrodlo": "opis" (z tytułu / opisu), "napis" (czytelny napis na zdjęciu), "wyglad" (tylko z wyglądu — niepewne), "nieznany". Gdy napis na zdjęciu przeczy opisowi — wygrywa napis; wpisz to krótko w "ostrzezenia".
-• "naped.hamulce": "tarczowe_hydr" (przewody hydrauliczne, klamkomanetki do hydrauliki), "tarczowe_mech" (zaciski na linkę: TRP Spyre, Avid BB5 / BB7, Tektro Mira / MD-C), "szczekowe" (szczęki przy obręczy, także cantilever / mini-V w przełajówce), "nieznane".
+• "naped.hamulce": "tarczowe_hydr" (przewody hydrauliczne, klamkomanetki do hydrauliki), "tarczowe_mech" (zaciski na linkę: TRP Spyre, Avid BB5 / BB7, Tektro Mira / MD-C), "szczekowe" (szczęki przy obręczy, także cantilever / mini-V w przełajówce i hydrauliczne Magura RT / HS na obręcz), "nieznane".
 • Grupa "nieznana" albo tylko z wyglądu → wyceniaj jak NAJTAŃSZĄ grupę pasującą do liczby biegów. Hamulce "nieznane" → pasmo szczękowe.
 • Wyceniaj po realnym osprzęcie, nie po marce ramy: karbonowa rama znanej marki z Tiagrą albo Sorą to dolna granica pasma karbonu z 105, nie pasmo Ultegry.
 
@@ -829,7 +849,7 @@ Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
 • Typ "szosa" albo "gravel":
   - Ustal materiał ramy, hamulce i grupę osprzętu, wybierz pasmo z bazy i miejsce w nim (stan, koła, rocznik).
   - Zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia minus koszt transportu do Polski ${transportCostEur}€ (odejmij go dokładnie raz).
-  - decyzja "tak" TYLKO gdy zysk po transporcie wynosi co najmniej MINIMALNY ZYSK podany przy ogłoszeniu I ustaliłeś z opisu albo zdjęć co najmniej: materiał ramy, rodzaj hamulców i grupę osprzętu (albo liczbę biegów).
+  - decyzja "tak" TYLKO gdy zysk po transporcie wynosi co najmniej MINIMALNY ZYSK podany przy ogłoszeniu I ustaliłeś z opisu albo zdjęć co najmniej: materiał ramy, rodzaj hamulców i grupę osprzętu (albo liczbę biegów) I rocznik 2014+ ma dowód (sekcja DOWÓD ROCZNIKA 2014+ w bazie). Bez dowodu rocznika wpisz "rocznik": null — program skieruje ofertę do niepewnych.
   - decyzja "niepewne" gdy naprawdę brakuje kluczowych informacji (ani opis, ani zdjęcia nie pozwalają ustalić grupy osprzętu i materiału ramy; marka zupełnie nieznana). NIE oznaczaj "niepewne" tylko dlatego, że modelu nie ma w bazie — wyceniaj z kategorii.
   - decyzja "nie" gdy masz dość danych, żeby stwierdzić, że zysk jest za mały.
   - TWARDA REGUŁA ROKU: rocznik (podany albo oszacowany) sprzed ${ROAD_MIN_YEAR} → "nie", niezależnie od ceny.
@@ -909,7 +929,7 @@ Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — t
 1. GRUPA OSPRZĘTU — czy nazwa i generacja grupy wynikają z opisu albo z czytelnego napisu na zdjęciu? Grupa tylko z wyglądu albo samo „Shimano” → licz najtańszą grupę pasującą do liczby biegów. Mieszana grupa → dolna granica pasma.
 2. HAMULCE — tarczowe hydrauliczne, tarczowe mechaniczne czy szczękowe? Pasmo musi odpowiadać rodzajowi hamulców; nieustalone → szczękowe.
 3. MATERIAŁ RAMY — ${frameMaterial ? `tekst ogłoszenia podaje: ${frameMaterial} — wyceniaj tę wersję.` : `tekst ogłoszenia go nie podaje — szukaj napisu na ramie i spoin. Karbonowy widelec albo koła to nie karbonowa rama. Karbon tylko z wyglądu podawaj z dowodem (numer zdjęcia) i z "rama.sprzedaz_alu_eur".`}
-4. ROCZNIK — czy grupa osprzętu, hamulce albo cechy ramy wskazują na rower sprzed ${ROAD_MIN_YEAR} (ZNACZNIKI ROWERU SPRZED 2014 w bazie)? Sam brak rocznika w ogłoszeniu to norma — NIE jest powodem do odrzucenia. Przednia przerzutka to w szosie norma.
+4. ROCZNIK — czy jest DOWÓD rocznika ${ROAD_MIN_YEAR}+ (sekcja DOWÓD ROCZNIKA 2014+ w bazie: podany rok, napęd 11- / 12-rzędowy, numer serii, tarcze, model z 2014+)? Sama nazwa grupy bez numeru serii i liczby biegów NIE wystarcza — wtedy "rocznik": null (program skieruje ofertę do niepewnych). Grupa 9- / 10-rzędowa Ultegra / 105 / Dura-Ace albo stara nazwa modelu (STARSZE GENERACJE w bazie) → rocznik sprzed ${ROAD_MIN_YEAR}. Przednia przerzutka to w szosie norma.
 5. TYP — czy to na pewno szosa / gravel z kierownicą baranek? Prosta kierownica, rower czasowy, torowy / ostre koło, stalowy klasyk → typ "inny". Silnik i akumulator → "e_bike": true.
 6. SKLEP — czy to nowy rower ze sklepu w cenie detalicznej (Onlineshop, Lieferzeit, „Zustand: Neu”)?
 7. CENA NOWEGO — czy szacunek nie jest zakotwiczony na „Neupreis” / „NP” / „UVP”?
@@ -1567,7 +1587,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.17 (2026-11-15)";
+const APP_VERSION = "v6.18 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1741,7 +1761,7 @@ function App() {
   // v6.16: szosy i gravele — osobny tor włączany jednym przełącznikiem (domyślnie WYŁĄCZONY; wyłączony = skaner jak przed v6.16)
   const [roadEnabled, setRoadEnabled] = useState(cfg.roadEnabled === true);
   const [roadMaxBuyPrice, setRoadMaxBuyPrice] = useState(Number.isFinite(cfg.roadMaxBuyPrice) ? cfg.roadMaxBuyPrice : ROAD_MAX_BUY_DEFAULT);
-  const [roadFilterKeywords, setRoadFilterKeywords] = useState(typeof cfg.roadFilterKeywords === "string" ? cfg.roadFilterKeywords : ROAD_FILTER_KEYWORDS_DEFAULT);
+  const [roadFilterKeywords, setRoadFilterKeywords] = useState(typeof cfg.roadFilterKeywords === "string" && cfg.roadFilterKeywords !== ROAD_FILTER_KEYWORDS_V616 ? cfg.roadFilterKeywords : ROAD_FILTER_KEYWORDS_DEFAULT);
   const [roadWebhook, setRoadWebhook] = useState(cfg.roadWebhook || "");
   const [selectedRoad, setSelectedRoad] = useState(() => {
     const all = ROAD_SEARCHES.map(b => b.id);
@@ -3671,7 +3691,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // Gdy model i tak tak odpowie, a podał liczby — decyzję liczymy z liczb (każde "tak" i tak
           // przechodzi potem weryfikację). Bez liczb — to po prostu za mało informacji w opisie.
           if (parsed.decyzja === "niepewne" && rawUncertainCat === "brak_rocznika") {
-            if (cenaNum != null && cenaNum > 0 && zyskLiczony != null) {
+            if (!road && cenaNum != null && cenaNum > 0 && zyskLiczony != null) { // v6.18: w szosach brak rocznika zostaje „niepewne”
               parsed.decyzja = (zyskLiczony / cenaNum) * 100 >= progZysku ? "tak" : "nie";
               addLog(`ℹ️ Gemini: "niepewne" tylko z powodu braku rocznika — decyduję z liczb: "${parsed.decyzja}" — ${listing.title}`, "info");
             } else {
@@ -3718,6 +3738,16 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
               addLog(`ℹ️ ${aiName(modelForCall || geminiModel)}: decyzja "nie", ale z liczb wychodzi zysk ${pctTxt}% (próg ${progZysku}%) — liczby decydują: "tak", sprawdzi weryfikacja — ${listing.title}`, "info");
               parsed.decyzja = "tak";
             }
+          }
+
+          // ── v6.18 (szosy / gravele): „tak” wymaga ustalonego rocznika. Test na 780 prawdziwych ogłoszeniach (15.11.2026):
+          // z 30 najlepszych „okazji z liczb” 20 było rowerami sprzed 2014 bez rocznika w opisie („Carbon, Ultegra” z 2008 r.).
+          // Bez rocznika (podanego albo oszacowanego z dowodu: 11 biegów, numer serii, tarcze, model) → do niepewnych.
+          if (road && parsed.decyzja === "tak" && !parsed.odrzucenie && typ !== "inny" && rocznik == null) {
+            addLog(`ℹ️ ${opts.verify ? "Weryfikator" : aiName(modelForCall || geminiModel)}: „tak” bez dowodu rocznika ${ROAD_MIN_YEAR}+ → „niepewne” — ${listing.title}`, "info");
+            parsed.decyzja = "niepewne";
+            parsed.niepewne_kategoria = "za_malo_opisu";
+            parsed.ostrzezenia = [parsed.ostrzezenia, `brak dowodu rocznika ${ROAD_MIN_YEAR}+ — sprawdź liczbę biegów (11?) i numer serii grupy`].filter(Boolean).join("; ").slice(0, 240);
           }
 
           // ── "TAK" MUSI SIĘ OBRONIĆ: kompletne liczby i próg zysku ──
