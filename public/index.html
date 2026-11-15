@@ -371,8 +371,8 @@ const selectKbChunkIds = (texts, typ) => {
   }
   return [...ids, ...emtbFor([])].filter(id => KB.chunks[id]);
 };
-const kbChunksText = (ids) => ids.map(id => KB.chunks[id].text).join("\n\n");
-const kbChunkNames = (ids) => ids.map(id => KB.chunks[id].name).join(", ");
+const kbChunksText = (ids) => ids.map(id => (KB.chunks[id] || KB_ROAD.chunks[id]).text).join("\n\n"); // v6.16: także wpisy szos (road_*)
+const kbChunkNames = (ids) => ids.map(id => (KB.chunks[id] || KB_ROAD.chunks[id]).name).join(", ");
 
 // Przypięty w czacie wpis "BAZA CEN — <nazwa wpisu z bazy wbudowanej> …" to stara kopia tej bazy —
 // nie wysyłamy go drugi raz (podwójne tokeny i ryzyko starszych cen). Inne przypięte notatki zostają.
@@ -385,11 +385,549 @@ const isKbDuplicate = (text) => {
   return KB.entryNames.some(n => { const k = n.toLowerCase(); return name === k || name.startsWith(k) || k.startsWith(name); });
 };
 
+// ==ROAD_START== v6.16: SZOSY I GRAVELE — osobny tor obok MTB (decyzja właściciela 15.11.2026). Włączany jednym przełącznikiem
+// (ddf_cfg.roadEnabled, domyślnie WYŁĄCZONY). Gdy wyłączony — żadne z poniższych nie jest używane, polecenia dla AI przy MTB
+// są bajt w bajt takie same jak przed v6.16. Ogłoszenie dostaje profile: "road" od wyszukiwania, które je znalazło; od profilu
+// zależą: limit ceny (200–800 €), filtr słów, polecenie Groqa, polecenie i baza cen etapu 2, limit rocznika (2014), typy.
+// Baza cen: KB_ROAD.core (zasady, kategorie, ściągi osprzętu) + KB_ROAD.chunks (wpisy marek / modeli z danych OLX 11.2026).
+const ROAD_MAX_BUY_DEFAULT = 800;     // limit zakupu szos / graveli (MTB: maxBuyPrice, domyślnie 1400)
+const ROAD_MIN_YEAR = 2014;           // decyzja właściciela 15.11.2026: szosy i gravele od rocznika 2014 (MTB: 2017)
+const ROAD_MIN_UNCERTAIN_PRICE = 350; // niepewny typ z Groqa poniżej tej ceny → bez analizy AI (MTB: minUncertainPrice, 500)
+const ROAD_NIGHT_CAP_FACTOR = 1.5;    // nocne sprawdzanie „za drogich” szos: do 150% limitu zakupu
+const MTB_TYPES = ["full", "dirt", "elektryk_gorski"];
+const ROAD_TYPES = ["szosa", "gravel"];
+const isRoad = (l) => l?.profile === "road";
+const goodTypesOf = (l) => isRoad(l) ? ROAD_TYPES : MTB_TYPES;
+
+// Wyszukiwania szos i graveli — linki sprawdzone na żywo 15.11.2026 (wbudowana przeglądarka):
+//   modele:  /s-fahrraeder/anzeige:angebote/preis:<min>:<maks>/<fraza>/k0c217            (np. „Canyon Endurace” 200–800 €: 47 wyników, 1–2 nowe dziennie)
+//   ogólne:  …/<fraza>/k0c217+fahrraeder.art_s:(damen,herren)                             (arts: true — bez działu „Zubehör” i „Weitere”)
+// Filtr typu „Rennräder” istnieje (fahrraeder.type_s:rennrad; inne wartości: cross, city, mountainbike, ebike, fixie_singlespeed, sonstiges),
+// ale NIE jest używany: prawie nic nie odsiewa („Rennrad Carbon”: 3318 z 3383 wyników — koła i buty też są oznaczane jako Rennräder),
+// a gravele i przełajówki bywają wystawiane w innych typach. Dział (art_s) odsiewa więcej: „Gravel” 1205 → 702 wyniki, same koła znikają.
+// Natężenie (niedziela w południe): „Gravel” i „Rennrad Carbon” ok. 8 nowych kart na godzinę, pozostałe ogólne 1–3, modele 1–4 dziennie.
+const ROAD_SEARCHES = [
+  // ── ogólne ──
+  { id: "road_gravel",       label: "Gravel (ogólne)",        query: "Gravel", arts: true },
+  { id: "road_gravelbike",   label: "Gravelbike (ogólne)",    query: "Gravelbike", arts: true },
+  { id: "road_cyclocross",   label: "Cyclocross (ogólne)",    query: "Cyclocross", arts: true },
+  { id: "road_carbon",       label: "Rennrad Carbon",         query: "Rennrad Carbon", arts: true },
+  { id: "road_ultegra",      label: "Rennrad Ultegra",        query: "Rennrad Ultegra", arts: true },
+  { id: "road_105",          label: "Rennrad 105",            query: "Rennrad 105", arts: true },
+  // ── szosy: modele ──
+  { id: "road_canyon_endurace",  label: "Canyon Endurace",     query: "Canyon Endurace" },
+  { id: "road_canyon_ultimate",  label: "Canyon Ultimate",     query: "Canyon Ultimate" },
+  { id: "road_cube_attain",      label: "Cube Attain",         query: "Cube Attain" },
+  { id: "road_cube_agree",       label: "Cube Agree",          query: "Cube Agree" },
+  { id: "road_cube_litening",    label: "Cube Litening",       query: "Cube Litening" },
+  { id: "road_rose_rennrad",     label: "Rose Rennrad",        query: "Rose Rennrad" },
+  { id: "road_giant_tcr",        label: "Giant TCR",           query: "Giant TCR" },
+  { id: "road_giant_defy",       label: "Giant Defy",          query: "Giant Defy" },
+  { id: "road_trek_emonda",      label: "Trek Emonda",         query: "Trek Emonda" },
+  { id: "road_trek_domane",      label: "Trek Domane",         query: "Trek Domane" },
+  { id: "road_spec_tarmac",      label: "Specialized Tarmac",  query: "Specialized Tarmac" },
+  { id: "road_spec_roubaix",     label: "Specialized Roubaix", query: "Specialized Roubaix" },
+  { id: "road_spec_allez",       label: "Specialized Allez",   query: "Specialized Allez" },
+  { id: "road_cannondale_caad",     label: "Cannondale CAAD",     query: "Cannondale CAAD" },
+  { id: "road_cannondale_synapse",  label: "Cannondale Synapse",  query: "Cannondale Synapse" },
+  { id: "road_cannondale_supersix", label: "Cannondale SuperSix", query: "Cannondale SuperSix" },
+  { id: "road_scott_addict",     label: "Scott Addict",        query: "Scott Addict" },
+  { id: "road_scott_speedster",  label: "Scott Speedster",     query: "Scott Speedster" },
+  { id: "road_focus_izalco",     label: "Focus Izalco",        query: "Focus Izalco" },
+  { id: "road_merida_scultura",  label: "Merida Scultura",     query: "Merida Scultura" },
+  { id: "road_bmc_teammachine",  label: "BMC Teammachine",     query: "BMC Teammachine" },
+  { id: "road_bianchi",          label: "Bianchi Rennrad",     query: "Bianchi Rennrad" },
+  // ── gravele i przełajówki: modele ──
+  { id: "road_canyon_grail",     label: "Canyon Grail",        query: "Canyon Grail" },
+  { id: "road_canyon_grizl",     label: "Canyon Grizl",        query: "Canyon Grizl" },
+  { id: "road_canyon_inflite",   label: "Canyon Inflite",      query: "Canyon Inflite" },
+  { id: "road_cube_nuroad",      label: "Cube Nuroad",         query: "Cube Nuroad" },
+  { id: "road_cube_crossrace",   label: "Cube Cross Race",     query: "Cube Cross Race" },
+  { id: "road_rose_backroad",    label: "Rose Backroad",       query: "Rose Backroad" },
+  { id: "road_giant_revolt",     label: "Giant Revolt",        query: "Giant Revolt" },
+  { id: "road_trek_checkpoint",  label: "Trek Checkpoint",     query: "Trek Checkpoint" },
+  { id: "road_spec_diverge",     label: "Specialized Diverge", query: "Specialized Diverge" },
+  { id: "road_cannondale_topstone", label: "Cannondale Topstone", query: "Cannondale Topstone" },
+  { id: "road_merida_silex",     label: "Merida Silex",        query: "Merida Silex" },
+  { id: "road_focus_atlas",      label: "Focus Atlas",         query: "Focus Atlas" },
+  { id: "road_triban",           label: "Triban (Decathlon)",  query: "Triban" },
+].map(b => ({ ...b, profile: "road", label: `🚴 ${b.label}` }));
+const roadSearchUrl = (bike, minPrice, maxPrice) =>
+  `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${minPrice}:${maxPrice}/${encodeURIComponent(bike.query)}/k0c217${bike.arts ? "+fahrraeder.art_s:(damen,herren)" : ""}`;
+
+// Filtr słów w TYTULE dla szos i graveli (osobny od filtra MTB — tamten odrzuca „Rennrad” i „Gravel”)
+const ROAD_FILTER_KEYWORDS_DEFAULT = "Mountainbike, MTB, Fully, Hardtail, Trekkingrad, Trekking, Hollandrad, Cityrad, Citybike, Stadtrad, Damenrad, Kinderfahrrad, Kinderrad, Kinder, Jugendrad, Laufrad, Klapprad, Faltrad, Liegerad, Dreirad, Lastenrad, Cargobike, Tandem, Fixie, Singlespeed, Bahnrad, Zeitfahrrad, Triathlonrad, Triathlon, Stahlrahmen, Stahlrenner, Halbrenner, Sportrad, Randonneur, Reiserad, Fitnessbike, Kinderrennrad, Vintagebike, Retrobike, Caferacer, Oldtimer, Eroica, nur Rahmen, Rahmen only, Rahmenset, Rahmenkit, Frameset, Laufradsatz, Laufräder, Felgen, Vorderrad, Hinterrad, Schaltgruppe, Groupset, Kurbel, Kurbelgarnitur, Schaltwerk, Umwerfer, Bremshebel, Powermeter, Cockpit, Schuhe, Schuh, Ersatzteile, Einzelteile, Bastlerrad, Schrott, gesucht, Tausch gegen, Vermietung, Verleih, Miete, Rollentrainer, Smarttrainer, Fahrradträger, E-Bike, Ebike, Pedelec, E-Gravel, E-Rennrad, Elektro, 12 Zoll, 16 Zoll, 20 Zoll, 24 Zoll, 26 Zoll";
+
+// Wbudowana baza cen szos i graveli. Liczby pochodzą z cen OFERTOWYCH na OLX.pl (15.11.2026, 2322 oferty prywatne): pasmo
+// „dolna ćwiartka–mediana” przyjęte jako ostrożna cena sprzedaży. Dane źródłowe i metoda: docs/ceny-szosy-olx-2026-11.md.
+// core = zasady + wycena kategorii + ściągi osprzętu (zawsze w poleceniu); chunks = wpisy marek / modeli dobierane do ogłoszenia
+// (selectRoadKbChunkIds). Do skalibrowania na prawdziwych sprzedażach właściciela (etap 3).
+const KB_ROAD = {
+  version: "11.2026-e2",
+  core: `BAZA CEN SZOS I GRAVELI — ZASADY I WYCENA KATEGORII — 11.2026
+
+ZASADY OGÓLNE
+- Ceny to pasma „dolna ćwiartka–mediana” cen OFERTOWYCH z OLX.pl (15.11.2026, 2322 oferty prywatne, rowery używane) — przyjęte jako ostrożna cena sprzedaży PRYWATNEJ w Polsce. To NIE są własne transakcje użytkownika. Nie odejmuj od tych liczb dodatkowych procentów i nie podnoś ich „bo marka”. Wpis z dopiskiem [niska pewność] opiera się na mniej niż 6–8 ofertach.
+- WPIS MODELU A TABELA KATEGORII: gdy przy ogłoszeniu jest wpis modelu dla TEJ kombinacji materiału ramy i hamulców — wyceniaj z niego, a grupa osprzętu ustala miejsce w paśmie (105 → środek; Ultegra i wyżej → górna granica; Tiagra, Sora, Claris albo grupa nierozpoznana → dolna granica, a jeśli tabela kategorii dla tej grupy daje mniej — przyjmij wartość z tabeli). Gdy wpisu modelu nie ma, nie ma w nim tej kombinacji albo ma [niską pewność] — wyceniaj z tabeli kategorii (wpis modelu traktuj wtedy tylko jako wskazówkę). Nigdy nie wychodź ponad górną granicę wpisu modelu.
+- Pule „karbon, tarczowe hydrauliczne” to głównie rowery z lat 2020+ — starszy rower z tej kombinacji (2015–2019) wyceniaj przy dolnej granicy albo niżej.
+- Kurs 4,35 zł/€. Warunki bazowe: kompletny, sprawny rower w dobrym stanie, bez pęknięć i ukrytych wad, normalne ślady użytkowania.
+- O cenie decydują, w tej kolejności: materiał ramy (karbon / alu), rodzaj hamulców (tarczowe hydrauliczne / tarczowe mechaniczne / szczękowe), GRUPA OSPRZĘTU, rocznik, koła. Marka znaczy mniej niż w MTB.
+- Grupa osprzętu nierozpoznana → licz najtańszą grupę, jaka pasuje do liczby biegów. Hamulce nieustalone → szczękowe (tańsze pasmo). Materiał ramy nieustalony → alu.
+- Miejsce w paśmie: seryjny osprzęt i typowy stan → środek; skąpy opis, podstawowe koła, wyraźne ślady zużycia, mieszana grupa → dolna granica; górna granica tylko przy bardzo dobrym stanie i lepszych kołach.
+- Używany rower nie jest wart więcej niż ok. 65% ceny porównywalnego NOWEGO w aktualnej promocji. Punkty odniesienia (2026): nowa szosa alu z Claris ok. 2500–3000 zł, nowy gravel alu z GRX 400 ok. 3200–4500 zł.
+- Hamulce szczękowe: w Polsce sprzedają się wolniej i taniej niż tarczowe — stosuj pasma „szczękowe”, nie zawyżaj.
+- Gdy wycena opiera się tylko na tej tabeli, a zysk wychodzi blisko progu — „niepewne”, nie „tak”.
+
+SZOSA — sprzedaż PL (ceny ofertowe OLX 11.2026: dolna ćwiartka–mediana; n = liczba ofert)
+- alu, hamulce szczękowe, grupa niepodana / Claris | 1300–1500 zł (≈300–345 €) | n=37
+- alu, hamulce szczękowe, Sora | 1100–1550 zł (≈255–355 €) | n=10
+- alu, hamulce szczękowe, Tiagra | 1300–1500 zł (≈300–345 €) | n=10
+- alu, hamulce szczękowe, 105 | 1950–2400 zł (≈450–550 €) | n=15
+- alu, hamulce szczękowe, Ultegra | 1100–2000 zł (≈255–460 €) | n=12 — w próbie dużo starych rowerów z Ultegrą 10s; lekka rama alu z Ultegrą 11s (CAAD10 / CAAD12, Allez Sprint, Émonda ALR) bliżej 2100–2600 zł
+- alu, tarczowe mechaniczne (wszystkie grupy) | 1500–2450 zł (≈345–565 €) | n=24
+- alu, tarczowe hydrauliczne, 105 | 3700–4250 zł (≈850–975 €) | n=8
+- alu, tarczowe hydrauliczne (wszystkie grupy razem) | 2050–3250 zł (≈470–745 €) | n=23
+- karbon, hamulce szczękowe, 105 | 2500–3000 zł (≈575–690 €) | n=24
+- karbon, hamulce szczękowe, Ultegra | 3400–4150 zł (≈780–955 €) | n=22
+- karbon, hamulce szczękowe, Dura-Ace | 3350–4300 zł (≈770–990 €) | n=18
+- karbon, hamulce szczękowe, Campagnolo | 2200–3000 zł (≈505–690 €) | n=9
+- karbon, hamulce szczękowe — rocznik 2014–2017 (wszystkie grupy) | 3400–4000 zł (≈780–920 €) | n=5 [niska pewność]
+- karbon, hamulce szczękowe — rocznik 2018–2020 (wszystkie grupy) | 4000–5900 zł (≈920–1355 €) | n=8
+- karbon, tarczowe hydrauliczne, 105 | 4850–5850 zł (≈1115–1345 €) | n=20 — w Niemczech rzadko poniżej 800 €; taka oferta → wpis w ostrzeżenia
+- karbon, tarczowe hydrauliczne, Ultegra | 5300–6750 zł (≈1220–1550 €) | n=17 — jw.
+- stal, hamulce szczękowe (klasyki — zwykle sprzed 2014, odrzucane) | 1200–1400 zł (≈275–320 €) | n=17
+
+GRAVEL I PRZEŁAJ — sprzedaż PL (jak wyżej)
+- gravel alu, tarczowe mechaniczne, Claris | ok. 2000 zł (≈460 €) | n=17
+- gravel alu, tarczowe mechaniczne, Sora | ok. 2200 zł (≈505 €) | n=13
+- gravel alu, tarczowe mechaniczne, Tiagra | 2250–2550 zł (≈515–585 €) | n=6 [niska pewność]
+- gravel alu, tarczowe mechaniczne, microSHIFT / Sensah / L-Twoo | 2000–2350 zł (≈460–540 €) | n=6 [niska pewność]
+- gravel alu, tarczowe mechaniczne, SRAM Apex | 2550–3100 zł (≈585–715 €) | n=5 [niska pewność]
+- gravel alu, tarczowe mechaniczne (wszystkie grupy razem) | 2000–2550 zł (≈460–585 €) | n=87
+- gravel alu, tarczowe hydrauliczne, GRX 400 | 3400–3550 zł (≈780–815 €) | n=8
+- gravel alu, tarczowe hydrauliczne, GRX bez podanego numeru | 3500–4000 zł (≈805–920 €) | n=49
+- gravel alu, tarczowe hydrauliczne, GRX 810 / 820 | 4100–4400 zł (≈945–1010 €) | n=10
+- gravel alu, tarczowe hydrauliczne, Tiagra | 3300–3500 zł (≈760–805 €) | n=5 [niska pewność]
+- gravel alu, tarczowe hydrauliczne, 105 | 3450–3850 zł (≈795–885 €) | n=8
+- gravel alu, tarczowe hydrauliczne, SRAM Apex | 3000–3350 zł (≈690–770 €) | n=18
+- gravel alu, tarczowe hydrauliczne — rocznik 2018–2020 | 2700–3500 zł (≈620–805 €) | n=7 [niska pewność]
+- gravel alu, tarczowe hydrauliczne — rocznik 2021+ | 3450–4000 zł (≈795–920 €) | n=63
+- gravel karbon, tarczowe hydrauliczne, GRX | 5500–6000 zł (≈1265–1380 €) | n=28 — rzadko w budżecie; taka oferta → wpis w ostrzeżenia
+- gravel karbon, tarczowe hydrauliczne, SRAM Rival | 5900–7300 zł (≈1355–1680 €) | n=6 [niska pewność] — jw.
+- gravel ze stali, tarczowe mechaniczne | 1700–1950 zł (≈390–450 €) | n=8
+- gravel ze stali, tarczowe hydrauliczne | 3400–3800 zł (≈780–875 €) | n=8
+- przełajówki: wyceniaj jak gravel o tym samym materiale ramy, hamulcach i grupie, dolna granica pasma; przełajówka na hamulcach cantilever / mini-V (do ok. 2014–2015) jak szosa alu na szczękach z tą samą grupą
+
+KOREKTY (orientacyjnie)
+- koła karbonowe znanej marki (DT Swiss, Zipp, Mavic, Fulcrum, Campagnolo Bora, Reynolds, Roval, Bontrager Aeolus): +500–1200 zł; koła karbonowe bez marki / chińskie: +0–300 zł; seryjne koła alu: bez korekty
+- przerzutki elektroniczne 11s (Di2, eTap) zamiast mechanicznych tej samej grupy: +500–1000 zł; pomiar mocy: +300–700 zł
+- marki premium (Specialized, Trek, Cannondale, BMC, Cervélo, Bianchi, Pinarello, Colnago, Look, Wilier): +5–15%; marki sklepowe i budżetowe (Triban / B'Twin, Bulls, Serious, Carver, KS Cycling, Bergsteiger, Chrisson, Mifa i podobne): −10–25%
+- rama bez marki / chińska złożona samodzielnie: dolna granica pasma i „niepewne”
+- skrajne rozmiary (poniżej 50 cm / XS, powyżej 60 cm / XXL): ok. −10%
+- mieszana grupa (np. „105 Mix” z korbą FSA i hamulcami Tektro): pół półki niżej — dolna część pasma
+- błotniki, bagażnik, dynamo, torby, licznik, pedały: bez dopłaty
+- uszkodzenia karbonu (pęknięcie, odprysk do włókien, naprawa ramy lub widelca) → odrzuć albo „niepewne”
+
+GRUPY OSPRZĘTU — OD NAJTAŃSZEJ (najważniejsze dla wyceny)
+- Shimano szosa: Tourney (7s) < Claris (8s: seria 2400 z lat 2013–2017, R2000 od 2017) < Sora (9s: 3500 z lat 2013–2016, R3000 od 2016) < Tiagra (10s: 4600 z lat 2011–2015, 4700 od 2015) < 105 (10s 5700: 2010–2014; 11s 5800: 2014–2018; 11s R7000: 2018–2022; 12s R7100 od 2022) < Ultegra (10s 6700: 2009–2013; 11s 6800: 2013–2017; 11s R8000: 2017–2021; 12s R8100 od 2021) < Dura-Ace (11s 9000: 2012–2016; R9100: 2016–2021; 12s R9200 od 2021).
+- Shimano gravel GRX (od 2019): RX400 (10s, poziom Tiagry) < RX600 (11s, poziom 105) < RX810 (11s, poziom Ultegry); GRX 12s (RX610 / RX820) od 2023.
+- SRAM: Apex (10s; Apex 1 = 1x11 od 2016) < Rival (10s; Rival 22 = 11s od 2014; Rival 1 = 1x11) < Force (Force 22 od 2013; Force 1) < Red (Red 22 od 2013). Bezprzewodowe AXS 12s: Red / Force od 2019, Rival od 2021, Apex od 2023 — rzadko w budżecie.
+- Campagnolo: Veloce (10s) < Centaur < Potenza (11s, 2016–2020) < Chorus < Record < Super Record. Nisza — sprzedaje się wolniej, ok. −10%.
+- microSHIFT, Sensah, L-Twoo, Shimano Tourney = półka budżetowa (jak Claris / Sora), niezależnie od liczby biegów.
+- Jak rozpoznać: nazwa serii jest wybita na klamkomanetkach, korbie i przerzutkach. W opisach: „22 Gänge” = 2x11, „20 Gänge” = 2x10, „18 Gänge” = 2x9, „16 Gänge” = 2x8, „11-fach” = 11 biegów z tyłu. Korba 4-ramienna asymetryczna = Shimano od generacji 11s (Dura-Ace 9000, Ultegra 6800, 105 5800) oraz Tiagra 4700, Sora R3000, Claris R2000. Linki przerzutek wychodzące bokiem z klamkomanetek (łuk przed kierownicą) = Claris 2400, Sora 3500, Tiagra 4600 albo starsze grupy → niska półka i rower najpóźniej z ok. 2016–2017.
+- O półce decydują klamkomanetki i tylna przerzutka. Samej nazwy grupy nie zgaduj z wyglądu — bez napisu albo opisu licz tańszą.
+- Przednia przerzutka i napęd 2x to w szosie i gravelu NORMA do dziś — nie świadczy o wieku roweru. Napęd 3x (trzy tarcze z przodu) w szosie = rower starszy albo turystyczny → dolna granica pasma.
+
+ROZPOZNAWANIE OSPRZĘTU NA ZDJĘCIACH
+- Gdzie szukać napisu: Shimano — na ramieniu korby po stronie napędu, na korpusie tylnej przerzutki, na klamkomanetkach (z przodu albo z boku), czasem na szczękach hamulców. SRAM — na korbie, na wózku tylnej przerzutki i na boku klamkomanetek. Campagnolo — na korbie i przerzutkach. Napis nieczytelny → grupa „nieznana”; kolor i kształt części nie wystarczą do nazwania grupy.
+- Liczba zębatek kasety (gdy zdjęcie napędu jest wyraźne): 8 = Claris, 9 = Sora, 10 = Tiagra albo GRX 400 (albo stare 105 / Ultegra → rower sprzed 2014), 11 = 105 / Ultegra / Dura-Ace / GRX 600 i 810 / SRAM 22 i 1x11, 12 = najnowsze grupy. Licz tylko wtedy, gdy zębatki da się policzyć — inaczej nie zgaduj.
+- Korba innej marki niż reszta grupy (FSA, Praxis, Prowheel, bez napisu) albo hamulce Tektro / Promax przy grupie Shimano = grupa mieszana → pół półki niżej.
+- Hamulce tarczowe HYDRAULICZNE: do zacisku dochodzi gładki przewód bez pancerza z linką, zacisk nie ma ramienia ani śruby zaciskającej linkę, górna część klamkomanetki jest wyraźnie wyższa / masywniejsza (zbiorniczek płynu). MECHANICZNE: do zacisku dochodzi linka w pancerzu, widać ramię i śrubę zaciskającą linkę (TRP Spyre, Avid BB5 / BB7, Tektro Mira, Promax). Zaciski linkowo-hydrauliczne (TRP HY/RD, Juin Tech) licz jak mechaniczne.
+- Hamulce SZCZĘKOWE: szczęki nad oponą przy koronie widelca i przy tylnym trójkącie, brak tarcz przy piastach; w przełajówkach cantilever albo mini-V (dwa ramiona po bokach opony).
+- Przerzutki elektroniczne: Di2 — cienkie przewody zamiast linek, grubsze korpusy przerzutek z silnikiem, skrzynka pod mostkiem albo w końcu kierownicy; SRAM eTap / AXS — brak jakichkolwiek przewodów do przerzutek, wyjmowane akumulatory na przerzutkach.
+- GRX: napis „GRX” na korbie i tylnej przerzutce, tylna przerzutka z przełącznikiem sprzęgła, korba 46/30 albo 48/31, albo jedna tarcza (1x).
+- Jedna tarcza z przodu i brak przedniej przerzutki = napęd 1x (SRAM Apex 1 / Rival 1 / Force 1, GRX 1x) — typowy dla graveli i przełajówek, nie jest wadą.
+- Datowanie po mocowaniach: koła na szybkozamykacze (dźwignia przy osi) przy hamulcach tarczowych → rower z lat ok. 2014–2017; osie przelotowe i zaciski flat mount (przykręcone płasko do widelca i dolnej rury tylnego trójkąta) → 2016+.
+- Koła: nazwa na obręczy (DT Swiss, Mavic Aksium / Ksyrium / Cosmic, Fulcrum Racing, Shimano RS / WH, Campagnolo Zonda / Scirocco / Bora, Zipp, Roval, Bontrager). Wysoki profil obręczy (od ok. 35 mm) z marką = koła karbonowe; wysoki profil bez marki → traktuj jak bez marki.
+- Opony ok. 35–50 mm z bieżnikiem + kierownica baranek = gravel / przełaj; opony 23–32 mm gładkie = szosa.
+
+ROCZNIK (limit: od 2014)
+- Rower nie jest starszy niż jego najnowsza SERYJNA grupa: 105 5800 → 2014+, Ultegra 6800 → 2013+, Tiagra 4700 → 2015+, R7000 → 2018+, R8000 → 2017+, GRX → 2019+. Części wymienione po zakupie niczego nie dowodzą.
+- Stara grupa wyznacza górną granicę: 105 5700 / Ultegra 6700 (10s) → rower zwykle sprzed 2014; Tiagra 4600 → sprzed 2016.
+- Hamulce tarczowe w szosach seryjnie od ok. 2015–2016; osie przelotowe 12 mm i mocowanie flat mount od ok. 2016–2017. Gravel jako osobna kategoria od ok. 2015 (wcześniej przełajówki).
+- ZNACZNIKI ROWERU SPRZED 2014: grupy 10s 105 5600 / 5700 i Ultegra 6600 / 6700, Tiagra 9s (4500), Sora 3300 / 3400 z przyciskiem pod kciuk, kwadratowy suport, mostek wpuszczany w rurę sterową (na gwint), manetki na ramie, stalowa rama z mufami, koła 27", przełajówka na hamulcach cantilever.
+- Gdy pasuje kilka lat — wpisz cały zakres w "rocznik_zakres" i wybierz rok według ZASADY ROCZNIKA I PASMA podanej przy ogłoszeniu; gdy zakres obejmuje lata sprzed 2014 i 2014+, wpisz 2014.`,
+  chunks: {
+    road_canyon: { name: "Canyon (szosa / gravel)", text: `CANYON (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Canyon Endurace — alu, hamulce szczękowe | 2500–2900 zł (≈575–665 €) | n=3 [niska pewność]
+- Canyon Endurace — alu, tarczowe hydrauliczne | 4350–4500 zł (≈1000–1035 €) | n=8
+- Canyon Endurace — karbon, hamulce szczękowe | 4500–5000 zł (≈1035–1150 €) | n=5 [niska pewność]
+- Canyon Endurace — karbon, tarczowe hydrauliczne | 7000–8250 zł (≈1610–1895 €) | n=22 — zwykle ponad budżet 800 €
+- Canyon Ultimate — karbon, hamulce szczękowe | 3950–5500 zł (≈910–1265 €) | n=11
+- Canyon Ultimate — karbon, tarczowe hydrauliczne | 8400–9950 zł (≈1930–2285 €) | n=16 — zwykle ponad budżet 800 €
+- Canyon Aeroad — karbon, hamulce szczękowe | 7150–7200 zł (≈1645–1655 €) | n=3 [niska pewność] — zwykle ponad budżet 800 €
+- Canyon Aeroad — karbon, tarczowe hydrauliczne | 11350–14450 zł (≈2610–3320 €) | n=16 — zwykle ponad budżet 800 €
+- Canyon Grail — alu, tarczowe hydrauliczne | 4500–4900 zł (≈1035–1125 €) | n=9
+- Canyon Grail — karbon, tarczowe hydrauliczne | 7350–8500 zł (≈1690–1955 €) | n=23 — zwykle ponad budżet 800 €
+- Canyon Grizl — alu, tarczowe hydrauliczne | 5400–6000 zł (≈1240–1380 €) | n=16 — zwykle ponad budżet 800 €
+- Canyon Grizl — karbon, tarczowe hydrauliczne | 6800–8100 zł (≈1565–1860 €) | n=21 — zwykle ponad budżet 800 €
+- Canyon Inflite (przełaj) — karbon, tarczowe hydrauliczne | 5300–7000 zł (≈1220–1610 €) | n=7 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie — osprzęt zawsze potwierdź w opisie albo na zdjęciach): „AL” = alu, „CF SL” / „CF SLX” / „CFR” = karbon. Do ok. 2020 numer wersji z „.0”: 6.0 = Tiagra (gravel: GRX 400), 7.0 = 105 (gravel: GRX 600 / 810), 8.0 = Ultegra, 9.0 = Dura-Ace albo Di2; od 2021 sam numer („Endurace 6 / 7”, „CF 7”, „CF SL 8”, „Grizl 6 / 7”) — znaczenie numerów podobne. „Disc” w nazwie = hamulce tarczowe (do ok. 2020 były też wersje szczękowe). „WMN” = wersja damska. Endurace = wygodna szosa (od 2014), Ultimate = wyścigowa, Aeroad = aero. Grail (od 2018; karbonowy z podwójną kierownicą) i Grizl (od 2021) to gravele. Canyon sprzedaje tylko wysyłkowo — „Neupreis” w opisach bywa ceną z wyprzedaży.` },
+    road_cube: { name: "Cube (szosa / gravel)", text: `CUBE (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Cube Attain — alu, hamulce szczękowe | 1700–2500 zł (≈390–575 €) | n=5 [niska pewność]
+- Cube Attain — alu, tarczowe mechaniczne | 2500–2550 zł (≈575–585 €) | n=6
+- Cube Attain — alu, tarczowe hydrauliczne | 3300–3550 zł (≈760–815 €) | n=5 [niska pewność]
+- Cube Attain — karbon, hamulce szczękowe | 2950–3050 zł (≈680–700 €) | n=3 [niska pewność]
+- Cube Attain — karbon, tarczowe hydrauliczne | 4200–4400 zł (≈965–1010 €) | n=12 — zwykle ponad budżet 800 €
+- Cube Agree — alu, hamulce szczękowe | 2000–2550 zł (≈460–585 €) | n=4 [niska pewność]
+- Cube Agree — karbon, hamulce szczękowe | 2600–2950 zł (≈600–680 €) | n=13
+- Cube Agree — karbon, tarczowe hydrauliczne | 5050–7450 zł (≈1160–1715 €) | n=7 — zwykle ponad budżet 800 €
+- Cube Litening — karbon, hamulce szczękowe | 2200–2400 zł (≈505–550 €) | n=3 [niska pewność]
+- Cube Litening — karbon, tarczowe hydrauliczne | 8850–11950 zł (≈2035–2745 €) | n=6 — zwykle ponad budżet 800 €
+- Cube Nuroad — alu, tarczowe mechaniczne | 3050–3300 zł (≈700–760 €) | n=8
+- Cube Nuroad — alu, tarczowe hydrauliczne | 3700–4000 zł (≈850–920 €) | n=25
+- Cube Nuroad — karbon, tarczowe hydrauliczne | 4950–5900 zł (≈1140–1355 €) | n=7 — zwykle ponad budżet 800 €
+- Cube Cross Race (przełaj) — alu, tarczowe mechaniczne | 2750–3050 zł (≈630–700 €) | n=6
+- Cube Cross Race (przełaj) — alu, tarczowe hydrauliczne | 4150–4850 zł (≈955–1115 €) | n=4 [niska pewność]
+- Cube Cross Race (przełaj) — karbon, tarczowe hydrauliczne | 4900–6850 zł (≈1125–1575 €) | n=6 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): Attain = alu endurance — bez dopisku Claris, „Pro” Sora, „Race” Tiagra, „SL” 105; „Attain GTC” = karbon. Agree „C:62” (od 2016) i starsze „Agree GTC” = karbon endurance / race; Litening „C:68” = karbon wyścigowy. Nuroad = gravel alu: bez dopisku Claris z hamulcami mechanicznymi, „Pro” Sora albo GRX 400 z mechanicznymi, „Race” GRX 400 / 600 z hydraulicznymi, „EX” GRX 1x11, „SL” GRX 810; „Nuroad C:62” = karbon; „FE” = fabryczne błotniki, bagażnik i oświetlenie (bez dopłaty). „HPA” / „Superlite” = alu, „GTC” / „C:62” / „C:68” = karbon. Reguły Cube z bazy MTB (rocznik od 2020) NIE dotyczą szos i graveli.` },
+    road_giant: { name: "Giant (szosa / gravel)", text: `GIANT (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Giant TCR — alu, hamulce szczękowe | 2200–2400 zł (≈505–550 €) | n=3 [niska pewność]
+- Giant TCR — karbon, hamulce szczękowe | 2600–3400 zł (≈600–780 €) | n=20
+- Giant TCR — karbon, tarczowe hydrauliczne | 9000–9900 zł (≈2070–2275 €) | n=15 — zwykle ponad budżet 800 €
+- Giant Defy — alu, hamulce szczękowe | 1500–1800 zł (≈345–415 €) | n=17
+- Giant Defy — karbon, hamulce szczękowe | 2000–2350 zł (≈460–540 €) | n=3 [niska pewność]
+- Giant Defy — karbon, tarczowe hydrauliczne | 5100–6650 zł (≈1170–1530 €) | n=10 — zwykle ponad budżet 800 €
+- Giant Contend — alu, hamulce szczękowe | 1950–2100 zł (≈450–485 €) | n=15
+- Giant Contend — alu, tarczowe mechaniczne | 2800–3000 zł (≈645–690 €) | n=7
+- Giant Contend — alu, tarczowe hydrauliczne | 2950–3700 zł (≈680–850 €) | n=14
+- Giant Propel — karbon, hamulce szczękowe | 3850–4100 zł (≈885–945 €) | n=12
+- Giant Propel — karbon, tarczowe hydrauliczne | 9850–11250 zł (≈2265–2585 €) | n=20 — zwykle ponad budżet 800 €
+- Giant Revolt — alu, tarczowe mechaniczne | 2600–3000 zł (≈600–690 €) | n=5 [niska pewność]
+- Giant Revolt — alu, tarczowe hydrauliczne | 3600–4150 zł (≈830–955 €) | n=11
+- Giant Revolt — karbon, tarczowe hydrauliczne | 5850–6200 zł (≈1345–1425 €) | n=8 — zwykle ponad budżet 800 €
+- Giant TCX (przełaj) — alu, tarczowe hydrauliczne | 3200–3600 zł (≈735–830 €) | n=4 [niska pewność]
+- Giant TCX (przełaj) — karbon, tarczowe hydrauliczne | 7600–7700 zł (≈1745–1770 €) | n=3 [niska pewność] — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): „Advanced” / „Advanced Pro” / „Advanced SL” = karbon, „ALUXX” / „SLR” = alu. Cyfra na końcu: im NIŻSZA, tym lepszy osprzęt (np. TCR Advanced 1 = Ultegra, 2 = 105, 3 = Tiagra; Contend 1 / 2 / 3 = Sora–Claris; Contend SL 1 = 105; Contend AR 1–4 = alu z tarczami: 1 = 105 hydr., 2 = Tiagra, 3 = Sora mech., 4 = Claris mech.). Defy do 2014 = alu na szczękach (Defy 1–5), od 2015 „Defy Advanced” = karbon tylko z tarczami. TCR = wyścigowy, Propel = aero, Revolt = gravel (Revolt 0 / 1 / 2 alu, „Revolt Advanced” karbon). Damska marka Gianta: Liv (Avail, Langma, Devote) — wyceniaj jak odpowiednik Gianta, dolna granica.` },
+    road_trek: { name: "Trek (szosa / gravel)", text: `TREK (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Trek Émonda — karbon, hamulce szczękowe | 3500–4350 zł (≈805–1000 €) | n=16
+- Trek Émonda — karbon, tarczowe hydrauliczne | 7250–9200 zł (≈1665–2115 €) | n=28 — zwykle ponad budżet 800 €
+- Trek Domane — alu, hamulce szczękowe | 2000–2500 zł (≈460–575 €) | n=15
+- Trek Domane — alu, tarczowe mechaniczne | ok. 2650 zł (≈610 €) | n=4 [niska pewność]
+- Trek Domane — alu, tarczowe hydrauliczne | 4450–4500 zł (≈1025–1035 €) | n=6
+- Trek Domane — karbon, hamulce szczękowe | 3000–3950 zł (≈690–910 €) | n=5 [niska pewność]
+- Trek Domane — karbon, tarczowe hydrauliczne | 8750–9500 zł (≈2010–2185 €) | n=11 — zwykle ponad budżet 800 €
+- Trek Madone — karbon, hamulce szczękowe | 3000–5250 zł (≈690–1205 €) | n=13
+- Trek Madone — karbon, tarczowe hydrauliczne | 11300–14450 zł (≈2600–3320 €) | n=20 — zwykle ponad budżet 800 €
+- Trek Checkpoint — alu, tarczowe mechaniczne | 3700–4250 zł (≈850–975 €) | n=4 [niska pewność]
+- Trek Checkpoint — alu, tarczowe hydrauliczne | 4600–5000 zł (≈1055–1150 €) | n=6
+- Trek Checkpoint — karbon, tarczowe hydrauliczne | 8900–13000 zł (≈2045–2990 €) | n=22 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): „AL” = alu, „ALR” = lżejsze alu, „S” / „SL” / „SLR” = karbon OCLV. Cyfra: im WYŻSZA, tym lepszy osprzęt — AL 2 = Claris, AL 3 = Sora, AL 4 = Tiagra, AL 5 / ALR 5 / SL 5 = 105, SL 6 = Ultegra, SL 7+ = Di2 / wyższe. Starsze oznaczenia z kropką: Domane 2.0 / 2.3, seria 1.1 / 1.2 / 1.5 = alu; Domane 4.x / 5.x / 6.x i Madone 3.x–7.x = karbon (roczniki do ok. 2015 — sprawdź limit rocznika). Domane = endurance (IsoSpeed), Émonda = lekka wyścigowa (od 2015), Madone = aero / dawniej wyścigowa. Checkpoint = gravel (od 2018): AL 3 / AL 4, ALR 4 / ALR 5 alu, SL 5 / SL 6 karbon; Crockett (alu) i Boone (karbon) = przełajówki.` },
+    road_specialized: { name: "Specialized (szosa / gravel)", text: `SPECIALIZED (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Specialized Allez — alu, hamulce szczękowe | 1950–2200 zł (≈450–505 €) | n=28
+- Specialized Tarmac — karbon, hamulce szczękowe | 3150–3500 zł (≈725–805 €) | n=14
+- Specialized Tarmac — karbon, tarczowe hydrauliczne | 6950–10750 zł (≈1600–2470 €) | n=14 — zwykle ponad budżet 800 €
+- Specialized Roubaix — karbon, hamulce szczękowe | 2950–3500 zł (≈680–805 €) | n=11
+- Specialized Roubaix — karbon, tarczowe hydrauliczne | 5600–6900 zł (≈1285–1585 €) | n=19 — zwykle ponad budżet 800 €
+- Specialized Diverge — alu, tarczowe mechaniczne | 2900–3500 zł (≈665–805 €) | n=11
+- Specialized Diverge — alu, tarczowe hydrauliczne | 4000–4750 zł (≈920–1090 €) | n=12
+- Specialized Diverge — karbon, tarczowe hydrauliczne | 6250–7900 zł (≈1435–1815 €) | n=19 — zwykle ponad budżet 800 €
+- Specialized CruX (przełaj / gravel) — karbon, tarczowe hydrauliczne | 5550–7000 zł (≈1275–1610 €) | n=6 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): Allez = alu (E5 / A1) — bez dopisku Claris, „Sport” Sora, „Elite” Tiagra albo 105, „Comp” 105; „Allez Sprint” = lekka rama alu z wyższej półki. Tarmac (wyścigowy) i Roubaix (endurance) = karbon FACT: „Sport” 105, „Comp” Ultegra, „Expert” / „Pro” / „S-Works” wyżej. Generacje Tarmaca: SL4 do 2017, SL5 2015–2017, SL6 2018–2020, SL7 od 2021; Roubaix SL4 2013–2016, od 2017 nowa rama z amortyzacją Future Shock i tylko tarczami. Diverge = gravel: „E5” / „A1” alu (bez dopisku Claris z hamulcami mechanicznymi, „Sport” Sora, „Elite” Tiagra albo GRX 400, „Comp E5” GRX 600 / 105 hydr.), „Carbon” / „Sport Carbon” / „Comp Carbon” karbon. Secteur i Dolce = starsze alu endurance (do ok. 2016).` },
+    road_cannondale: { name: "Cannondale (szosa / gravel)", text: `CANNONDALE (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Cannondale CAAD (CAAD8 / CAAD10 / CAAD12 / CAAD13 / Optimo) — alu, hamulce szczękowe | 2100–2600 zł (≈485–600 €) | n=13
+- Cannondale CAAD (CAAD8 / CAAD10 / CAAD12 / CAAD13 / Optimo) — alu, tarczowe hydrauliczne | 3150–3600 zł (≈725–830 €) | n=6
+- Cannondale Synapse — karbon, hamulce szczękowe | 3350–4000 zł (≈770–920 €) | n=4 [niska pewność]
+- Cannondale Synapse — karbon, tarczowe hydrauliczne | 5000–5700 zł (≈1150–1310 €) | n=9 — zwykle ponad budżet 800 €
+- Cannondale SuperSix EVO — karbon, hamulce szczękowe | 3750–4500 zł (≈860–1035 €) | n=13
+- Cannondale SuperSix EVO — karbon, tarczowe hydrauliczne | 7000–7600 zł (≈1610–1745 €) | n=6 — zwykle ponad budżet 800 €
+- Cannondale Topstone — alu, tarczowe mechaniczne | 3750–3800 zł (≈860–875 €) | n=3 [niska pewność]
+- Cannondale Topstone — alu, tarczowe hydrauliczne | 3650–4200 zł (≈840–965 €) | n=8
+- Cannondale Topstone — karbon, tarczowe hydrauliczne | 8150–8850 zł (≈1875–2035 €) | n=10 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): CAAD = zawsze alu. CAAD8 (do 2016) i CAAD Optimo (od 2017) = podstawowe: Optimo 1 = 105, 2 = Tiagra, 3 = Sora, 4 = Claris (im NIŻSZA cyfra, tym lepiej). CAAD10 (2011–2015), CAAD12 (2016–2019), CAAD13 (od 2020) = lekkie ramy alu z wyższej półki — górna część pasma alu. Synapse = endurance: „Synapse Alloy” alu, „Synapse Carbon” karbon (tarcze od 2015). SuperSix EVO = karbon wyścigowy („Hi-MOD” = najwyższa rama). Topstone = gravel (od 2019): alu z cyfrą 1–4 albo nazwą grupy (Sora, Tiagra, 105, Apex 1), „Topstone Carbon” karbon z elastycznym tyłem. CAADX (alu) i SuperX (karbon) = przełajówki.` },
+    road_scott: { name: "Scott (szosa / gravel)", text: `SCOTT (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Scott Speedster (szosa i Speedster Gravel razem) — alu, hamulce szczękowe | 1500–1800 zł (≈345–415 €) | n=24
+- Scott Speedster (szosa i Speedster Gravel razem) — alu, tarczowe mechaniczne | 2550–2800 zł (≈585–645 €) | n=11
+- Scott Speedster (szosa i Speedster Gravel razem) — alu, tarczowe hydrauliczne | 3850–4250 zł (≈885–975 €) | n=24
+- Scott Addict — karbon, hamulce szczękowe | 3100–4750 zł (≈715–1090 €) | n=6
+- Scott Addict — karbon, tarczowe hydrauliczne | 6850–8400 zł (≈1575–1930 €) | n=28 — zwykle ponad budżet 800 €
+- Scott Foil — karbon, hamulce szczękowe | 5200–6150 zł (≈1195–1415 €) | n=8 — zwykle ponad budżet 800 €
+- Scott Foil — karbon, tarczowe hydrauliczne | 7200–8750 zł (≈1655–2010 €) | n=14 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): Speedster = alu; liczba: im NIŻSZA, tym lepszy osprzęt — 10 = 105, 20 = Tiagra, 30 / 40 = Sora, 50 = Claris; „Disc” = tarczowe; „Speedster Gravel 10–50” = gravel na tej samej zasadzie. Addict = karbon (HMF / HMX): Addict 10 = Ultegra, 20 = 105, 30 = 105 / Tiagra; „Addict RC” = wyścigowy, „Addict Gravel” / „Addict CX” = gravel / przełaj. Foil = aero karbon. Solace (2014–2017) = karbon endurance, CR1 (do ok. 2016) = starszy karbon — dolna granica pasma. Addict eRIDE = z silnikiem (odrzucany).` },
+    road_merida: { name: "Merida (szosa / gravel)", text: `MERIDA (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Merida Scultura — alu, hamulce szczękowe | 1800–2200 zł (≈415–505 €) | n=18
+- Merida Scultura — karbon, hamulce szczękowe | ok. 2900 zł (≈665 €) | n=5 [niska pewność]
+- Merida Scultura — karbon, tarczowe hydrauliczne | 7900–8500 zł (≈1815–1955 €) | n=5 [niska pewność] — zwykle ponad budżet 800 €
+- Merida Reacto — alu, hamulce szczękowe | 3000–3500 zł (≈690–805 €) | n=11
+- Merida Reacto — karbon, hamulce szczękowe | 6650–7050 zł (≈1530–1620 €) | n=4 [niska pewność] — zwykle ponad budżet 800 €
+- Merida Reacto — karbon, tarczowe hydrauliczne | 8150–12500 zł (≈1875–2875 €) | n=15 — zwykle ponad budżet 800 €
+- Merida Silex — alu, tarczowe hydrauliczne | 4000–4500 zł (≈920–1035 €) | n=15
+- Merida Silex — karbon, tarczowe hydrauliczne | 5750–6500 zł (≈1320–1495 €) | n=3 [niska pewność] — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): liczby trzycyfrowe = alu (Scultura 100 = Claris, 200 = Sora, 300 = Tiagra, 400 = 105), liczby czterocyfrowe = karbon (4000 = 105, 5000 / 6000 = Ultegra, wyżej Di2); „Disc” = tarczowe; „Scultura Endurance” = endurance z tarczami. Reacto = aero (300 / 400 alu, 4000+ karbon). Starsze: Race Lite, Ride (alu / karbon do ok. 2016). Silex = gravel: 200 (Claris / Sora, hamulce mechaniczne), 300 / 400 (GRX 400), 600 / 700 (GRX 600 / 810), 4000+ karbon. Mission CX / Cyclo Cross = przełajówki.` },
+    road_focus: { name: "Focus (szosa / gravel)", text: `FOCUS (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Focus Izalco — alu, hamulce szczękowe | 2750–2900 zł (≈630–665 €) | n=3 [niska pewność]
+- Focus Izalco — karbon, hamulce szczękowe | 3900–4200 zł (≈895–965 €) | n=26
+- Focus Izalco — karbon, tarczowe hydrauliczne | 7450–10000 zł (≈1715–2300 €) | n=19 — zwykle ponad budżet 800 €
+- Focus Atlas — alu, tarczowe hydrauliczne | 3900–4200 zł (≈895–965 €) | n=15
+- Focus Atlas — karbon, tarczowe hydrauliczne | 6800–8400 zł (≈1565–1930 €) | n=4 [niska pewność] — zwykle ponad budżet 800 €
+- Focus Mares (przełaj) — wszystkie wersje razem | 2200–3400 zł (≈505–780 €) | n=9
+Nazewnictwo (orientacyjnie): Izalco = karbon wyścigowy („Izalco Race” 2016–2019 z 105 / Ultegrą, „Izalco Max” wyższa rama, starsze „Izalco Ergoride / Pro / Team”). Cayo = karbon endurance (do ok. 2017; „Cayo AL” = alu). Paralane (od 2017) = endurance z tarczami, alu i karbon. Culebro, Variado = starsze alu (do ok. 2014). Atlas (od 2021) = gravel alu: 6.7 = GRX 400, 6.8 = GRX 600, 6.9 = GRX 810; 8.x = karbon. Mares AX = przełaj alu, Mares CX = karbon.` },
+    road_rose: { name: "Rose (szosa / gravel)", text: `ROSE (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Rose Pro SL — alu, hamulce szczękowe | 2350–2400 zł (≈540–550 €) | n=5 [niska pewność]
+- Rose Backroad — alu, tarczowe hydrauliczne | 5600–6000 zł (≈1285–1380 €) | n=8 — zwykle ponad budżet 800 €
+- Rose Backroad — karbon, tarczowe hydrauliczne | 7600–10350 zł (≈1745–2380 €) | n=6 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): Pro SL = alu (wersje z nazwą albo numerem grupy: -2000 = 105, -3000 = Ultegra; „Pro SL Disc” = tarczowe). Xeon RS = lekkie alu, Xeon CRS / CW / X-Lite = karbon (do ok. 2018), Reveal = karbon endurance z tarczami (od 2020). Backroad = gravel: „Backroad AL” alu, „Backroad” karbon — wersja nazywa się jak grupa (GRX RX400 / RX600 / RX810, Apex, Rival, Force). Pro DX Cross / Team DX Cross = przełajówki alu. Rose sprzedaje wysyłkowo, rowery były konfigurowane — osprzęt bywa inny niż katalogowy, potwierdź go.` },
+    road_bmc: { name: "BMC (szosa)", text: `BMC (SZOSA) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- BMC Teammachine — karbon, hamulce szczękowe | 3500–4500 zł (≈805–1035 €) | n=10
+- BMC Teammachine — karbon, tarczowe hydrauliczne | 7650–11250 zł (≈1760–2585 €) | n=12 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): Teammachine „ALR” (ALR01) = alu, „SLR” = karbon — SLR03 podstawowy, SLR02 średni, SLR01 najwyższy. Roadmachine (od 2017) = endurance z tarczami (01 / 02 / 03 jak wyżej; Roadmachine X = allroad). Granfondo GF01 / GF02 = starszy endurance. Timemachine = aero / czasowy (czasowy → typ "inny").` },
+    road_bianchi: { name: "Bianchi (szosa)", text: `BIANCHI (SZOSA) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Bianchi (wszystkie modele szosowe razem) — karbon, hamulce szczękowe | 2350–2650 zł (≈540–610 €) | n=3 [niska pewność]
+- Bianchi (wszystkie modele szosowe razem) — karbon, tarczowe hydrauliczne | 7650–9750 zł (≈1760–2240 €) | n=12 — zwykle ponad budżet 800 €
+Modele (orientacyjnie): Via Nirone 7 = alu, podstawowy (pasmo alu); Impulso = alu wyższe; Intenso = podstawowy karbon endurance; Infinito CV = karbon endurance wyższy; Sempre Pro, Oltre XR = karbon wyścigowy; Aria = aero. Wyszukiwanie „Bianchi Rennrad” zwraca dużo starych rowerów stalowych (Rekord, Caurus, Pantani / Mercatone Uno, Celeste Vintage) — to klasyki sprzed 2014: typ "inny" albo odrzucenie za rocznik. Osprzęt Campagnolo → ok. −10%.` },
+    road_decathlon: { name: "Decathlon: Triban, Van Rysel, BTwin", text: `DECATHLON: TRIBAN, VAN RYSEL, BTWIN — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Triban (wszystkie modele) — alu, hamulce szczękowe | 950–1100 zł (≈220–255 €) | n=25
+- Triban (wszystkie modele) — alu, tarczowe mechaniczne | 1700–2500 zł (≈390–575 €) | n=11
+- Triban (wszystkie modele) — alu, tarczowe hydrauliczne | 2100–2500 zł (≈485–575 €) | n=11
+- Van Rysel — karbon, tarczowe hydrauliczne | 5750–8000 zł (≈1320–1840 €) | n=7 — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): Triban RC 100 = najtańszy (7–8 biegów), RC 120 = microSHIFT 2x8 (wersja „Disc” z hamulcami mechanicznymi), RC 500 = Sora z tarczami mechanicznymi, RC 520 = 105 z hamulcami TRP HY/RD (licz jak mechaniczne); starsze B'Twin Triban 3 / 5 / 500 / 520 / 540 na szczękach. GRVL 120 = gravel z microSHIFT 1x10, GRVL 520 = Apex 1 / 105. Van Rysel: „AF” = alu, „CF” = karbon (EDR, RCR). Marka budżetowa — w Polsce nowy Triban kosztuje niewiele więcej niż używany w Niemczech, zysk prawie nigdy nie wychodzi.` },
+    road_orbea: { name: "Orbea (szosa / gravel)", text: `ORBEA (SZOSA / GRAVEL) — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Orbea Orca — karbon, hamulce szczękowe | 4000–5400 zł (≈920–1240 €) | n=10
+- Orbea Orca — karbon, tarczowe hydrauliczne | 9250–10000 zł (≈2125–2300 €) | n=20 — zwykle ponad budżet 800 €
+- Orbea Avant — alu, hamulce szczękowe | 1900–2200 zł (≈435–505 €) | n=3 [niska pewność]
+- Orbea Avant — alu, tarczowe mechaniczne | 2900–3800 zł (≈665–875 €) | n=5 [niska pewność]
+- Orbea Avant — alu, tarczowe hydrauliczne | 4400–4650 zł (≈1010–1070 €) | n=4 [niska pewność]
+- Orbea Avant — karbon, tarczowe hydrauliczne | 5350–5900 zł (≈1230–1355 €) | n=3 [niska pewność] — zwykle ponad budżet 800 €
+- Orbea Terra — alu, tarczowe hydrauliczne | 4850–5000 zł (≈1115–1150 €) | n=10
+- Orbea Terra — karbon, tarczowe hydrauliczne | 8500–9000 zł (≈1955–2070 €) | n=5 [niska pewność] — zwykle ponad budżet 800 €
+Nazewnictwo (orientacyjnie): „H” = alu (Hydro), „M” = karbon (OMP / OMR / OMX). Liczba: im NIŻSZA, tym lepszy osprzęt — H60 / H50 = Claris / Sora, H40 = Tiagra, H30 = 105, M30 = 105, M20 = Ultegra, M10 = Dura-Ace / Di2. Orca = karbon wyścigowy, Avant = endurance (H alu, M karbon), Terra = gravel (Terra H alu, Terra M karbon).` },
+    road_other: { name: "Inne marki: Ridley, Wilier, Stevens, Radon, Bulls, Fuji, Felt, Cervélo, Marin, Kona, Bergamont", text: `INNE MARKI: RIDLEY, WILIER, STEVENS, RADON, BULLS, FUJI, FELT, CERVÉLO, MARIN, KONA, BERGAMONT — ceny ofertowe OLX 11.2026, oferty prywatne: dolna ćwiartka–mediana; n = liczba ofert; wycena = to pasmo, skąpy opis albo słabszy osprzęt → dolna granica
+- Ridley — alu, tarczowe hydrauliczne | 3400–3750 zł (≈780–860 €) | n=4 [niska pewność]
+- Ridley — karbon, hamulce szczękowe | 2750–3650 zł (≈630–840 €) | n=6
+- Ridley — karbon, tarczowe hydrauliczne | 4950–6000 zł (≈1140–1380 €) | n=11 — zwykle ponad budżet 800 €
+- Wilier — alu, hamulce szczękowe | 1200–1600 zł (≈275–370 €) | n=3 [niska pewność]
+- Wilier — karbon, hamulce szczękowe | 2050–3100 zł (≈470–715 €) | n=6
+- Wilier — karbon, tarczowe hydrauliczne | 8550–9450 zł (≈1965–2170 €) | n=4 [niska pewność] — zwykle ponad budżet 800 €
+- Stevens — karbon, tarczowe hydrauliczne | 5450–5700 zł (≈1255–1310 €) | n=4 [niska pewność] — zwykle ponad budżet 800 €
+- Radon — wszystkie wersje razem | 2050–2500 zł (≈470–575 €) | n=5 [niska pewność]
+- Bulls — alu, tarczowe mechaniczne | 1800–2450 zł (≈415–565 €) | n=4 [niska pewność]
+- Fuji Jari (gravel) — alu, tarczowe mechaniczne | 2700–2850 zł (≈620–655 €) | n=3 [niska pewność]
+- Fuji Jari (gravel) — alu, tarczowe hydrauliczne | 3750–4800 zł (≈860–1105 €) | n=3 [niska pewność]
+- Felt — alu, tarczowe mechaniczne | 2100–2400 zł (≈485–550 €) | n=3 [niska pewność]
+- Felt — karbon, tarczowe hydrauliczne | 6000–8000 zł (≈1380–1840 €) | n=3 [niska pewność] — zwykle ponad budżet 800 €
+- Cervélo — karbon, hamulce szczękowe | 3950–5500 zł (≈910–1265 €) | n=6
+- Cervélo — karbon, tarczowe hydrauliczne | 14000–19600 zł (≈3220–4505 €) | n=5 [niska pewność] — zwykle ponad budżet 800 €
+- Marin Nicasio (gravel, stal) — wszystkie wersje razem | 1900–2200 zł (≈435–505 €) | n=13
+- Marin Gestalt (gravel) — alu, tarczowe mechaniczne | 2150–2300 zł (≈495–530 €) | n=9
+- Marin Gestalt (gravel) — alu, tarczowe hydrauliczne | 2950–3000 zł (≈680–690 €) | n=7
+- Kona Rove (gravel) — alu, tarczowe mechaniczne | 2100–2400 zł (≈485–550 €) | n=4 [niska pewność]
+- Bergamont Grandurance (gravel) — alu, tarczowe mechaniczne | 2500–2600 zł (≈575–600 €) | n=4 [niska pewność]
+- Bergamont Grandurance (gravel) — alu, tarczowe hydrauliczne | 2900–3650 zł (≈665–840 €) | n=4 [niska pewność]
+Modele (orientacyjnie): Ridley — Fenix (endurance), Helium (lekki), Noah (aero) karbon / alu „A”, X-Trail i Kanzo gravel, X-Night / X-Ride przełaj. Stevens — Aspin / Stelvio alu, Izoard / Ventoux / Xenon karbon, Prestige / Gavere / Super Prestige przełaj i gravel. Radon — R1 alu, Vaillant / Spire karbon, Regard gravel. Bulls — Harrier / Desert Falcon szosa, Grinder / Trail Grinder / Machete gravel (marka sklepowa: dolna granica). Fuji — Roubaix / Sportif alu, SL / Transonic karbon, Jari gravel. Felt — F / FR wyścigowe, Z / VR endurance, Broam gravel. Cervélo — R (wyścigowe), S (aero), C / Caledonia (endurance), P = czasowe (typ "inny"). Marin — Nicasio stal, Gestalt alu, Headlands karbon. Kona — Rove (alu / stal), Jake (przełaj). Bergamont — Prime szosa, Grandurance gravel.` },
+  },
+};
+
+// Dobór wpisów marek / modeli do ogłoszenia: teksty od najważniejszego [tytuł, etykieta wyszukiwania, początek opisu] —
+// marki bierzemy z PIERWSZEGO tekstu, w którym jakąś widać (jak selectKbChunkIds dla MTB); najwyżej 2 wpisy
+const ROAD_BRAND_PATTERNS = {
+  road_canyon: /\bcanyon\b|\bendurace\b|\baeroad\b|\bgrail\b|\bgrizl\b|\binflite\b/i,
+  road_cube: /\bcube\b|\battain\b|\blitening\b|\bnuroad\b|\bcross\s?race\b/i,
+  road_giant: /\bgiant\b|\btcr\b|\bdefy\b|\bcontend\b|\bpropel\b|\brevolt\b|\btcx\b/i,
+  road_trek: /\btrek\b|[eé]monda\b|\bdomane\b|\bmadone\b|\bcheckpoint\b|\bcrockett\b|\bboone\b/i,
+  road_specialized: /\bspecialized\b|\ballez\b|\btarmac\b|\broubaix\b|\bdiverge\b|\bcrux\b|s-works/i,
+  road_cannondale: /\bcannondale\b|\bcaad|\bsynapse\b|\bsuper\s?six\b|\btopstone\b/i,
+  road_scott: /\bscott\b|\baddict\b|\bspeedster\b|\bfoil\b|\bsolace\b/i,
+  road_merida: /\bmerida\b|\bscultura\b|\breacto\b|\bsilex\b/i,
+  road_focus: /\bfocus\b|\bizalco\b|\bcayo\b|\bparalane\b|\bmares\b/i,
+  road_rose: /\brose\b|\bbackroad\b|\bxeon\b|\bpro\s?sl\b/i,
+  road_bmc: /\bbmc\b|\bteammachine\b|\broadmachine\b/i,
+  road_bianchi: /\bbianchi\b/i,
+  road_decathlon: /\btriban\b|\bvan\s?rysel\b|b'?twin|\bdecathlon\b/i,
+  road_orbea: /\borbea\b|\borca\b/i,
+  road_other: /\bridley\b|\bwilier\b|\bstevens\b|\bradon\b|\bbulls\b|\bfuji\b|\bfelt\b|\bcerv[eé]lo\b|\bmarin\b|\bkona\b|\bbergamont\b/i,
+};
+const selectRoadKbChunkIds = (texts) => {
+  for (const txt of (Array.isArray(texts) ? texts : [texts]).map(x => String(x || "").replace(/^🚴\s*/, ""))) {
+    const ids = Object.keys(ROAD_BRAND_PATTERNS).filter(id => KB_ROAD.chunks[id] && ROAD_BRAND_PATTERNS[id].test(txt));
+    if (ids.length > 0) return ids.slice(0, 2);
+  }
+  return [];
+};
+
+// Polecenie etapu 1 (Groq) dla ogłoszeń z wyszukiwań szos i graveli
+const roadGroqPrompt = (listing) => `Klasyfikator ogłoszeń rowerowych. Na podstawie tytułu i opisu określ TYLKO typ roweru.
+
+Typy:
+- szosa — rower szosowy z kierownicą typu baranek (Rennrad, Rennmaschine, Endurance, Aero): wąskie opony, do asfaltu.
+- gravel — gravel albo przełajówka (Gravelbike, Cyclocross, Crosser, CX, Allroad): kierownica baranek, szersze opony z bieżnikiem.
+- inny — reszta: rower górski (MTB, Fully, Hardtail), trekking, crossowy / fitness z PROSTĄ kierownicą, miejski, dziecięcy, składany, czasowy / triathlonowy (Zeitfahrrad, TT), torowy / ostre koło / singlespeed (Bahnrad, Fixie), każdy rower z silnikiem (E-Bike, E-Gravel, E-Rennrad, Akku, Motor), trenażer, same części.
+
+ZNANE SZOSY (= szosa): Canyon Endurace / Ultimate / Aeroad, Cube Attain / Agree / Litening, Giant TCR / Defy / Contend / Propel, Trek Émonda / Domane / Madone, Specialized Allez / Tarmac / Roubaix / Venge, Cannondale CAAD / Synapse / SuperSix, Scott Addict / Speedster / Foil / Solace / CR1, Focus Izalco / Cayo / Paralane, Merida Scultura / Reacto / Ride, Rose Pro SL / Xeon / X-Lite, BMC Teammachine / Roadmachine, Bianchi, Radon R1 / Vaillant, Stevens Aspin / Izoard / Stelvio, Triban RC, Van Rysel, Bulls Harrier / Desert Falcon.
+ZNANE GRAVELE I PRZEŁAJÓWKI (= gravel): Canyon Grail / Grizl / Inflite, Cube Nuroad / Cross Race, Rose Backroad, Giant Revolt / TCX, Trek Checkpoint / Boone / Crockett, Specialized Diverge / CruX, Cannondale Topstone / CAADX / SuperX, Scott Speedster Gravel / Addict Gravel / Addict CX, Focus Atlas / Mares, Merida Silex / Mission CX, Stevens Prestige / Gavere / Super Prestige, Ridley X-Trail / Kanzo / X-Ride, Marin Nicasio / Gestalt / Headlands, Kona Rove / Jake, Bergamont Grandurance, Triban GRVL, Bulls Grinder / Machete, Fuji Jari, Felt Broam, Orbea Terra, Bombtrack Hook.
+UWAGA: Canyon Roadlite, Cube SL Road, Specialized Sirrus, Trek FX, Giant FastRoad / Escape, Scott Sub / Metrix i inne rowery z PROSTĄ kierownicą to "inny".
+
+CZĘŚCI vs CAŁY ROWER: wymienienie osprzętu w opisie całego roweru (np. „Shimano 105, Laufräder Mavic Aksium”) to normalny opis — klasyfikuj po typie. Odpowiedz "inny" TYLKO gdy z tytułu albo opisu WPROST wynika, że sprzedawana jest sama część: „nur Rahmen”, „Rahmenset”, „Laufradsatz”, „Schaltgruppe”, „Teile”. „Rahmen 56 cm” / „Rahmenhöhe 54” / „RH 58” to ROZMIAR RAMY całego roweru. W razie wątpliwości → niepewne, NIE inny.
+
+ROK PRODUKCJI: odpowiedz jednym słowem "stary" (zamiast typu) TYLKO wtedy, gdy tytuł albo opis daje KONKRETNY dowód, że rower jest sprzed ${ROAD_MIN_YEAR}: podany rok, rama stalowa z mufami, manetki na ramie (Rahmenschalthebel), mostek na gwint, koła 27", grupy Shimano 600 / Exage / RSX / RX100 / Sora 8-fach / Tiagra 9-fach / 105 9-fach / 105 5600 / 5700 / Ultegra 6500 / 6600 / 6700 / Dura-Ace 7700 / 7800 / 7900, Campagnolo Mirage / Xenon, napęd 3x w szosie, słowa Klassiker / Vintage / Retro / 80er / 90er. Sama nazwa modelu bez takiego dowodu to NIE powód — klasyfikuj normalnie; wiek oceni dokładniejsza analiza.
+
+Brak wystarczających informacji → odpowiedz: niepewne
+
+Tytuł: ${listing.title}
+Opis: ${listing.fullDesc || listing.desc}
+
+FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 słów) — co przeważyło o klasyfikacji. Następnie w OSTATNIEJ, OSOBNEJ linii podaj WYŁĄCZNIE jedno słowo z: szosa/gravel/inny/niepewne/stary — nic więcej w tej linii, żadnej kropki ani komentarza.`;
+
+// Stała część polecenia etapu 2 dla szos i graveli (osobna od MTB — inny ekspert, inna baza, inne reguły)
+const buildRoadStaticPrefix = ({ notesSection, transportCostEur, chatInfo }) => `Jesteś ekspertem od rowerów szosowych, graveli i przełajówek. Kupujesz używane rowery w Niemczech i odsprzedajesz je w Polsce z zyskiem. Znasz grupy osprzętu Shimano / SRAM / Campagnolo, ich generacje i roczniki oraz realne ceny rynku wtórnego w Polsce.
+
+=== BAZA CEN SZOS I GRAVELI (wbudowana w aplikację, ${KB_ROAD.version}) — GŁÓWNE ŹRÓDŁO CEN SPRZEDAŻY W POLSCE ===
+Kolejność źródeł ceny: 1) notatki użytkownika (jeśli są niżej), 2) wpis modelu z sekcji „BAZA CEN — WPISY DLA TEGO OGŁOSZENIA” (jeśli jest przy ogłoszeniu), 3) wycena kategorii z tabeli poniżej, 4) własna wiedza rynkowa — tylko do wyboru miejsca w paśmie, nie do wyjścia ponad pasmo.
+Ceny w bazie to ceny SPRZEDAŻY w Polsce w zł z przeliczeniem na euro (≈ €, kurs ${EUR_PLN_RATE} zł/€) — zysk licz z kwoty w € porównanej z ceną zakupu w €.
+
+${KB_ROAD.core}
+
+=== KONIEC CZĘŚCI OGÓLNEJ BAZY ===
+
+${notesSection}=== UWAGA — CENA "NOWEGO" ROWERU W OPISIE TO NIE SZACOWANA CENA SPRZEDAŻY ===
+Sprzedający często podają cenę nowego roweru (Neupreis / NP / UVP / „kostete neu”). To tylko informacja o segmencie — NIGDY nie ustawiaj "szacowana_sprzedaz_eur" na poziomie zbliżonym do tej kwoty. Szosy tracą wartość szybko: rower 5–10-letni jest zwykle wart 25–45% ceny nowego, rower na hamulcach szczękowych — bliżej dolnej granicy.
+
+=== NAPĘD I HAMULCE (pole "naped") — NAJWAŻNIEJSZE DLA WYCENY ===
+• "naped.grupa": pełna nazwa głównej grupy z numerem serii, jeśli da się ją ustalić (np. "Shimano 105 R7000", "Shimano Ultegra 6800", "Shimano GRX RX400", "SRAM Rival 1") — z opisu albo z czytelnego napisu na zdjęciu. Nie wiesz → "nieznana".
+• "naped.biegi": układ biegów, np. "2x11", "1x11", "2x10"; nie wiesz → null.
+• "naped.zrodlo": "opis" (z tytułu / opisu), "napis" (czytelny napis na zdjęciu), "wyglad" (tylko z wyglądu — niepewne), "nieznany". Gdy napis na zdjęciu przeczy opisowi — wygrywa napis; wpisz to krótko w "ostrzezenia".
+• "naped.hamulce": "tarczowe_hydr" (przewody hydrauliczne, klamkomanetki do hydrauliki), "tarczowe_mech" (zaciski na linkę: TRP Spyre, Avid BB5 / BB7, Tektro Mira / MD-C), "szczekowe" (szczęki przy obręczy, także cantilever / mini-V w przełajówce), "nieznane".
+• Grupa "nieznana" albo tylko z wyglądu → wyceniaj jak NAJTAŃSZĄ grupę pasującą do liczby biegów. Hamulce "nieznane" → pasmo szczękowe.
+• Wyceniaj po realnym osprzęcie, nie po marce ramy: karbonowa rama znanej marki z Tiagrą albo Sorą to dolna granica pasma karbonu z 105, nie pasmo Ultegry.
+
+=== MATERIAŁ RAMY (pole "rama") ===
+Ten sam model bywa w wersji alu i karbonowej (różnica kilkaset €). Ustal materiał ramy w tej kolejności:
+1. TEKST OGŁOSZENIA — program sam szuka materiału w tytule i opisie i podaje wynik przy ogłoszeniu („Materiał ramy z tekstu”). Jeśli go podał — wyceniaj według niego ("rama.zrodlo": "tekst"). Karbonowy widelec, sztyca, kierownica albo koła NIE oznaczają karbonowej ramy — alu z karbonowym widelcem to w szosach norma.
+2. NAPIS NA RAMIE na zdjęciu ("zrodlo": "napis"): Carbon, CF, CFR, C:62, GTC (Cube), Advanced (Giant), OCLV (Trek), FACT / S-Works (Specialized), HMX / HMF (Scott), Hi-MOD (Cannondale) = karbon; AL, Alu, Alloy, Aluminium, ALUXX (Giant), Alpha (Trek), E5 / A1 (Specialized), CAAD (Cannondale), Superlite / HPA (Cube) = alu. W "dowod" przepisz, co przeczytałeś.
+3. WYGLĄD ("zrodlo": "wyglad") — widoczne spoiny przy suporcie i główce ramy = alu; gładkie przejścia rur NIE dowodzą karbonu (alu bywa szlifowane).
+Karbon z samego wyglądu wyceniaj jako karbon tylko z konkretnym dowodem (numer zdjęcia) i podaj "rama.sprzedaz_alu_eur" (pasmo alu przy tym samym osprzęcie i hamulcach). Materiał nieustalony ("nie_wiem") → wyceniaj wersję alu.
+
+=== CENA Z OPISU (pole "cena_z_opisu") ===
+Gdy sprzedawca podaje w opisie albo tytule NIŻSZĄ cenę za cały rower niż w polu ceny ogłoszenia („Dieses Wochenende 500€”, „bei sofortiger Abholung 450 €”, „letzter Preis 480”) — wpisz NAJNIŻSZĄ taką kwotę w "cena_z_opisu.eur" i jej warunek po polsku w "cena_z_opisu.warunek". W "cena_zakupu_eur" zostaw cenę z ogłoszenia. NIE wpisuj: ceny nowego roweru, cen części, wysyłki, „VB” bez kwoty, kwoty równej lub wyższej od ceny ogłoszenia. Brak → null.
+
+=== KROK 1 — NAJPIERW USTAL FAKTY (pole "fakty") ===
+Program sprawdza je potem twardymi regułami — podawaj je rzetelnie, a nie „pod” decyzję.
+• rocznik — rok modelowy. Opis go podaje (Baujahr / Bj. / Modelljahr / MY) → "podany". Jeśli nie, OSZACUJ z generacji grupy osprzętu, hamulców i nazwy modelu (sekcje GRUPY OSPRZĘTU i ROCZNIK w bazie) → "oszacowany" i zakres w "rocznik_zakres". Gdy pasujący zakres obejmuje lata sprzed ${ROAD_MIN_YEAR} i ${ROAD_MIN_YEAR} lub późniejsze — wpisz ${ROAD_MIN_YEAR}; rocznik sprzed ${ROAD_MIN_YEAR} wpisuj tylko wtedy, gdy rower na pewno jest starszy. Rok zakupu roweru UŻYWANEGO to tylko górna granica. Części wymienione po zakupie („nachgerüstet”, „neu verbaut”, „Umbau”) nie datują roweru. Brak przesłanek → null i "brak". Brak rocznika w ogłoszeniu to norma — sam w sobie NIE jest powodem do "niepewne".
+• PRZEDNIA PRZERZUTKA I NAPĘD 2x to w szosie i gravelu norma — NIE jest dowodem wieku.
+• e_bike — true, jeśli rower ma silnik i akumulator (Wh, Motor, Fazua, Mahle / ebikemotion, Bosch, Shimano Steps, TQ).
+• sprzedawca — "sklep" (Onlineshop, Lieferzeit, MwSt, wiele rozmiarów), "prywatny" albo "nieznany".
+• stan — "nowy", "jak_nowy", "uzywany" albo "uszkodzony".
+• cena_nowego_eur — cena nowego roweru podana w opisie, w euro; brak → null.
+• kompletny_rower — false tylko wtedy, gdy sprzedawana jest sama rama / część.
+
+=== ROZPOZNAWANIE TYPU ROWERU ===
+• "szosa" — rower szosowy z kierownicą baranek (race, endurance, aero), opony zwykle 23–32 mm.
+• "gravel" — gravel albo przełajówka (cyclocross): kierownica baranek, opony 33–50 mm z bieżnikiem, zwykle hamulce tarczowe.
+• "inny" — WSZYSTKO INNE: rower górski, trekking, fitness / cross z prostą kierownicą, miejski, dziecięcy, czasowy / triathlonowy, torowy / ostre koło, stalowy klasyk retro, rower z silnikiem, części i akcesoria. Gdy NIE MOŻESZ jednoznacznie rozpoznać — też "inny".
+Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
+
+=== OCENA OPŁACALNOŚCI ===
+• Typ "szosa" albo "gravel":
+  - Ustal materiał ramy, hamulce i grupę osprzętu, wybierz pasmo z bazy i miejsce w nim (stan, koła, rocznik).
+  - Zysk = cena sprzedaży PL (w EUR) minus cena zakupu z ogłoszenia minus koszt transportu do Polski ${transportCostEur}€ (odejmij go dokładnie raz).
+  - decyzja "tak" TYLKO gdy zysk po transporcie wynosi co najmniej MINIMALNY ZYSK podany przy ogłoszeniu I ustaliłeś z opisu albo zdjęć co najmniej: materiał ramy, rodzaj hamulców i grupę osprzętu (albo liczbę biegów).
+  - decyzja "niepewne" gdy naprawdę brakuje kluczowych informacji (ani opis, ani zdjęcia nie pozwalają ustalić grupy osprzętu i materiału ramy; marka zupełnie nieznana). NIE oznaczaj "niepewne" tylko dlatego, że modelu nie ma w bazie — wyceniaj z kategorii.
+  - decyzja "nie" gdy masz dość danych, żeby stwierdzić, że zysk jest za mały.
+  - TWARDA REGUŁA ROKU: rocznik (podany albo oszacowany) sprzed ${ROAD_MIN_YEAR} → "nie", niezależnie od ceny.
+  - SAMA CZĘŚĆ (rama, koła, grupa) → "kompletny_rower": false i "nie". Wymienienie części w opisie kompletnego roweru to NIE jest powód do odrzucenia.
+  - ROWER Z SILNIKIEM → "e_bike": true (program odrzuci).
+  - NOWY ROWER ZE SKLEPU (sprzedawca "sklep" + stan "nowy") → "nie".
+  - PODEJRZANIE NISKA CENA, MOŻLIWE OSZUSTWO, UKRYTE WADY — to NIE jest powód do "niepewne" ani "nie": oceniaj według wyceny, a podejrzenia wpisz krótko w "ostrzezenia". Uszkodzenia OPISANE albo WYRAŹNIE WIDOCZNE uwzględnij w wycenie.
+  - Dla "niepewne" ustaw "niepewne_kategoria" na najbardziej konkretny powód; dla "tak" / "nie" wpisz null.${chatInfo}
+
+Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza JSON):
+{
+  "fakty": {
+    "rocznik": liczba (rok modelowy) lub null,
+    "rocznik_zrodlo": "podany" | "oszacowany" | "brak",
+    "rocznik_zakres": "TYLKO gdy rocznik_zrodlo = \\"oszacowany\\": zakres lat, np. \\"2014–2018\\" (pewny jeden rok → \\"2019–2019\\"); inaczej null",
+    "e_bike": true | false,
+    "sprzedawca": "prywatny" | "sklep" | "nieznany",
+    "stan": "nowy" | "jak_nowy" | "uzywany" | "uszkodzony",
+    "cena_nowego_eur": liczba lub null,
+    "kompletny_rower": true | false
+  },
+  "naped": { "grupa": "np. \\"Shimano 105 R7000\\" albo \\"nieznana\\"", "biegi": "np. \\"2x11\\" albo null", "zrodlo": "opis" | "napis" | "wyglad" | "nieznany", "hamulce": "tarczowe_hydr" | "tarczowe_mech" | "szczekowe" | "nieznane" },
+  "rama": { "material": "karbon" | "alu" | "nie_wiem", "zrodlo": "tekst" | "napis" | "wyglad" | "nieznany", "dowod": "max 20 słów PO POLSKU, bez podwójnych cudzysłowów, albo null", "sprzedaz_alu_eur": liczba (gdy wyceniasz jako karbon z wyglądu) lub null },
+  "typ_roweru": "szosa" | "gravel" | "inny",
+  "decyzja": "tak" | "nie" | "niepewne",
+  "cena_zakupu_eur": liczba (cena z ogłoszenia) lub null,
+  "cena_z_opisu": { "eur": liczba, "warunek": "krótko po polsku" } albo null,
+  "szacowana_sprzedaz_eur": liczba (ile dostaniesz w Polsce w EUR) lub null,
+  "przewidywany_zysk": liczba w EUR (sprzedaż − zakup − transport ${transportCostEur}€) lub 0,
+  "niepewne_kategoria": "nisza_custom" | "za_malo_opisu" | "nieznany_model" | "inne" | null,
+  "ostrzezenia": "krótko PO POLSKU (max 15 słów): podejrzenia do sprawdzenia przez użytkownika albo null",
+  "rozmiar_ramy": "rozmiar ramy z tytułu / opisu, np. \\"56 cm\\", \\"M\\", \\"RH 54\\" — albo null",
+  "argumenty_negocjacji": "TYLKO gdy decyzja \\"nie\\" z powodu za małego zysku: 1–3 krótkie, PRAWDZIWE powody niższej ceny, PO NIEMIECKU, rozdzielone średnikiem — w pozostałych przypadkach null",
+  "powod_decyzji": "JEDNO krótkie zdanie (max 20 słów): które pasmo z bazy (np. 'baza: karbon, szczękowe, Ultegra 11s') i co przeważyło. Dla \\"niepewne\\": prawdziwa przyczyna."
+}
+
+=== KONIEC CZĘŚCI STAŁEJ ===`;
+
+const roadPhotoNote = (n) => `=== ZDJĘCIA Z OGŁOSZENIA ===
+Do tej analizy dołączono do ${n} pierwszych zdjęć z galerii ogłoszenia. Jeśli żadnego nie widzisz — oceniaj wyłącznie z opisu. Użyj zdjęć, żeby:
+• odczytać grupę osprzętu z napisów na klamkomanetkach, korbie i przerzutkach (np. „105”, „ULTEGRA”, „TIAGRA”, „GRX”, „RIVAL”) i policzyć zębatki kasety — bez czytelnego napisu nie zgaduj nazwy grupy;
+• ustalić rodzaj hamulców: tarcze przy piastach (przewód hydrauliczny czy linka) albo szczęki przy obręczy;
+• ustalić materiał ramy (napis na ramie, spoiny) i sprawdzić, czy kierownica to baranek (prosta kierownica = typ "inny");
+• rozpoznać koła (wysoki profil karbonowy, napis producenta) i widoczny stan: rdza, pęknięcia, odpryski lakieru do włókien, krzywe koło, braki części;
+• wykryć zdjęcia katalogowe zamiast prawdziwych — wpisz to w "ostrzezenia" (NIE zmieniaj przez to decyzji).
+Gdy zdjęcia przeczą opisowi (inna grupa, alu zamiast karbonu, uszkodzenia) — ufaj zdjęciom i napisz to w "powod_decyzji".
+Dodaj do odpowiedzi JSON pole "zdjecia": krótko PO POLSKU (max 25 słów), co widać na zdjęciach i czy zgadza się z opisem.`;
+
+// Pole "naped" z analizy AI → { grupa | null, biegi | null, zrodlo, hamulce }
+const DRIVETRAIN_SOURCES = ["opis", "napis", "wyglad", "nieznany"];
+const BRAKE_KINDS = ["tarczowe_hydr", "tarczowe_mech", "szczekowe", "nieznane"];
+const BRAKE_LABELS = { tarczowe_hydr: "tarczowe hydrauliczne", tarczowe_mech: "tarczowe mechaniczne", szczekowe: "szczękowe", nieznane: "hamulce nieustalone" };
+const normalizeDrivetrain = (n) => {
+  const o = n && typeof n === "object" ? n : {};
+  let grupa = typeof o.grupa === "string" ? o.grupa.trim().slice(0, 60) : "";
+  if (!grupa || /^(null|brak|none|-|\?)$/i.test(grupa) || /^nieznan|^unknown/i.test(grupa)) grupa = null;
+  let biegi = typeof o.biegi === "string" ? o.biegi.trim().slice(0, 12) : "";
+  if (!/^[123]\s?x\s?\d{1,2}$/i.test(biegi)) biegi = null; else biegi = biegi.replace(/\s/g, "").toLowerCase();
+  let zrodlo = DRIVETRAIN_SOURCES.includes(o.zrodlo) ? o.zrodlo : "nieznany";
+  if (!grupa) zrodlo = "nieznany"; else if (zrodlo === "nieznany") zrodlo = "wyglad";
+  return { grupa, biegi, zrodlo, hamulce: BRAKE_KINDS.includes(o.hamulce) ? o.hamulce : "nieznane" };
+};
+const drivetrainNeedsCheck = (n) => !n ? null
+  : !n.grupa ? "sprawdź grupę osprzętu (nie rozpoznano — liczona jak najtańsza)"
+  : n.zrodlo === "wyglad" ? `sprawdź grupę osprzętu (${n.grupa} rozpoznana tylko z wyglądu)`
+  : n.hamulce === "nieznane" ? "sprawdź rodzaj hamulców (nieustalony — liczone jak szczękowe)" : null;
+const fmtDrivetrain = (n) => !n ? null
+  : `${n.grupa || "grupa nierozpoznana"}${n.biegi ? ` ${n.biegi}` : ""}${n.grupa && n.zrodlo !== "opis" ? ` (${n.zrodlo === "napis" ? "napis na zdjęciu" : "z wyglądu — sprawdź"})` : ""} · ${BRAKE_LABELS[n.hamulce] || BRAKE_LABELS.nieznane}`;
+const drivetrainField = (a) => a?.naped && ROAD_TYPES.includes(a.typ_roweru) ? [{ name: "⚙️ Napęd i hamulce", value: String(fmtDrivetrain(a.naped)).slice(0, 200), inline: false }] : [];
+// ZASADA ROCZNIKA I PASMA dla szos / graveli (odpowiednik reguły MTB z v6.7: pierwsza analiza — środek, weryfikacja — dół)
+const ROAD_YEAR_RULE_FIRST = `ZASADA ROCZNIKA I PASMA (pierwsza analiza): gdy pasuje kilka roczników — wpisz ŚRODKOWY rok pasującego zakresu (przy parzystej liczbie lat wcześniejszy ze środkowych, np. 2014–2017 → 2015); rocznik tylko oszacowany → ŚRODEK pasma; grupa osprzętu nierozpoznana albo hamulce nieustalone → dolna granica tańszego pasma. Limit rocznika ${ROAD_MIN_YEAR} obowiązuje bez zmian.`;
+const ROAD_YEAR_RULE_VERIFY = `ZASADA ROCZNIKA I PASMA (weryfikacja): rocznik ustal po generacji grupy osprzętu, rodzaju hamulców i ramie. Gdy pasuje kilka roczników — wpisz najstarszy pasujący; rocznik tylko oszacowany, grupa nierozpoznana albo skąpy opis → DOLNA granica pasma.`;
+// Weryfikacja okazji („adwokat diabła”) dla szos / graveli
+const roadVerifyNote = ({ fk, current, photosN, typeConflictNote, frameMaterial }) => `=== TRYB WERYFIKACJI — ADWOKAT DIABŁA ===
+Wcześniejsza analiza uznała to ogłoszenie za OKAZJĘ: rocznik ${fk.rocznik ?? "?"} (${fk.rocznik_zrodlo || "brak"}), grupa osprzętu ${current.naped?.grupa || "nierozpoznana"}, hamulce ${BRAKE_LABELS[current.naped?.hamulce] || "nieustalone"}, szacowana sprzedaż ${current.szacowana_sprzedaz_eur}€, zysk ~${current.przewidywany_zysk}€${current.powod_decyzji ? `, uzasadnienie: "${current.powod_decyzji}"` : ""}.
+Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — tylko część zysku. Twoim zadaniem jest SZUKAĆ POWODÓW, dla których to NIE jest okazja. Sprawdź po kolei:
+1. GRUPA OSPRZĘTU — czy nazwa i generacja grupy wynikają z opisu albo z czytelnego napisu na zdjęciu? Grupa tylko z wyglądu albo samo „Shimano” → licz najtańszą grupę pasującą do liczby biegów. Mieszana grupa → dolna granica pasma.
+2. HAMULCE — tarczowe hydrauliczne, tarczowe mechaniczne czy szczękowe? Pasmo musi odpowiadać rodzajowi hamulców; nieustalone → szczękowe.
+3. MATERIAŁ RAMY — ${frameMaterial ? `tekst ogłoszenia podaje: ${frameMaterial} — wyceniaj tę wersję.` : `tekst ogłoszenia go nie podaje — szukaj napisu na ramie i spoin. Karbonowy widelec albo koła to nie karbonowa rama. Karbon tylko z wyglądu podawaj z dowodem (numer zdjęcia) i z "rama.sprzedaz_alu_eur".`}
+4. ROCZNIK — czy grupa osprzętu, hamulce albo cechy ramy wskazują na rower sprzed ${ROAD_MIN_YEAR} (ZNACZNIKI ROWERU SPRZED 2014 w bazie)? Sam brak rocznika w ogłoszeniu to norma — NIE jest powodem do odrzucenia. Przednia przerzutka to w szosie norma.
+5. TYP — czy to na pewno szosa / gravel z kierownicą baranek? Prosta kierownica, rower czasowy, torowy / ostre koło, stalowy klasyk → typ "inny". Silnik i akumulator → "e_bike": true.
+6. SKLEP — czy to nowy rower ze sklepu w cenie detalicznej (Onlineshop, Lieferzeit, „Zustand: Neu”)?
+7. CENA NOWEGO — czy szacunek nie jest zakotwiczony na „Neupreis” / „NP” / „UVP”?
+8. WALUTY — czy kwoty z bazy zapisane w złotówkach nie zostały potraktowane jak euro?
+9. STAN — uszkodzenia OPISANE albo WYRAŹNIE widoczne na zdjęciach (szczególnie karbon: pęknięcia, odpryski do włókien), braki, niekompletny rower? Uwzględnij je w wycenie. Podejrzanie niska cena albo podejrzenie ukrytych wad NIE są powodem do "nie" ani "niepewne" — wpisz je w "ostrzezenia".
+10. BAZA CEN — czy szacunek mieści się w paśmie dla TEJ kombinacji (materiał ramy × hamulce × grupa osprzętu)? Rocznik tylko oszacowany albo skąpy opis → dolna granica pasma.${photosN > 0 ? `
+11. ZDJĘCIA — dołączono wszystkie zdjęcia z ogłoszenia (${photosN}). Czy pokazują TEN rower z opisu (model, grupa osprzętu, hamulce, karbon / alu), bez widocznych uszkodzeń? Zdjęcia katalogowe zamiast prawdziwych → tylko wpis w "ostrzezenia".` : ""}${typeConflictNote ? `
+12. TYP ROWERU — ${typeConflictNote}. Rozstrzygnij typ na podstawie zdjęć i opisu i napisz w "powod_decyzji", co o tym przesądza. Jeśli nie da się tego ustalić — decyzja "niepewne".` : ""}
+Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej analizy. Decyzja "tak" tylko wtedy, gdy żaden punkt nie podważa okazji. Odpowiedz w tym samym formacie JSON co wyżej (z polami "fakty" i "naped").`;
+// ==ROAD_END==
+
 // Etykiety typu roweru zwracanego przez Gemini
 const TYPE_LABELS = {
   full: { label: "🟢 Full",  color: "#22c55e" },
   dirt: { label: "🟠 Dirt",  color: "#f59e0b" },
   elektryk_gorski: { label: "⚡ Elektryk górski", color: "#38bdf8" },
+  szosa:  { label: "🚴 Szosa",  color: "#a78bfa" },  // v6.16
+  gravel: { label: "🪨 Gravel", color: "#34d399" }, // v6.16
   inny: { label: "⚫ Inny",  color: "#475569" },
 };
 
@@ -990,7 +1528,7 @@ Kolory: Trance X 29 2 2021: Gloss Balsam Green/Black; Trance X 29 1 2022: Panthe
 const genSheetFor = (title, label) => GEN_SHEETS.find(g => g.test(title || ""))
   || (!Object.values(KB_BRAND_PATTERNS).some(re => re.test(title || "")) ? GEN_SHEETS.find(g => g.test(label || "")) : null) || null;
 // ==GENSHEET_END==
-const minYearFor = (listing) => Math.max(MIN_BIKE_YEAR_ALL, brandMinYearOf(listing?.title, listing?.bike)?.year || 0);
+const minYearFor = (listing) => isRoad(listing) ? ROAD_MIN_YEAR : Math.max(MIN_BIKE_YEAR_ALL, brandMinYearOf(listing?.title, listing?.bike)?.year || 0);
 
 // Okazja zapisana do wysyłki — tylko pola potrzebne do wiadomości na Discordzie
 const dealSnapshot = (a) => ({
@@ -1001,11 +1539,13 @@ const dealSnapshot = (a) => ({
   zdjecia: a.zdjecia ?? null, _photos: a._photos ?? null, _verifyMode: a._verifyMode ?? null, ostrzezenia: a.ostrzezenia ?? null,
   rozmiar_ramy: a.rozmiar_ramy ?? null, argumenty_negocjacji: a.argumenty_negocjacji ?? null,
   widelec: a.widelec ?? null, rama: a.rama ?? null, cena_z_opisu: a.cena_z_opisu ?? null,
+  ...(a.naped ? { naped: a.naped } : {}), // v6.16
 });
 const slimListing = (l) => ({
   listingId: l.listingId, title: l.title, price: l.price ?? null, href: l.href, desc: l.desc || "",
   location: l.location || "", bike: l.bike || "", postedAt: l.postedAt ?? null,
   prevPrice: l.prevPrice ?? null, photo: l.photo || (Array.isArray(l.images) ? l.images[0] : null) || null,
+  ...(l.profile ? { profile: l.profile } : {}), // v6.16: tor szos / graveli
   cardTitle: l.cardTitle ?? null, // v6.11: bez tego po odświeżeniu oferta ze zmienionym tytułem przechodziła etap 1 drugi raz
 });
 
@@ -1027,7 +1567,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.15 (2026-11-15)";
+const APP_VERSION = "v6.16 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1198,6 +1738,21 @@ function App() {
   const [minUncertainPrice, setMinUncertainPrice] = useState(cfg.minUncertainPrice ?? 500);
   // Maksymalna cena zakupu — droższe ogłoszenia odpadają przed jakimkolwiek wywołaniem AI.
   const [maxBuyPrice, setMaxBuyPrice] = useState(cfg.maxBuyPrice ?? 1400);
+  // v6.16: szosy i gravele — osobny tor włączany jednym przełącznikiem (domyślnie WYŁĄCZONY; wyłączony = skaner jak przed v6.16)
+  const [roadEnabled, setRoadEnabled] = useState(cfg.roadEnabled === true);
+  const [roadMaxBuyPrice, setRoadMaxBuyPrice] = useState(Number.isFinite(cfg.roadMaxBuyPrice) ? cfg.roadMaxBuyPrice : ROAD_MAX_BUY_DEFAULT);
+  const [roadFilterKeywords, setRoadFilterKeywords] = useState(typeof cfg.roadFilterKeywords === "string" ? cfg.roadFilterKeywords : ROAD_FILTER_KEYWORDS_DEFAULT);
+  const [roadWebhook, setRoadWebhook] = useState(cfg.roadWebhook || "");
+  const [selectedRoad, setSelectedRoad] = useState(() => {
+    const all = ROAD_SEARCHES.map(b => b.id);
+    if (!Array.isArray(cfg.selectedRoad)) return all;
+    const known = Array.isArray(cfg.knownRoad) ? cfg.knownRoad : all;
+    return [...cfg.selectedRoad.filter(id => all.includes(id)), ...all.filter(id => !known.includes(id))]; // nowe pozycje listy — domyślnie włączone
+  });
+  const maxBuyFor = (l) => isRoad(l) ? roadMaxBuyPrice : maxBuyPrice;                    // limit zakupu według toru ogłoszenia
+  const maxBuyOfEntry = (e) => e?.pf === "r" ? roadMaxBuyPrice : maxBuyPrice;             // to samo dla wpisu w pamięci widzianych
+  const minUncertainFor = (l) => isRoad(l) ? Math.min(minUncertainPrice, ROAD_MIN_UNCERTAIN_PRICE) : minUncertainPrice;
+  const rangeKeyOf = (bike) => `${minListingPrice}:${bike?.profile === "road" ? roadMaxBuyPrice : maxBuyPrice}`;
   // Miesięczny budżet na Gemini (zł). Aplikacja sama dobiera moc analizy tak, żeby się w nim zmieścić.
   const [aiBudgetPln, setAiBudgetPln] = useState(cfg.aiBudgetPln ?? 400);
   // Koszt transportu jednego roweru do PL (€) — program odejmuje go od zysku przy każdej wycenie.
@@ -1381,7 +1936,8 @@ function App() {
           : { price: item.price ?? null, lowest: item.lowest ?? null, notifiedAt: item.notifiedAt ?? null, type: item.type ?? null,
               overMax: item.overMax === true, noPrice: item.noPrice === true, nearMax: Number.isFinite(item.nearMax) ? item.nearMax : null,
               watchSale: Number.isFinite(item.watchSale) ? item.watchSale : null, watchT: Number.isFinite(item.watchT) ? item.watchT : null,
-              rej: typeof item.rej === "string" ? item.rej : null, lastNightAt: Number.isFinite(item.lastNightAt) ? item.lastNightAt : null };
+              rej: typeof item.rej === "string" ? item.rej : null, lastNightAt: Number.isFinite(item.lastNightAt) ? item.lastNightAt : null,
+              ...(item.pf === "r" ? { pf: "r" } : {}) }; // v6.16: wpis z toru szos / graveli
         e.lastSeenAt = Number.isFinite(item?.lastSeenAt) ? item.lastSeenAt : now;
         const prev = map.get(id);
         if (prev) { // ten sam rower zapamiętany pod dwoma linkami (sprzedawca zmienił tytuł) — scalamy
@@ -1529,7 +2085,7 @@ function App() {
       }
       const arr = [...m.entries()].map(([id, d]) => {
         const o = { id };
-        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt", "nearMax", "watchSale", "watchT", "rej", "lastNightAt"]) if (d[k] != null) o[k] = d[k];
+        for (const k of ["price", "lowest", "notifiedAt", "type", "lastSeenAt", "nearMax", "watchSale", "watchT", "rej", "lastNightAt", "pf"]) if (d[k] != null) o[k] = d[k];
         if (d.overMax) o.overMax = true;
         if (d.noPrice) o.noPrice = true;
         return o;
@@ -1543,7 +2099,8 @@ function App() {
     seenIdsRef.current.set(listing.listingId, {
       price: listing.price ?? null, lowest: listing.price ?? null, notifiedAt: null, type: null, lastSeenAt: Date.now(),
       // Droższe niż limit zakupu — zapamiętujemy, żeby sprawdzić ponownie, gdy cena spadnie poniżej limitu
-      overMax: listing.price != null && listing.price > maxBuyPrice,
+      overMax: listing.price != null && listing.price > maxBuyFor(listing),
+      ...(isRoad(listing) ? { pf: "r" } : {}), // v6.16: wpis z toru szos / graveli (własny limit ceny, własne typy)
     });
     if (persist) persistSeenMap();
   };
@@ -1565,7 +2122,7 @@ function App() {
   }, [results]);
 
   const saveSettings = (silent = false) => {
-    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, filterMigratedV56: true };
+    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
     try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
     if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
@@ -1575,7 +2132,7 @@ function App() {
     if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
     const t = setTimeout(() => saveSettings(true), 600);
     return () => clearTimeout(t);
-  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap]);
+  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -1841,6 +2398,7 @@ function App() {
     }
   };
   const callDiscord = (payload) => postDiscord(discordWebhook, discordThread, payload);
+  const callRoadDiscord = (payload) => postDiscord(roadWebhook, "", payload); // v6.16: opcjonalny osobny kanał okazji szos / graveli
   // v5.11: komunikat o problemie (brak środków AI, blokada, budżet…) — na webhook statusu albo, gdy pusty, na kanał okazji.
   // Ten sam rodzaj problemu najwyżej co 6 h, żeby nie zasypać kanału.
   const statusNotifiedRef = useRef({});
@@ -1865,8 +2423,8 @@ function App() {
     : r.status === 0 ? (r.error || "błąd sieci") : `HTTP ${r.status}${r.error ? `: ${r.error}` : ""}`;
 
   // Filtr słów kluczowych — odrzuca ogłoszenie ZANIM trafi do Gemini (zero kosztu)
-  const getFilterKeywordList = () =>
-    filterKeywords.split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+  const getFilterKeywordList = (road = false) =>
+    (road ? roadFilterKeywords : filterKeywords).split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
 
   // Słowa z listy sprawdzamy w TYTULE i tylko jako całe słowa. W opisie — wyłącznie jednoznaczne zwroty
   // o sprzedaży samej ramy (opis kompletnego roweru normalnie wymienia "Laufradsatz", "Ersatzteile" itd.).
@@ -1886,7 +2444,7 @@ function App() {
   };
   const matchesFilterKeyword = (listing) => {
     const title = listing.title || "";
-    for (const kw of getFilterKeywordList()) {
+    for (const kw of getFilterKeywordList(isRoad(listing))) { // v6.16: szosy / gravele mają własną listę słów
       if (!kw || !keywordRe(kw).test(title)) continue;
       if (/^\d{2}\s*zoll$/i.test(kw) && (titleHasKnownModel(title) || ADULT_WHEEL_RE.test(title))) continue;
       return kw;
@@ -1999,9 +2557,9 @@ function App() {
   };
   // Jeden powód odrzucenia bez AI (cena/e-bike/sklep) albo null
   const freeRejectReason = (listing) => {
-    if (listing.price != null && listing.price > maxBuyPrice) return { kind: "price", msg: `cena ${listing.price}€ powyżej limitu zakupu ${maxBuyPrice}€` };
+    if (listing.price != null && listing.price > maxBuyFor(listing)) return { kind: "price", msg: `cena ${listing.price}€ powyżej limitu zakupu ${maxBuyFor(listing)}€` };
     if (listing.price != null && listing.price < minListingPrice) return { kind: "cheap", msg: `cena ${listing.price}€ poniżej minimum ${minListingPrice}€` };
-    const eb = excludeElektryk ? detectEbike(listing) : null;
+    const eb = (excludeElektryk || isRoad(listing)) ? detectEbike(listing) : null; // v6.16: szosy / gravele z silnikiem zawsze odpadają
     if (eb) return { kind: "ebike", msg: `e-bike (wykryto: "${eb}")` };
     const shop = detectNewFromShop(listing);
     if (shop) return { kind: "shop", msg: `nowy rower ze sklepu (wykryto: "${shop}")` };
@@ -2065,6 +2623,7 @@ function App() {
     [...new Set(groqClassifierKey.split(/[\n,]/).map(s => s.trim()).filter(Boolean))];
 
   const classifyWithGroq = async (listing) => {
+    const road = isRoad(listing); // v6.16: szosy / gravele — własne polecenie i typy (szosa / gravel)
     const keys = getGroqKeyList();
     if (keys.length === 0) return "niedostepny"; // brak klucza = etap 1 wyłączony — wszystko idzie do analizy AI
 
@@ -2129,7 +2688,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
             provider: "groq",
             model: GROQ_CLASSIFIER_MODEL,
             apiKey,
-            messages: [{ role: "user", content: prompt }],
+            messages: [{ role: "user", content: road ? roadGroqPrompt(listing) : prompt }],
             // GPT-OSS najpierw "myśli" (tokeny rozumowania liczą się do limitu) — przy 100 odpowiedź
             // byłaby zwykle pusta. 1024 + wysiłek "low" = szybko i tanio, płaci się za faktyczne zużycie.
             generationConfig: { temperature: 0.1, maxOutputTokens: 1024, reasoningEffort: "low" },
@@ -2169,15 +2728,16 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
           const rawLines = raw.split("\n").map(l => l.trim()).filter(Boolean);
           const lastLine = rawLines.length ? rawLines[rawLines.length - 1] : raw;
           let typ;
-          if (lastLine.includes("stary")) typ = "stary";
+          if (road) typ = lastLine.includes("stary") ? "stary" : lastLine.includes("gravel") ? "gravel" : lastLine.includes("szosa") ? "szosa" : lastLine.includes("inny") ? "inny" : "niepewne";
+          else if (lastLine.includes("stary")) typ = "stary";
           else if (lastLine.includes("elektryk")) typ = "elektryk_gorski";
           else if (lastLine.includes("dirt")) typ = "dirt";
           else if (lastLine.includes("full")) typ = "full";
           else if (lastLine.includes("inny")) typ = "inny";
           else typ = "niepewne";
 
-          const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", inny: "⚫", niepewne: "❓", stary: "🕰️" }[typ];
-          const rawNote = !["full", "dirt", "elektryk_gorski", "inny", "niepewne", "stary"].includes(lastLine) && lastLine && typ === "niepewne"
+          const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", szosa: "🚴", gravel: "🪨", inny: "⚫", niepewne: "❓", stary: "🕰️" }[typ];
+          const rawNote = !["full", "dirt", "elektryk_gorski", "szosa", "gravel", "inny", "niepewne", "stary"].includes(lastLine) && lastLine && typ === "niepewne"
             ? ` (Groq odpowiedział niejednoznacznie: "${lastLine.slice(0, 40)}")`
             : "";
           // Krótkie uzasadnienie (jeśli Groq je dodał, patrz format promptu) — pomaga debugować klasyfikacje
@@ -2220,7 +2780,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
   // v6.4: „anzeige:angebote” (bez ogłoszeń „Suche …”) we wszystkich linkach i górna cena także w linkach kategorii
   // (Giant, Dirt, Dirtbike) — sprawdzone na żywo 13.11.2026 (25 kart, ceny w zakresie, 0 „Suche”)
   // v6.15: range = [od, do] — inny przedział cen niż zwykły (nocne szukanie ogłoszeń powyżej limitu zakupu)
-  const searchUrlFor = (bike, range) => bike.isCategory
+  const searchUrlFor = (bike, range) => bike.profile === "road" ? roadSearchUrl(bike, range ? range[0] : minListingPrice, range ? range[1] : roadMaxBuyPrice) : bike.isCategory
     ? bike.categoryUrl.replace("/s-fahrraeder/", "/s-fahrraeder/anzeige:angebote/").replace(/preis:(\d+):\//, (m0, lo) => `preis:${range ? range[0] : lo}:${range ? range[1] : maxBuyPrice}/`)
     : `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${range ? range[0] : minListingPrice}:${range ? range[1] : maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
   const scrapeKleinanzeigen = async (bike, range) => {
@@ -2538,6 +3098,7 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
     const chatInfo = geminiChatName
       ? `\nKontekst: ${geminiChatName}.`
       : "";
+    const road = isRoad(listing); // v6.16: szosy / gravele — własna część stała polecenia, baza KB_ROAD i reguły
 
     // ── BAZA CEN: część ogólna (zawsze ta sama → stała część promptu, cache) ──
     // Wpisy marek NIE są tutaj — trafiają do części dynamicznej (kbSection niżej) i tylko dla marki
@@ -2571,8 +3132,8 @@ WALUTY W NOTATKACH — BARDZO WAŻNE: ceny zakupu w Niemczech są w euro, ale ce
         ? `Materiał ramy z tekstu: sprzeczny (${frameText.evidence}) — ustal z napisów na ramie i zdjęć (zasady MATERIAŁ RAMY)`
         : `Materiał ramy z tekstu: nie podano — ustal z napisów na ramie i zdjęć (zasady MATERIAŁ RAMY)`;
     // ── v6.6: marka z wyższym minimalnym rocznikiem (Cube: 2020) ──
-    const brandMin = brandMinYearOf(listing.title, listing.bike);
-    const minYear = Math.max(MIN_BIKE_YEAR, brandMin?.year || 0);
+    const brandMin = road ? null : brandMinYearOf(listing.title, listing.bike);
+    const minYear = road ? ROAD_MIN_YEAR : Math.max(MIN_BIKE_YEAR, brandMin?.year || 0);
     const firstYear = modelFirstYearOf(listing.title);
     const firstYearLine = firstYear ? `\nNazwa modelu ${firstYear.name} istnieje dopiero od rocznika ${firstYear.year} — rocznik nie może być starszy niż ${firstYear.year}; wyceniaj generację od ${firstYear.year}.` : "";
     const brandYearLine = firstYearLine + (brandMin
@@ -2582,14 +3143,12 @@ WALUTY W NOTATKACH — BARDZO WAŻNE: ceny zakupu w Niemczech są w euro, ale ce
     // Pierwsza analiza (Haiku): środkowy rok zakresu i środek pasma — dotąd najstarsza generacja i dolna granica
     // odrzucały część dobrych rowerów, zanim zobaczył je weryfikator. Weryfikacja (Sonnet): generacja po ramie ze
     // ściągą generacji (test 14.11.2026: 13/18 trafionych generacji vs 3/18 bez ściągi) i dolna granica pasma.
-    const genSheet = genSheetFor(listing.title, listing.bike);
-    const stageYearRule = (o) => o?.verify
+    const genSheet = road ? null : genSheetFor(listing.title, listing.bike);
+    const stageYearRule = (o) => road ? (o?.verify ? ROAD_YEAR_RULE_VERIFY : ROAD_YEAR_RULE_FIRST) : o?.verify
       ? `ZASADA ROCZNIKA I PASMA (weryfikacja): generację ustal po cechach ramy${genSheet ? " (ŚCIĄGA GENERACJI w punkcie 7)" : ""}. Gdy pasuje kilka roczników — wpisz najstarszy pasujący z rozpoznanej generacji; rocznik tylko oszacowany albo skąpy opis → DOLNA granica pasma; generacji nie da się ustalić → najniższe pasmo modelu.`
       : `ZASADA ROCZNIKA I PASMA (pierwsza analiza): gdy pasuje kilka roczników — wpisz ŚRODKOWY rok pasującego zakresu (przy parzystej liczbie lat wcześniejszy ze środkowych, np. 2018–2021 → 2019) i wyceniaj generację, do której ten rok należy; rocznik tylko oszacowany → ŚRODEK pasma tej generacji (nie dolna granica); generacji nie da się ustalić → środkowa z pasujących generacji (przy parzystej liczbie — starsza ze środkowych), środek jej pasma. Reguły dirtów z bazy (np. dirt bez rocznika ze słabszym widelcem → dolna granica) i limit rocznika ${minYear} obowiązują bez zmian.`;
-    let kbIds = selectKbChunkIds(
-      [listing.title, listing.bike, String(listing.fullDesc || listing.desc || "").slice(0, 600)],
-      groqType,
-    );
+    const kbTexts = [listing.title, listing.bike, String(listing.fullDesc || listing.desc || "").slice(0, 600)];
+    let kbIds = road ? selectRoadKbChunkIds(kbTexts) : selectKbChunkIds(kbTexts, groqType); // v6.16: szosy / gravele mają własne wpisy (KB_ROAD.chunks)
     const buildKbSection = (ids) => ids.length > 0
       ? `=== BAZA CEN — WPISY DLA TEGO OGŁOSZENIA (dobrane automatycznie po marce / typie: ${kbChunkNames(ids)}) ===
 ${kbChunksText(ids)}
@@ -2602,15 +3161,15 @@ ${kbChunksText(ids)}
     // ── ZDJĘCIA: tylko Gemini, tylko gdy włączone w Ustawieniach i strona ogłoszenia dała adresy zdjęć ──
     // v5.13: dirt (z Etapu 1 albo znany model dirtowy w tytule) → ściąga widelców i od razu wszystkie zdjęcia
     // v6.13: dirt z widelcem seryjnym z wysokiej półki (Bruce 2, Stitched 360 Pro…) — model z tytułu albo opisu
-    const stockFork = dirtStockFork(listing.title, listing.fullDesc || listing.desc);
-    let dirtGuide = groqType === "dirt" || DIRT_MODEL_RE.test(listing.title || "") || KB_DIRT_RE.test(listing.title || "") || stockFork?.src === "tytul";
+    const stockFork = road ? null : dirtStockFork(listing.title, listing.fullDesc || listing.desc);
+    let dirtGuide = !road && (groqType === "dirt" || DIRT_MODEL_RE.test(listing.title || "") || KB_DIRT_RE.test(listing.title || "") || stockFork?.src === "tytul");
     const stockForkNote = stockFork ? `=== WIDELEC SERYJNY TEGO MODELU ===
 Program rozpoznał w ogłoszeniu model: ${stockFork.name} — seryjnie ${stockFork.fork}. Jeśli opis nie podaje widelca, a na zdjęciach nie da się go ustalić (albo widać tylko markę zgodną z seryjnym) — przyjmij widelec seryjny: wyceniaj w paśmie „Pike DJ / Bomber DJ” i w polu "widelec" wpisz seryjny model z "zrodlo": "seryjny". Gdy opis albo zdjęcia pokazują inny widelec — wyceniaj według niego.` : null;
     const photoUrls = (provider !== "groq" && analyzePhotos && Array.isArray(listing.images))
       ? listing.images.slice(0, dirtGuide ? MAX_PHOTOS_ALL : MAX_PHOTOS_PER_CALL) : [];
     const descForWeak = String(listing.fullDesc || listing.desc || "").replace(/\s+/g, " ").trim();
     const weakDesc = descForWeak.length < WEAK_DESC_CHARS || WEAK_DESC_RE.test(descForWeak);
-    const photoNote = (n) => `=== ZDJĘCIA Z OGŁOSZENIA ===
+    const photoNote = (n) => road ? roadPhotoNote(n) : `=== ZDJĘCIA Z OGŁOSZENIA ===
 Do tej analizy dołączono do ${n} pierwszych zdjęć z galerii ogłoszenia (pierwsze zwykle pokazuje cały rower). Jeśli żadnego nie widzisz — oceniaj wyłącznie z opisu. Użyj zdjęć, żeby:
 • rozpoznać model i generację (kształt ramy, układ amortyzatora, prowadzenie linek, malowanie typowe dla rocznika), rozmiar kół i materiał ramy (karbon czy alu);
 • sprawdzić napęd: przednia przerzutka albo 2–3 zębatki przy korbie w fullu = rower sprzed 2017 (zasada PRZEDNIA PRZERZUTKA z KROKU 1 — wpisz to w "rocznik" i "rocznik_zakres");
@@ -2620,7 +3179,7 @@ Do tej analizy dołączono do ${n} pierwszych zdjęć z galerii ogłoszenia (pie
 Ze zdjęć NIE odczytasz pewnie drobnych napisów ani ukrytych wad (luzy łożysk, stan amortyzatora od środka) — nie zgaduj ich. Gdy zdjęcia przeczą opisowi (inny model lub generacja, alu zamiast karbonu, uszkodzenia), ufaj zdjęciom i napisz to w "powod_decyzji". Opis nadal jest głównym źródłem informacji — zdjęcia go uzupełniają.
 Dodaj do odpowiedzi JSON pole "zdjecia": krótko PO POLSKU (max 25 słów), co widać na zdjęciach i czy zgadza się z opisem.`;
 
-    const typeIsTrusted = ["full", "dirt", "elektryk_gorski"].includes(groqType);
+    const typeIsTrusted = goodTypesOf(listing).includes(groqType);
 
     // ── CACHING: instrukcje rozpoznawania typu są TERAZ ZAWSZE identyczne (ta sama, pełna wersja),
     // niezależnie od tego czy Etap 1 (Groq) był pewny czy nie. Wcześniej ta sekcja miała dwa różne
@@ -2644,11 +3203,14 @@ Jeśli typ = "inny" → decyzja: "nie", nie analizuj dalej.
 
     // Krótka, DYNAMICZNA notka o wyniku Etapu 1 — wstawiana dopiero przy ogłoszeniu (na końcu promptu),
     // żeby nie psuć wspólnego, cache'owalnego prefiksu powyżej.
-    const typeHint = typeIsTrusted
+    const typeHint = road ? (typeIsTrusted
+      ? `To ogłoszenie zostało już wstępnie sklasyfikowane (Etap 1) jako typ: "${groqType}". W polu "typ_roweru" wpisz "${groqType}" — chyba że opis albo zdjęcia JEDNOZNACZNIE pokazują inny typ (np. prosta kierownica, silnik, gravel zamiast szosy): wtedy wpisz właściwy typ i napisz dlaczego w "powod_decyzji". Fakty z KROKU 1 ustal samodzielnie z opisu.\n`
+      : `Wstępna klasyfikacja typu (Etap 1) była niepewna — sam określ typ wg zasad z sekcji "ROZPOZNAWANIE TYPU ROWERU" wyżej.\n`)
+      : typeIsTrusted
       ? `To ogłoszenie zostało już wstępnie sklasyfikowane (Etap 1) jako typ: "${groqType}". W polu "typ_roweru" wpisz "${groqType}" — chyba że opis albo zdjęcia JEDNOZNACZNIE pokazują inny typ (np. hardtail zamiast fulla, dirt zamiast fulla, silnik): wtedy wpisz właściwy typ i napisz dlaczego w "powod_decyzji". Fakty z KROKU 1 (rocznik, e-bike, sprzedawca, stan, kompletność) ustal jednak samodzielnie z opisu — są sprawdzane niezależnie od typu.\n`
       : `Wstępna klasyfikacja typu (Etap 1) była niepewna — sam określ typ wg zasad z sekcji "ROZPOZNAWANIE TYPU ROWERU" wyżej.\n`;
 
-    const staticPrefix = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
+    const mtbStaticPrefix = `Jesteś ekspertem od rowerów dirtowych, MTB full-suspension i e-MTB górskich. Kupujesz rowery w Niemczech i resellujesz je w Polsce z zyskiem. Masz wieloletnie doświadczenie — znasz dokładne ceny rynkowe w Polsce i wiesz które modele sprzedają się szybko.
 
 ${knowledgeSection}=== MODELE SPOZA BAZY ===
 Baza NIE obejmuje wszystkich modeli. Dla modelu spoza bazy (także z marek mainstreamowych: Canyon, Trek, Specialized, Cube, Rose, Radon, Ghost, Merida, Scott, Focus, GT, Commencal) wyceniaj z części ogólnej bazy (wycena kategorii + korekty) i swojej OGÓLNEJ, szerokiej wiedzy o niemieckim/polskim rynku wtórnym — dokładnie tak jak zrobiłby to doświadczony handlarz, który zna markę i segment nawet bez ściągawki. Znasz mniej więcej ceny nowych rowerów tych marek i typowy spadek wartości na rynku wtórnym (zwykle 40-60% wartości nowej po 2-4 latach, zależnie od stanu i wyposażenia) — użyj tego do oszacowania, zamiast czekać na dokładny wpis w bazie.
@@ -2737,6 +3299,9 @@ Odpowiedz WYŁĄCZNIE w JSON (zero markdown, zero komentarzy, zero tekstu poza J
 }
 
 === KONIEC CZĘŚCI STAŁEJ === (wszystko powyżej tej linii to staticPrefix — kandydat do explicit cache; patrz getCachedContentName)`;
+    // v6.16: szosy i gravele — własna część stała (ekspert, baza KB_ROAD, reguły, schemat JSON z polem "naped")
+    const roadNotes = road && kbNotes.length > 0 ? `=== NOTATKI UŻYTKOWNIKA (przypięte w czacie — mają PIERWSZEŃSTWO przed bazą; kwoty sprzedaży w Polsce bez waluty to złotówki — przelicz na euro po ${EUR_PLN_RATE} zł/€) ===\n${kbNotes.map((e, i) => `${i + 1}. ${e.text}`).join("\n")}\n\n` : "";
+    const staticPrefix = road ? buildRoadStaticPrefix({ notesSection: roadNotes, transportCostEur, chatInfo }) : mtbStaticPrefix;
 
     // ── Dynamiczna część promptu — TYLKO to zmienia się między wywołaniami. Gdy mamy aktywny
     // explicit cache dla staticPrefix (patrz niżej), wysyłamy do Gemini WYŁĄCZNIE ten fragment
@@ -2953,12 +3518,12 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // Typ: zaufany z Etapu 1 albo z odpowiedzi Gemini. Rower z silnikiem nie jest zwykłym full/dirt.
           // Gdy AI (np. po obejrzeniu zdjęć) widzi inny typ niż Groq — zapamiętujemy sprzeczność; okazja z taką
           // sprzecznością nie idzie jako "tak", tylko do ręcznego sprawdzenia (niżej).
-          const modelTyp = ["full", "dirt", "elektryk_gorski", "inny"].includes(parsed.typ_roweru) ? parsed.typ_roweru : null;
+          const modelTyp = [...goodTypesOf(listing), "inny"].includes(parsed.typ_roweru) ? parsed.typ_roweru : null;
           const typeConflict = typeIsTrusted && modelTyp != null && modelTyp !== groqType && !(modelTyp === "elektryk_gorski" && f.e_bike === true);
           // v5.11: przy sprzeczności Groq vs AI przyjmujemy typ od AI (widzi pełny opis i zdjęcia); okazja i tak przechodzi weryfikację
           let typ = typeIsTrusted
             ? (typeConflict ? modelTyp : groqType)
-            : (["full", "dirt", "elektryk_gorski"].includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny");
+            : (goodTypesOf(listing).includes(parsed.typ_roweru) ? parsed.typ_roweru : "inny");
           if (typeConflict) addLog(`ℹ️ Sprzeczne rozpoznanie typu: Etap 1 (Groq) „${groqType}”, analiza AI${images ? " ze zdjęciami" : ""} „${modelTyp}” — przyjmuję typ od AI — ${listing.title}`, "info");
           if (fakty.e_bike && (typ === "full" || typ === "dirt")) {
             addLog(`⚡ Gemini: z opisu wynika e-bike — zmieniam typ "${typ}" na "elektryk_gorski" — ${listing.title}`, "info");
@@ -2978,6 +3543,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           const dRaw = parsed.dirt && typeof parsed.dirt === "object" ? parsed.dirt : {};
           parsed.dirt = typ === "dirt" ? { marka: dRaw.marka === "nieznana" ? "nieznana" : dRaw.marka === "znana" ? "znana" : null, wyglada_staro: dRaw.wyglada_staro === true } : null;
 
+          if (road) parsed.naped = normalizeDrivetrain(parsed.naped); // v6.16: grupa osprzętu i hamulce (szosa / gravel)
           // ── TWARDE ODRZUCENIA Z FAKTÓW (kolejność = priorytet komunikatu) ──
           parsed.odrzucenie = !fakty.kompletny_rower ? "czesc"
             : (typ === "dirt" && parsed.widelec.sztywny) ? "sztywny"
@@ -2986,7 +3552,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
               // v6.10: próg MARKI (Cube 2020) przy roczniku tylko oszacowanym (≥ ${MIN_BIKE_YEAR}) — „nie”, ale nie na stałe:
               // oszacowanie bywa błędne (np. z części z przeróbki), więc obniżka ceny wraca do sprawdzenia
               ? (rocznikZrodlo === "oszacowany" && brandMin && !brandMin.model && rocznik >= MIN_BIKE_YEAR ? "stary_oszac" : "stary")
-            : (typ === "elektryk_gorski" && excludeElektryk) ? "ebike"
+            : ((typ === "elektryk_gorski" && excludeElektryk) || (road && fakty.e_bike)) ? "ebike" // v6.16: szosa / gravel z silnikiem — zawsze
             : (fakty.sprzedawca === "sklep" && fakty.stan === "nowy") ? "sklep"
             // v6.9 (decyzja właściciela 14.11.2026): dirt nieznanej marki + widelec nierozpoznany + wygląda staro → do kosza
             : (typ === "dirt" && parsed.dirt?.marka === "nieznana" && parsed.dirt.wyglada_staro && !parsed.widelec.model) ? "dirt_stary"
@@ -3198,11 +3764,11 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
               ? `Zakup ${cena}€${descTxt} → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zyskLiczony}€ po transporcie ${transport}€, próg ${progZysku}%) · oszacowany rocznik ${rocznik} (< ${minYear} dla ${brandTxt}; niepewny — po obniżce ceny wraca do sprawdzenia).`
               : `Oszacowany rocznik ${rocznik} (< ${minYear} dla ${brandTxt}) — nie. Rocznik niepewny — po obniżce ceny ogłoszenie wraca do sprawdzenia.${sprzedaz != null ? ` (Zakup ${cena}€ → szacowana sprzedaż PL ${sprzedaz}€.)` : ""}`;
           } else if (parsed.odrzucenie === "ebike") {
-            parsed.krotki_opis = `E-bike — wykluczone w Ustawieniach.`;
+            parsed.krotki_opis = road ? `Rower z silnikiem — elektryczne szosy i gravele są odrzucane.` : `E-bike — wykluczone w Ustawieniach.`;
           } else if (parsed.odrzucenie === "sklep") {
             parsed.krotki_opis = `Nowy rower ze sklepu (cena detaliczna) — odrzucone.`;
           } else if (typ === "inny") {
-            parsed.krotki_opis = `Typ roweru: inny (nie full/dirt/elektryk górski) — odrzucone automatycznie.`;
+            parsed.krotki_opis = `Typ roweru: inny (nie ${road ? "szosa/gravel" : "full/dirt/elektryk górski"}) — odrzucone automatycznie.`;
           } else {
             parsed.krotki_opis = sprzedaz != null
               ? `Zakup ${cena}€${descTxt} → szacowana sprzedaż PL ${sprzedaz}€ — zysk za mały (~${zysk}€ po transporcie ${transport}€, próg ${progZysku}%) · ${rokTxt}.`
@@ -3221,6 +3787,9 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           // v6.13: model z seryjnym Pike DJ / Bomber DJ, a AI zostawiło widelec nierozpoznany — wycena mogła przyjąć słabszy
           if (forkWarn && stockFork && (!parsed.widelec.model || parsed.widelec.bezModelu)) forkWarn += `; ${stockFork.name} ma seryjnie Pike DJ / Bomber DJ — wycena mogła przyjąć słabszy`;
           if (forkWarn && !(parsed.ostrzezenia || "").includes("widel")) parsed.ostrzezenia = [parsed.ostrzezenia, forkWarn].filter(Boolean).join("; ").slice(0, 240);
+          // v6.16: w szosie / gravelu o cenie decyduje grupa osprzętu i hamulce — nierozpoznane albo tylko z wyglądu → do sprawdzenia
+          const driveWarn = road && !parsed.odrzucenie && typ !== "inny" ? drivetrainNeedsCheck(parsed.naped) : null;
+          if (driveWarn) parsed.ostrzezenia = [parsed.ostrzezenia, driveWarn].filter(Boolean).join("; ").slice(0, 240);
           // v6.5: materiał ramy — sprzeczność napisu z tekstem albo karbon tylko z wyglądu (z zyskiem, gdyby to było alu)
           const zyskAlu = fr.possibleCarbon && fr.saleAlu != null && cenaNum > 0 ? Math.round(fr.saleAlu - cenaNum - transport) : null;
           const frameWarn = fr.warn || (fr.possibleCarbon && !parsed.odrzucenie && typ !== "inny"
@@ -3441,7 +4010,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     // INNE zadanie: szukać powodów, dla których to NIE jest okazja, i wycenić rower od nowa.
     // Jego odpowiedź przechodzi przez te same twarde reguły co pierwsza analiza.
     const fk = current.fakty || {};
-    const verifyNote = `=== TRYB WERYFIKACJI — ADWOKAT DIABŁA ===
+    const verifyNote = road ? roadVerifyNote({ fk, current, photosN: allPhotos.length, typeConflictNote, frameMaterial: frameText.material }) : `=== TRYB WERYFIKACJI — ADWOKAT DIABŁA ===
 Wcześniejsza analiza uznała to ogłoszenie za OKAZJĘ: rocznik ${fk.rocznik ?? "?"} (${fk.rocznik_zrodlo || "brak"}), szacowana sprzedaż ${current.szacowana_sprzedaz_eur}€, zysk ~${current.przewidywany_zysk}€${current.powod_decyzji ? `, uzasadnienie: "${current.powod_decyzji}"` : ""}.
 Fałszywa okazja kosztuje użytkownika prawdziwe pieniądze, a przegapiona — tylko część zysku. Twoim zadaniem jest SZUKAĆ POWODÓW, dla których to NIE jest okazja. Sprawdź po kolei:
 1. ROCZNIK — czy nazwa modelu, standard kół (26"/650B), napęd (przednia przerzutka / 3x / 2x = rower sprzed ${MIN_BIKE_YEAR}, wyjątki jak w KROKU 1), zawieszenie albo cytowany test wskazują na rower sprzed ${MIN_BIKE_YEAR}? (W dircie liczy się tylko rocznik PODANY w ogłoszeniu — oszacowany nie jest powodem do "nie".) Porównaj osprzęt z bike checkami modelu, datami podzespołów i znacznikami roweru sprzed 2017 z bazy. (Sam brak rocznika w ogłoszeniu to norma — NIE jest powodem do odrzucenia.)${brandMin ? ` Dla marki ${BRAND_NAMES[brandMin.brand] || brandMin.brand} minimalny rocznik to ${minYear} — starszy → "nie".` : ""}
@@ -3492,7 +4061,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   const sendToDiscord = async (listing, analysis) => {
     const typLabel = TYPE_LABELS[analysis.typ_roweru]?.label || analysis.typ_roweru || "–";
     const embed = {
-      title: `🚲 OKAZJA: ${listing.title}`,
+      title: `${ROAD_TYPES.includes(analysis.typ_roweru) ? `🚴 OKAZJA — ${analysis.typ_roweru === "gravel" ? "GRAVEL" : "SZOSA"}` : "🚲 OKAZJA"}: ${listing.title}`.slice(0, 256),
       url: listing.href,
       color: 0x22c55e,
       fields: [
@@ -3503,6 +4072,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         { name: "🤑 Przewidywany zysk", value: `**~${analysis.przewidywany_zysk}€**${analysis.transport_eur ? ` (po transporcie ${analysis.transport_eur}€)` : ""}`, inline: true },
         ...(analysis.rozmiar_ramy ? [{ name: "📏 Rozmiar", value: String(analysis.rozmiar_ramy), inline: true }] : []),
         ...forkField(analysis),
+        ...drivetrainField(analysis),
         ...frameField(analysis),
         ...(listing.prevPrice != null && listing.price != null && listing.prevPrice > listing.price
           ? [{ name: "📉 Obniżka", value: `${listing.prevPrice}€ → **${listing.price}€** (−${Math.round((1 - listing.price / listing.prevPrice) * 100)}%)`, inline: true }] : []),
@@ -3525,11 +4095,12 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       listing.href,
       analysis._verifyMode ? `🕵️ Weryfikacja: ${analysis._verifyMode}` : null,
       fork ? `🔧 Widelec: ${fork.value}` : null,
+      drivetrainField(analysis)[0] ? `⚙️ Napęd i hamulce: ${drivetrainField(analysis)[0].value}` : null,
       frameField(analysis)[0] ? `🧱 Rama: ${frameField(analysis)[0].value}` : null,
       analysis.ostrzezenia ? `⚠️ Do sprawdzenia: ${analysis.ostrzezenia}` : null,
       analysis._summary ? `📝 ${analysis._summary}` : null,
     ].filter(Boolean).join("\n");
-    return postWithRetry(callDiscord, { embeds: [embed] }, fallback);
+    return postWithRetry(isRoad(listing) && roadWebhook ? callRoadDiscord : callDiscord, { embeds: [embed] }, fallback);
   };
 
   // Wysyłka z jedną ponowną próbą przy krótkim limicie Discorda (429). Odmowa treści (400, np. zepsute zdjęcie
@@ -3570,7 +4141,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   };
   // Liczby z analizy, z których da się liczyć zysk (null, gdy brak wyceny albo twarde odrzucenie)
   const profitInputs = (a) => {
-    if (!a || a.decyzja !== "nie" || a.odrzucenie || !["full", "dirt", "elektryk_gorski"].includes(a.typ_roweru)) return null;
+    if (!a || a.decyzja !== "nie" || a.odrzucenie || ![...MTB_TYPES, ...ROAD_TYPES].includes(a.typ_roweru)) return null;
     const sale = Number(a.szacowana_sprzedaz_eur);
     if (!(sale > 0)) return null;
     return { sale, transport: Math.max(0, Number(a.transport_eur) || 0), price: Number(a.cena_zakupu_eur) };
@@ -3598,7 +4169,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const { listing, analysis: a, near } = item;
     const msg = sellerMessage(near, a.argumenty_negocjacji);
     const embed = {
-      title: `🤏 NA GRANICY: ${listing.title}`.slice(0, 256),
+      title: `🤏 NA GRANICY${isRoad(listing) ? " (szosa / gravel)" : ""}: ${listing.title}`.slice(0, 256),
       url: listing.href,
       color: 0xf59e0b,
       fields: [
@@ -3781,7 +4352,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (/filtrem słów/i.test(t)) return "slowa";
     if (/filtrem roku|rocznik|sprzed \d{4}/i.test(t)) return "stary";
     if (/e-MTB wykluczone/i.test(t)) return "ebike";
-    if (/Groq/i.test(t) && /nie full|po przeczytaniu|inny/i.test(t)) return "inny";
+    if (/Groq/i.test(t) && /nie full|nie szosa|po przeczytaniu|inny/i.test(t)) return "inny";
     if (/poniżej progu/i.test(t)) return "tanio_niepewny";
     if (/brak ceny|cena zniknęła/i.test(t)) return "brak_ceny";
     if (/bez AI/i.test(t)) return "bez_ai";
@@ -3885,7 +4456,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             if (!pendingRef.current.has(id)) {
               pendingRef.current.set(id, {
                 listing: { ...item.listing, price: det.price, ...(det.title ? { title: det.title, cardTitle: item.listing.cardTitle ?? item.listing.title } : {}) }, source: "content_changed", cachedType: null, stage: "analyze",
-                groqType: ["full", "dirt", "elektryk_gorski"].includes(item.analysis?.typ_roweru) ? item.analysis.typ_roweru : "niepewne",
+                groqType: goodTypesOf(item.listing).includes(item.analysis?.typ_roweru) ? item.analysis.typ_roweru : "niepewne",
                 classifierDown: false, attempts: 0, addedAt: Date.now(),
               });
               persistPending();
@@ -3901,7 +4472,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             // Cena się zmieniła — przelicz zysk i sprawdź próg opłacalności oraz limit zakupu jeszcze raz
             const sprzedaz = Number(item.analysis?.szacowana_sprzedaz_eur);
             const transport = Number(item.analysis?.transport_eur ?? transportCostEur) || 0;
-            if (det.price > maxBuyPrice) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — ponad limit zakupu ${maxBuyPrice}€`); continue; }
+            if (det.price > maxBuyFor(item.listing)) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — ponad limit zakupu ${maxBuyFor(item.listing)}€`); continue; }
             if (!Number.isFinite(sprzedaz) || sprzedaz <= 0) {
               if (oldPrice == null || det.price > oldPrice) { toUncertain(`cena zmieniła się ${oldPrice ?? "?"}€ → ${det.price}€ — zysku nie da się przeliczyć`); continue; }
             } else {
@@ -3980,7 +4551,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const chunks = [];
     let cur = { text: `❓ **Niepewne rowery** (${unc.length})`, ids: [] };
     for (const u of unc) {
-      const entry = `🔸 ${u.listing.title}${u.listing.price != null ? ` (${u.listing.price}€)` : ""} — ${u.reason || "za mało informacji"}`.slice(0, 600) + `\n${u.listing.href}`;
+      const entry = `🔸 ${isRoad(u.listing) ? "🚴 " : ""}${u.listing.title}${u.listing.price != null ? ` (${u.listing.price}€)` : ""} — ${u.reason || "za mało informacji"}`.slice(0, 600) + `\n${u.listing.href}`;
       if ((cur.text + "\n\n" + entry).length > 1900 && cur.ids.length > 0) { chunks.push(cur); cur = { text: entry, ids: [] }; }
       else cur.text += "\n\n" + entry;
       cur.ids.push(u.id);
@@ -4062,7 +4633,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         }
 
         // ── Groq: szybka klasyfikacja typu (przy spadku ceny znanego roweru — typ z pamięci) ──
-        const cachedTrusted = ["full", "dirt", "elektryk_gorski"].includes(job.cachedType) ? job.cachedType : null;
+        const cachedTrusted = goodTypesOf(listing).includes(job.cachedType) ? job.cachedType : null;
+        const minUnc = minUncertainFor(listing); // v6.16: szosy / gravele mają niższy próg „niepewnych”
         let typ;
         if (cachedTrusted) {
           typ = cachedTrusted;
@@ -4071,13 +4643,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
           typ = await classifyWithGroq(listing);
           if (!runningRef.current) return; // STOP w trakcie — oferta zostaje na etapie 1
           await sleep(2500); // margines poniżej limitu 30 RPM darmowego Groqa
-          if (["full", "dirt", "elektryk_gorski"].includes(typ)) updateSeenType(listing.listingId, typ);
+          if (goodTypesOf(listing).includes(typ)) updateSeenType(listing.listingId, typ);
         }
         // v5.12: Groq odrzuca znany model ("Rose The Bruce" → "stary", dirt → "inny") — gdy tytuł to znany model,
         // a nie sama część, decyzję zostawiamy analizie AI (pełny opis + zdjęcia + twarda reguła rocznika)
         // v6.4 (B7): „stary” od Groqa przy dircie bez rocznika PODANEGO w ogłoszeniu — Twoja reguła: dirty odrzucamy
         // tylko przy podanym roczniku, a Groq szacuje rok z samego tytułu → decyzję zostawiamy analizie AI
-        if (!cachedTrusted && typ === "stary" && KB_DIRT_RE.test(listing.title) && extractMarkedYear(`${listing.title} ${listing.desc || ""}`) == null
+        if (!cachedTrusted && !isRoad(listing) && typ === "stary" && KB_DIRT_RE.test(listing.title) && extractMarkedYear(`${listing.title} ${listing.desc || ""}`) == null
           && !/\b(19\d\d|20(0\d|1[0-6]))\b/.test(listing.title)) {
           addLog(`↩️ Groq: "stary" przy dircie bez podanego rocznika — decyzję zostawiam analizie AI — ${listing.title}`, "info");
           typ = "dirt";
@@ -4085,9 +4657,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         }
         // v6.4: wyjątek — Groq uznał ogłoszenie za samą ramę/części, a cena jest niska (poniżej progu niepewnych):
         // to zwykle naprawdę rama znanego modelu, więc odrzucenie zostaje (jak w v5.14)
-        const cheapPart = typ === "inny" && GROQ_PART_REASON_RE.test(listing._groqReason || "") && listing.price != null && listing.price < minUncertainPrice;
+        const cheapPart = typ === "inny" && GROQ_PART_REASON_RE.test(listing._groqReason || "") && listing.price != null && listing.price < minUnc;
         if (!cachedTrusted && (typ === "inny" || typ === "stary") && !PART_TITLE_RE.test(listing.title) && !cheapPart) {
-          const known = knownModelInTitle(listing);
+          const known = isRoad(listing) ? null : knownModelInTitle(listing); // v6.16: lista znanych modeli dotyczy MTB
           if (known) {
             addLog(`↩️ Groq: "${typ}", ale tytuł to znany model (${known === "dirt" ? "dirt" : listing.bike}) — decyzję zostawiam analizie AI — ${listing.title}`, "info");
             typ = known === "dirt" ? "dirt" : "niepewne";
@@ -4096,7 +4668,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         }
         // v5.14: Groq „inny”, bo uznał ogłoszenie za samą ramę/część — a tytuł nie mówi o części i cena jest jak za rower
         // (np. „YT capra Industrie”, 1250 €, opis „Rahmen L, Federgabel ZEB…”). Decyzję zostawiamy AI (pełny opis + zdjęcia).
-        if (!cachedTrusted && typ === "inny" && !PART_TITLE_RE.test(listing.title) && listing.price != null && listing.price >= minUncertainPrice
+        if (!cachedTrusted && typ === "inny" && !PART_TITLE_RE.test(listing.title) && listing.price != null && listing.price >= minUnc
           && GROQ_PART_REASON_RE.test(listing._groqReason || "")) {
           addLog(`↩️ Groq: "inny" (uznał za część), ale tytuł nie mówi o części, a cena ${listing.price}€ jak za rower — decyzję zostawiam analizie AI — ${listing.title}`, "info");
           typ = "niepewne";
@@ -4108,22 +4680,22 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
         if (typ === "stary") {
           phase1Stats.oldBike++;
-          addLog(`🚫 Groq: rower oszacowany jako sprzed ${MIN_BIKE_YEAR} — odrzucono — ${listing.title}`, "info");
-          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Groq oszacował rok produkcji jako sprzed ${MIN_BIKE_YEAR} — odrzucone${listing._groqReason ? ` (powód: „${listing._groqReason}”)` : ""}` });
+          addLog(`🚫 Groq: rower oszacowany jako sprzed ${isRoad(listing) ? ROAD_MIN_YEAR : MIN_BIKE_YEAR} — odrzucono — ${listing.title}`, "info");
+          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Groq oszacował rok produkcji jako sprzed ${isRoad(listing) ? ROAD_MIN_YEAR : MIN_BIKE_YEAR} — odrzucone${listing._groqReason ? ` (powód: „${listing._groqReason}”)` : ""}` });
           continue;
         }
         if (typ === "inny" || (typ === "elektryk_gorski" && excludeElektryk)) {
           phase1Stats.groqInny++;
           const label = typ === "elektryk_gorski" ? "elektryk górski (wykluczone w Ustawieniach)" : "inny";
           addLog(`🚫 Groq: typ "${label}" — odrzucono — ${listing.title}`, "info");
-          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: typ === "elektryk_gorski" ? "Odrzucone — e-MTB wykluczone w Ustawieniach" : `Odrzucone przez Groq (etap 1) — nie full/dirt/elektryk górski${listing._groqReason ? ` (powód: „${listing._groqReason}”)` : ""}` });
+          rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: typ === "elektryk_gorski" ? "Odrzucone — e-MTB wykluczone w Ustawieniach" : `Odrzucone przez Groq (etap 1) — nie ${isRoad(listing) ? "szosa/gravel" : "full/dirt/elektryk górski"}${listing._groqReason ? ` (powód: „${listing._groqReason}”)` : ""}` });
           continue;
         }
         // ── Niepewny typ + niska cena → bez analizy (tylko przy PRAWDZIWEJ niepewności Groqa) ──
-        if (typ === "niepewne" && !classifierDown && !job.knownModel && listing.price < minUncertainPrice) {
+        if (typ === "niepewne" && !classifierDown && !job.knownModel && listing.price < minUnc) {
           phase1Stats.priceThreshold++;
-          addLog(`🚫 Groq: niepewny typ + cena ${listing.price}€ < ${minUncertainPrice}€ próg — odrzucono — ${listing.title}`, "info");
-          rejectJob(job, { typ_roweru: "?", decyzja: "nie", oplaca_sie: false, krotki_opis: `Niepewny typ, cena ${listing.price}€ poniżej progu ${minUncertainPrice}€ — odrzucone bez analizy AI` });
+          addLog(`🚫 Groq: niepewny typ + cena ${listing.price}€ < ${minUnc}€ próg — odrzucono — ${listing.title}`, "info");
+          rejectJob(job, { typ_roweru: "?", decyzja: "nie", oplaca_sie: false, krotki_opis: `Niepewny typ, cena ${listing.price}€ poniżej progu ${minUnc}€ — odrzucone bez analizy AI` });
           continue;
         }
 
@@ -4151,7 +4723,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     delete j.knownModel; delete j.recheckedFull; delete j.firstResult; delete j.firstResultKey;
     if (!keepDetails) { delete j.listing.fullDesc; j.listing.images = []; }
   };
+  // v6.16: przełącznik „Szosy i gravele” wyłączony → oferty z tego toru znikają z kolejki (nie są analizowane ani wysyłane)
+  const purgeRoadJobsIfOff = () => {
+    if (roadEnabled) return;
+    let n = 0;
+    for (const [id, j] of pendingRef.current) if (isRoad(j.listing)) { pendingRef.current.delete(id); n++; }
+    if (n > 0) { persistPending(); addLog(`🚴 Szosy i gravele wyłączone — usunięto z kolejki ${n} ofert z tego toru`, "info"); }
+  };
   const runStage2 = async (cb, { final = false, worker = false } = {}) => {
+    purgeRoadJobsIfOff(); // v6.16
     if (cb.halted) return; // brak środków / zły klucz / budżet — w tym cyklu już nie próbujemy
     if (!cb.attempted) cb.attempted = new Set();
     // v5.14: po serii nieudanych analiz (awaria dostawcy AI) — wspólna przerwa zamiast zużywania prób kolejnych ofert
@@ -4312,7 +4892,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
             rejectJob(job, { typ_roweru: "inny", decyzja: "nie", oplaca_sie: false, krotki_opis: `Odrzucone przez Groq po przeczytaniu pełnego opisu (${typ2})` });
             continue;
           }
-          if (["full", "dirt", "elektryk_gorski"].includes(typ2)) {
+          if (goodTypesOf(listing).includes(typ2)) {
             groqType = typ2;
             job.groqType = typ2;
             updateSeenType(listing.listingId, typ2);
@@ -4343,7 +4923,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               addLog(`🔗 Oczekujący alert: link ${oldHref} → ${listing.href}`, "info");
             } else what = e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej";
             addLog(`🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}) — bez analizy AI, ${what} (${e.dec}): ${listing.title}`, "info");
-            if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
+            if (goodTypesOf(listing).includes(e.typ)) updateSeenType(listing.listingId, e.typ);
             removeJob(listing.listingId);
             persistPending();
             pushResult(listing, { typ_roweru: e.typ || "?", decyzja: e.dec === "tak" ? "nie" : e.dec, oplaca_sie: false,
@@ -4487,9 +5067,10 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const now = Date.now(), out = [];
     for (const [id, e] of seenIdsRef.current) {
       if (e.rej && SEEN_HARD_REJ.has(e.rej)) continue;
+      if (e.pf === "r" && !roadEnabled) continue; // v6.16: tor szos wyłączony
       if (now - (e.lastSeenAt || 0) < NIGHT_SKIP_SEEN_MS) continue;
       const watched = e.watchSale != null || e.nearMax != null;
-      const overMax = e.overMax && e.price != null && e.price <= nightOverMaxCap;
+      const overMax = e.overMax && e.price != null && e.price <= (e.pf === "r" ? Math.round(roadMaxBuyPrice * ROAD_NIGHT_CAP_FACTOR) : nightOverMaxCap);
       if (watched || overMax) out.push({ id, pri: watched ? 0 : 1, price: e.price ?? 0 });
     }
     // najpierw z wyceną, potem „za drogie” od najbliższych limitu zakupu
@@ -4600,13 +5181,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         st.drops++;
         const hitWatch = e.watchSale != null && meetsProfit(e.watchSale, e.watchT, det.price);
         const hitLegacy = !hitWatch && e.nearMax != null && det.price <= e.nearMax;
-        const intoRange = e.overMax && det.price <= maxBuyPrice && det.price >= minListingPrice;
+        const intoRange = e.overMax && det.price <= maxBuyOfEntry(e) && det.price >= minListingPrice;
         e.lowest = e.lowest == null ? det.price : Math.min(e.lowest, det.price);
         e.price = det.price;
         if (hitWatch || hitLegacy || intoRange) {
           const listing = {
             listingId: id, title: det.title || `Ogłoszenie ${id}`, price: det.price, href,
-            desc: String(det.desc || "").replace(/\s+/g, " ").slice(0, 300), location: "", bike: inferBikeLabel(det.title), postedAt: null,
+            desc: String(det.desc || "").replace(/\s+/g, " ").slice(0, 300), location: "", bike: e.pf === "r" ? "🚴 Nocne sprawdzanie cen" : inferBikeLabel(det.title), postedAt: null, ...(e.pf === "r" ? { profile: "road" } : {}),
             prevPrice: old, _hitWatch: hitWatch || undefined, _hitNearMax: hitLegacy ? e.nearMax : undefined, _night: true,
           };
           e.notifiedAt = det.price; e.overMax = false; e.nearMax = null; e.watchSale = null; e.watchT = null;
@@ -4618,7 +5199,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         }
       } else if (old == null || det.price !== old) {
         e.price = det.price;
-        if (det.price > maxBuyPrice) e.overMax = true;
+        if (det.price > maxBuyOfEntry(e)) e.overMax = true;
       }
     }
     if (n > 0) { persistSeenMap(); persistPending(); }
@@ -4632,11 +5213,13 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
   const runOneCycle = async (cycleN) => {
     const cycleStartedAt = Date.now();
-    const selBikes = BIKE_MODELS.filter(b => selectedBikes.includes(b.id));
+    purgeRoadJobsIfOff(); // v6.16
+    const roadBikes = roadEnabled ? ROAD_SEARCHES.filter(b => selectedRoad.includes(b.id)) : [];
+    const selBikes = [...BIKE_MODELS.filter(b => selectedBikes.includes(b.id)), ...roadBikes];
     // v6.3: co cykl zaczynamy od innego wyszukiwania — pierwsze marki na liście nie są stale uprzywilejowane
     const rot = selBikes.length ? (cycleN - 1) % selBikes.length : 0;
     const activeBikes = [...selBikes.slice(rot), ...selBikes.slice(0, rot)];
-    addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} wyszukiwań`, "success");
+    addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} wyszukiwań${roadBikes.length ? ` (w tym ${roadBikes.length} szos / graveli do ${roadMaxBuyPrice}€)` : ""}`, "success");
     addLog(
       groqClassifierKey
         ? `🤖 Etap 1 (Groq) AKTYWNY — model ${GROQ_CLASSIFIER_MODEL}, ${getGroqKeyList().length} klucz(e), limit analiz AI/cykl = ${maxGeminiPerCycle}`
@@ -4701,6 +5284,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const uniqueMap = new Map();
         listings.forEach(l => { if (!uniqueMap.has(l.listingId)) uniqueMap.set(l.listingId, l); });
         listings = [...uniqueMap.values()];
+        // v6.16: tor ogłoszenia — z wyszukiwania szos / graveli albo z wcześniejszego wpisu w pamięci (to samo ogłoszenie w innym wyszukiwaniu)
+        listings.forEach(l => { if (seenIdsRef.current.get(l.listingId)?.pf === "r" || bike.profile === "road") l.profile = "road"; });
         if (listings.length === 0 && !blocked) {
           // v6.3: Kleinanzeigen czasem chwilowo zwraca „keine Ergebnisse” dla popularnej frazy. Gdy ostatnio było tu
           // dużo ogłoszeń, nie uznajemy tego za skan (stan wyszukiwania bez zmian) i powtarzamy raz na końcu cyklu.
@@ -4740,7 +5325,8 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       const now = Date.now();
       // Wszystkie ogłoszenia z wyników: "widziane teraz" — z pamięci wypadają tylko te niewidziane od 30 dni
       for (const l of listings) { const e = seenIdsRef.current.get(l.listingId); if (e) e.lastSeenAt = now; }
-      const fresh = listings.filter(l => !seenIdsRef.current.has(l.listingId));
+      // v6.16: ogłoszenie znane tylko torowi MTB (np. odrzucone jako „inny”), a teraz znalezione przez wyszukiwanie szos — dla tego toru jest nowe
+      const fresh = listings.filter(l => { const e = seenIdsRef.current.get(l.listingId); return !e || (bike.profile === "road" && e.pf !== "r" && !pendingRef.current.has(l.listingId)); });
 
       // Oferty czekające w kolejce: aktualna cena z listy wyników (mogła się zmienić w czasie czekania)
       let pricesUpdated = 0;
@@ -4779,7 +5365,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         if (!e) continue;
         if (e.noPrice) { e.noPrice = false; e.lowest = l.price; e.price = l.price; priceAdded.push(l); baselinesSet++; continue; }
         if (e.lowest == null) { e.lowest = l.price; e.price = l.price; baselinesSet++; }
-        if (l.price > maxBuyPrice && !e.overMax) { e.overMax = true; baselinesSet++; }
+        if (l.price > maxBuyOfEntry(e) && !e.overMax) { e.overMax = true; baselinesSet++; }
       }
       if (baselinesSet > 0) persistSeenMap();
 
@@ -4788,7 +5374,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       if (!st || !st.baselineAt) {
         fresh.forEach(l => saveSeenEntry(l, false));
         persistSeenMap();
-        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, lastCards: listings.length, urlVersion: SEARCH_URL_VERSION, priceRange: `${minListingPrice}:${maxBuyPrice}` };
+        scanStateRef.current.searches[bike.id] = { baselineAt: now, lastScanAt: now, lastNewAt: now, emptyBaseline: listings.length === 0, lastCards: listings.length, urlVersion: SEARCH_URL_VERSION, priceRange: rangeKeyOf(bike) };
         persistScanState();
         addLog(`📌 ${bike.label}: pierwsze skanowanie tego wyszukiwania — zapamiętano ${fresh.length} istniejących ogłoszeń (bez analizy)`, "info");
         await sleep(3000);
@@ -4803,7 +5389,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       const gapMs = now - (st.lastScanAt || 0);
       let toQueue = fresh;
       // v6.3: zmiana zakresu cen w Ustawieniach zmienia link — nowo widoczne stare oferty traktujemy jak po zmianie filtra
-      const rangeKey = `${minListingPrice}:${maxBuyPrice}`;
+      const rangeKey = rangeKeyOf(bike); // v6.16: szosy / gravele mają własny zakres cen
       const urlChanged = st.urlVersion !== SEARCH_URL_VERSION || (st.priceRange != null && st.priceRange !== rangeKey); // v6.4: także kategorie (górna cena w linku)
       if ((gapMs > RESUME_WINDOW_MS || emptyBurst || urlChanged) && fresh.length > 0) {
         const recent = fresh.filter(l => l.postedAt != null && now - l.postedAt <= RESUME_WINDOW_MS);
@@ -4830,7 +5416,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const entry = seenIdsRef.current.get(l.listingId);
         if (!entry) return false;
         if (entry.rej && SEEN_HARD_REJ.has(entry.rej)) return false; // v6.11: odrzucone na stałe (stary, część, sklep…) — obniżka nic nie zmienia, bez płatnej analizy
-        if (entry.overMax && l.price <= maxBuyPrice) return true; // wcześniej za drogie, teraz mieści się w limicie
+        if (entry.overMax && l.price <= maxBuyOfEntry(entry)) return true; // wcześniej za drogie, teraz mieści się w limicie
         if (entry.watchSale != null && l.price < (entry.price ?? Infinity) && meetsProfit(entry.watchSale, entry.watchT, l.price)) return true; // v6.1: przy nowej cenie wycena spełnia próg
         if (entry.nearMax != null && l.price <= entry.nearMax && l.price < (entry.price ?? Infinity)) return true; // v5.14 (stare wpisy): spadła do „opłaca się do”
         if (entry.lowest == null) return false;
@@ -5155,6 +5741,61 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                     );
                   })}
                 </div>
+              </div>
+
+              {/* v6.16: Szosy i gravele — jeden przełącznik; wyłączony = skaner działa jak dotąd (tylko MTB) */}
+              <div data-testid="road-card" style={{ background: "#0d1526", border: `1px solid ${roadEnabled ? "#a78bfa66" : "#1a2d4a"}`, borderRadius: 14, padding: 20 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                  <input type="checkbox" data-testid="road-toggle" checked={roadEnabled} onChange={e => setRoadEnabled(e.target.checked)}
+                    style={{ width: 18, height: 18, accentColor: "#a78bfa" }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: roadEnabled ? "#a78bfa" : "#94a3b8" }}>
+                    🚴 Szosy i gravele — {roadEnabled ? "WŁĄCZONE" : "wyłączone"}
+                  </span>
+                </label>
+                <div style={{ fontSize: 11, color: "#475569", marginTop: 6, lineHeight: 1.5 }}>
+                  Osobny tor wyszukiwania: szosy, gravele i przełajówki od rocznika {ROAD_MIN_YEAR}, cena {minListingPrice}–{roadMaxBuyPrice} €, własne słowa filtra,
+                  własne rozpoznawanie typu i własna baza cen (wstępna — traktuj alerty jako „do sprawdzenia”). Wyłączone = skaner działa dokładnie jak dotąd.
+                  Zmiana działa od następnego cyklu; pierwszy cykl po włączeniu tylko zapamiętuje istniejące ogłoszenia.
+                </div>
+                {roadEnabled && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, color: "#475569", textTransform: "uppercase", letterSpacing: 0.8 }}>
+                        Wyszukiwania ({selectedRoad.length}/{ROAD_SEARCHES.length})
+                      </span>
+                      <button onClick={() => setSelectedRoad(ROAD_SEARCHES.map(b => b.id))} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, border: "1px solid #1e293b", background: "#0f172a", color: "#94a3b8" }}>wszystkie</button>
+                      <button onClick={() => setSelectedRoad([])} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, border: "1px solid #1e293b", background: "#0f172a", color: "#94a3b8" }}>żadne</button>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {ROAD_SEARCHES.map(b => {
+                        const sel = selectedRoad.includes(b.id);
+                        return (
+                          <button key={b.id} onClick={() => setSelectedRoad(prev => sel ? prev.filter(x => x !== b.id) : [...prev, b.id])} style={{
+                            padding: "6px 12px", borderRadius: 8, fontWeight: 600, fontSize: 12,
+                            border: `1px solid ${sel ? "#a78bfa88" : "#1e293b"}`,
+                            background: sel ? "#a78bfa18" : "#0f172a",
+                            color: sel ? "#a78bfa" : "#475569",
+                          }}>{b.label.replace(/^🚴 /, "")}</button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 14, marginTop: 16 }}>
+                      <div>
+                        <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>Maks. cena zakupu (€)</label>
+                        <DraftNumber data-testid="road-max" min={minListingPrice} max={5000} step="10" integer value={roadMaxBuyPrice} onCommit={v => setRoadMaxBuyPrice(v)} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>Osobny kanał Discord na okazje (opcjonalnie)</label>
+                        <input type="password" placeholder="pusto = ten sam kanał co okazje MTB" value={roadWebhook} onChange={e => setRoadWebhook(e.target.value)} />
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 14 }}>
+                      <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>Słowa odrzucające w tytule (tylko szosy i gravele)</label>
+                      <textarea rows={3} value={roadFilterKeywords} onChange={e => setRoadFilterKeywords(e.target.value)}
+                        style={{ fontFamily: "monospace", fontSize: 12, lineHeight: 1.7, resize: "vertical" }} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* START / STOP */}
