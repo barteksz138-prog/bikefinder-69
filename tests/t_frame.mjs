@@ -51,6 +51,14 @@ assert.equal(mat("Canyon Torque", "Lenker: Renthal Carbon; Rahmen: Carbon, Grö�
 assert.equal(mat("YT Capra", "Carbon-Rahmen mit Alu-Laufrädern, Lenker Alu"), "karbon", "rama i części w jednym fragmencie");
 assert.equal(mat("Santa Cruz Heckler", "Santa Cruz Heckler CC, Carbon, 2021"), "karbon", "„Heckler” to nie „Heck”");
 assert.equal(mat("YT Capra", "Vollcarbon, Hinterbau Alu"), "karbon");
+// v6.15: „Carbon Fully mit … Gabel” mówi o ramie; koniec zdania rozdziela ramę od części
+assert.equal(mat("YT Capra", "Verkaufe mein Carbon Fully mit Fox 36 Gabel und DT Swiss Laufrädern"), "karbon", "„Carbon Fully” obok nazw części");
+assert.equal(mat("Canyon Strive", "Schönes Alu-Bike mit neuer Gabel und Carbon Lenker"), "alu", "„Alu-Bike” obok karbonowej kierownicy");
+assert.equal(mat("YT Capra", "Der Rahmen ist aus Carbon. Lenker und Vorbau sind aus Alu"), "karbon", "dwa zdania: rama i części");
+assert.equal(detectFrameMaterialText("YT Capra", "Der Rahmen ist aus Carbon. Lenker und Vorbau sind aus Alu").conflict, false, "bez sprzeczności");
+assert.equal(mat("YT Capra", "Top Zustand. Carbon Lenker und Carbon Kurbel verbaut. Fox 36 Gabel"), null, "same części w osobnych zdaniach");
+assert.equal(mat("YT Capra", "Fully mit Carbonrädern und Gabel Fox 36"), null, "„Carbonräder” to nie „Carbon Rad”");
+assert.equal(mat("Trek Slash", "Rahmen Gr. L, Alu. Laufräder Carbon"), "alu", "skrót „Gr.” nie psuje podziału");
 
 // Który materiał liczy program
 const T = (material) => ({ material, conflict: false, evidence: null });

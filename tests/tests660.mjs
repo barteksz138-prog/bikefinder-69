@@ -37,8 +37,9 @@ await test("Cube z oszacowanym rocznikiem 2017–2019 → odrzucony (Cube od 202
     const a = await resultOf(app, B.id);
     // v6.10: rocznik tylko oszacowany → „nie”, ale nie na stałe (stary_oszac)
     assert.equal(a.odrzucenie, "stary_oszac");
-    assert.match(a.krotki_opis, /Oszacowany rocznik 2017 \(< 2020 dla Cube\) — nie\. Rocznik niepewny/);
-    assert.ok(await app.countLogs(/NIE opłaca się \(rocznik oszacowany 2017 < 2020 — niepewny/) >= 1, "log z progiem marki");
+    // v6.15: środkowy rok zakresu 2017–2019 liczy program (2018) — decyzja bez zmian, dalej poniżej progu Cube
+    assert.match(a.krotki_opis, /Oszacowany rocznik 2018 \(< 2020 dla Cube\) — nie\. Rocznik niepewny/);
+    assert.ok(await app.countLogs(/NIE opłaca się \(rocznik oszacowany 2018 < 2020 — niepewny/) >= 1, "log z progiem marki");
   } finally { await close(app); }
 });
 

@@ -502,6 +502,7 @@ const KA_MIN_GAP_MS = 4000;                       // v6.3: min. odstęp między 
 const JOB_AGING_MS = 15 * 60 * 1000;
 const EMPTY_SUSPICIOUS_MIN_CARDS = 5;
 const NIGHT_BATCH = 60;                           // v6.4: nocne sprawdzanie cen — tyle stron ogłoszeń na cykl (ok. 5 min przy odstępie 4–6 s)
+const NIGHT_DISCOVER_BATCH = 10;                  // v6.15: nocne szukanie „za drogich” — tyle wyszukiwań powyżej limitu zakupu na cykl
 const NIGHT_WINDOW_H = 5;                         // v6.4: okno nocnego sprawdzania (od godziny z Ustawień)
 const NIGHT_SKIP_SEEN_MS = 12 * 60 * 60 * 1000;   // v6.4: widziane w wynikach w ostatnich 12 h — zmianę ceny skaner i tak zauważy
 const SEEN_HARD_REJ = new Set(["stary", "inny", "slowa", "czesc", "ebike", "sklep", "dirt_stary"]); // v6.4: odrzucone na stałe — obniżka nic nie zmienia             // v6.3: pusta lista tam, gdzie ostatnio było ≥ 5 ogłoszeń = podejrzana (powtórka na końcu cyklu)              // v6.3: oferta czekająca dłużej w kolejce wyprzedza nowsze (najstarsze najpierw)
@@ -683,8 +684,10 @@ const FRAME_PART_BEFORE_RE = new RegExp(`(?<![a-zäöüß])(?:${FRAME_PART_WORDS
 // (linie, pozycje listy) z nazwą podzespołu. Fragment, który mówi też o ramie („Carbon-Rahmen mit Alu-Laufrädern”), zostaje — tam wystarczą wzorce wyżej.
 // Część nazw łapiemy też w złożeniach („Bremshebel”, „Carbonlenker”); krótkie i dwuznaczne („stütze” ≠ „Unterstützung”) tylko jako osobne słowo.
 const FRAME_SEG_PART_RE = /(?:lenker|laufr(?:a|ä|ae)d|gabel|felge|kurbel|sattelst(?:ü|ue)tze|vorbau|kassette|kettenbl|hinterbau|ketten?strebe|sitzstrebe|cockpit|folie|hebel|flaschenhalter|handlebar)|(?<![a-zäöüß])(?:r(?:ä|ae)der|sattel|st(?:ü|ue)tze|pedal|nabe|speiche|griff|schwinge|wippe|umlenk|lrs(?![a-z])|wheel|cranks?(?![a-z])|seatpost|stem(?![a-z])|rims?(?![a-z])|bars?(?![a-z]))/i;
-const FRAME_SEG_FRAME_RE = /rahmen|frame|(?<![a-z])rh(?![a-z])/i;
-const descForFrame = (desc) => String(desc || "").split(/[\n;•|]|,(?!\d)/)
+// v6.15: „Carbon Fully / Alu-Bike …” mówi o całym rowerze (ramie) — taki fragment zostaje mimo nazw części („Carbon Fully mit Fox 36 Gabel”)
+const FRAME_SEG_FRAME_RE = /rahmen|frame|(?<![a-z])rh(?![a-z])|(?:carbon|karbon|alu(?:minium|minum)?|alloy)[\s\-]*(?:fully|bike|e-?bike|mtb|e-?mtb|enduro|mountainbike|fahrrad|rad|hardtail)(?![a-zäöüß])/i;
+// v6.15: także koniec zdania dzieli fragmenty — „Der Rahmen ist aus Carbon. Lenker und Vorbau sind aus Alu” to dwa osobne fragmenty
+const descForFrame = (desc) => String(desc || "").split(/[\n;•|]|,(?!\d)|(?<=[a-zäöüß)][.!?])\s+(?=[A-ZÄÖÜ])/)
   .filter(seg => !FRAME_SEG_PART_RE.test(seg) || FRAME_SEG_FRAME_RE.test(seg)).join("\n");
 const SC_MODELS = "nomad|bronson|hightower|megatower|5010|tallboy|blur|heckler|bullit|v10|jackal|vala";
 const frameTokens = (text, isTitle) => {
@@ -818,6 +821,13 @@ const MODEL_MIN_YEAR = [
   { id: "canyon_spectral", year: 2018, test: (t) => /\bspectral\b/i.test(t) && !/spectral\s*:?\s*on\b/i.test(t),
     hint: `Canyon Spectral: amortyzator tylny ustawiony PIONOWO przed rurą podsiodłową (napędzany wahaczem nad nim) = rama 2014–2017 → wpisz "rocznik": 2017, "rocznik_zrodlo": "oszacowany", "rocznik_zakres": "2014–2017" i decyzja "nie" — także gdy ogłoszenie podaje nowszy rok (rama rozstrzyga). Amortyzator POZIOMO (od tylnych górnych rurek do rury dolnej) = 2018 lub nowszy. Gdy amortyzatora nie widać na zdjęciach — rocznik ustalasz jak zwykle.` },
 ];
+// v6.15: nazwy modeli, które istnieją dopiero od danego rocznika (Cube Stereo ONE44 / ONE55: premiera 02.2023; ONE22 i ONE77 alu: 2022).
+// Oszacowany rocznik nie może być starszy — AI dawała np. „2020, zakres 2020–2024” dla Stereo ONE44 i wyceniała starszą generację.
+const MODEL_FIRST_YEAR = [
+  { re: /\bone\s?(?:44|55)\b/i, year: 2023, name: "Cube Stereo ONE44 / ONE55" },
+  { re: /\bone\s?(?:22|77)\b/i, year: 2022, name: "Cube Stereo ONE22 / ONE77" },
+];
+const modelFirstYearOf = (title) => /\b(?:cube|stereo)\b/i.test(title || "") ? (MODEL_FIRST_YEAR.find(m => m.re.test(title)) || null) : null;
 // Marka z tytułu; nazwa wyszukiwania („Cube Stereo”) liczy się tylko, gdy tytuł nie wymienia innej znanej marki.
 const brandMinYearOf = (title, label) => {
   // v6.9: najpierw model (z tytułu; nazwa wyszukiwania tylko, gdy tytuł nie wymienia żadnej znanej marki — jak w ściądze generacji)
@@ -1017,7 +1027,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.14 (2026-11-15)";
+const APP_VERSION = "v6.15 (2026-11-15)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1911,6 +1921,9 @@ function App() {
 
   // Wyciąga rok z tytułu — najpierw próbuje jawnych wzorców roku produkcji (Bj., Baujahr, MY, Modelljahr),
   // dopiero potem "gołego" 4-cyfrowego tokenu w zakresie 1970-2035 (odfiltrowując ceny typu "1800€").
+  // v6.15: „2016/2017”, „2016-17” — druga liczba to rok tylko, gdy jest późniejsza, nie wybiega w przyszłość, a zapis
+  // dwucyfrowy różni się od pierwszego roku najwyżej o 3 lata (inaczej to rozmiar koła, liczba biegów itp.)
+  const isYearPair = (y1, y2, twoDigit) => y2 > y1 && y2 <= new Date().getFullYear() + 1 && (!twoDigit || y2 - y1 <= 3);
   const extractYearFromTitle = (title) => {
     if (!title) return null;
     const t = title;
@@ -1926,7 +1939,8 @@ function App() {
       if (m) {
         let y = parseInt(m[1], 10);
         if (y < 100) y += y < 50 ? 2000 : 1900; // MY19 -> 2019, MY99 -> 1999
-        if (m[2]) { const y2 = parseInt(m[2].length === 2 ? m[1].slice(0, 2) + m[2] : m[2], 10); if (y2 > y && y2 <= 2035) y = y2; }
+        // v6.15: druga liczba jest rokiem tylko, gdy to rok niedaleki od pierwszego i nie z przyszłości („Bj. 2015 / 29” to koło, „2014 - 27 Gänge” to biegi)
+        if (m[2]) { const y2 = parseInt(m[2].length === 2 ? m[1].slice(0, 2) + m[2] : m[2], 10); if (isYearPair(y, y2, m[2].length === 2)) y = y2; }
         if (y >= 1970 && y <= 2035) return y;
       }
     }
@@ -2011,7 +2025,7 @@ function App() {
     // v6.4 (B7): „Baujahr 2016/2017” / „Bj. 2016-17” — liczy się PÓŹNIEJSZY rok (jak w tytule), nie wcześniejszy
     for (const m of text.matchAll(/\b(?:Baujahr|Bj|Jahrgang|Modell?jahr)\.?:?\s*(?:ca\.?\s*|etwa\s*)?(\d{4})(?:\s*[\/–-]\s*(\d{4}|\d{2}(?!\s*(?:zoll|"|''|”|[.,]\d)))\b)?\b/gi)) { // v6.11: „/ 26 Zoll”, „/ 27,5” to koło, nie rok
       take(m, m[1]);
-      if (m[2]) take(m, m[2].length === 2 ? m[1].slice(0, 2) + m[2] : m[2]);
+      if (m[2]) { const raw2 = m[2].length === 2 ? m[1].slice(0, 2) + m[2] : m[2]; if (isYearPair(parseInt(m[1], 10), parseInt(raw2, 10), m[2].length === 2)) take(m, raw2); } // v6.15
     }
     for (const m of text.matchAll(/\bMY\.?\s*'?(\d{2}|\d{4})\b/g)) take(m, m[1]); // tylko wielkie "MY"
     return years.length > 0 ? Math.max(...years) : null;
@@ -2205,17 +2219,18 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
   // v6.3: zakres cen po stronie portalu — pierwsza strona wyników mieści więcej ofert, które i tak nas interesują.
   // v6.4: „anzeige:angebote” (bez ogłoszeń „Suche …”) we wszystkich linkach i górna cena także w linkach kategorii
   // (Giant, Dirt, Dirtbike) — sprawdzone na żywo 13.11.2026 (25 kart, ceny w zakresie, 0 „Suche”)
-  const searchUrlFor = (bike) => bike.isCategory
-    ? bike.categoryUrl.replace("/s-fahrraeder/", "/s-fahrraeder/anzeige:angebote/").replace(/preis:(\d+):\//, `preis:$1:${maxBuyPrice}/`)
-    : `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${minListingPrice}:${maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
-  const scrapeKleinanzeigen = async (bike) => {
+  // v6.15: range = [od, do] — inny przedział cen niż zwykły (nocne szukanie ogłoszeń powyżej limitu zakupu)
+  const searchUrlFor = (bike, range) => bike.isCategory
+    ? bike.categoryUrl.replace("/s-fahrraeder/", "/s-fahrraeder/anzeige:angebote/").replace(/preis:(\d+):\//, (m0, lo) => `preis:${range ? range[0] : lo}:${range ? range[1] : maxBuyPrice}/`)
+    : `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${range ? range[0] : minListingPrice}:${range ? range[1] : maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
+  const scrapeKleinanzeigen = async (bike, range) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
     // Modele/marki konkretne używają wyszukiwania po frazie + DOPIĘTEGO filtra
     // "fahrraeder.type_s:mountainbike" — to ogranicza wyniki TYLKO do ogłoszeń otagowanych
     // przez sprzedającego jako rower górski, więc np. "Giant"/"Marin"/"Norco" (marki które
     // robią też szosówki/miejskie) nie zaśmiecają wyników niezwiązanymi typami rowerów.
     // Format zweryfikowany na realnych URL-ach Kleinanzeigen: /s-fahrraeder/{fraza}/k0c217+fahrraeder.type_s:mountainbike
-    const url = searchUrlFor(bike);
+    const url = searchUrlFor(bike, range);
     // v5.12: typ "Mountainbike" ORAZ "E-Bike" — sam Mountainbike gubił wszystkie e-MTB (np. Torque:ON, Heckler)
     await kaSlot();
     if (!runningRef.current) throw new Error("zatrzymano");
@@ -2558,9 +2573,11 @@ WALUTY W NOTATKACH — BARDZO WAŻNE: ceny zakupu w Niemczech są w euro, ale ce
     // ── v6.6: marka z wyższym minimalnym rocznikiem (Cube: 2020) ──
     const brandMin = brandMinYearOf(listing.title, listing.bike);
     const minYear = Math.max(MIN_BIKE_YEAR, brandMin?.year || 0);
-    const brandYearLine = brandMin
+    const firstYear = modelFirstYearOf(listing.title);
+    const firstYearLine = firstYear ? `\nNazwa modelu ${firstYear.name} istnieje dopiero od rocznika ${firstYear.year} — rocznik nie może być starszy niż ${firstYear.year}; wyceniaj generację od ${firstYear.year}.` : "";
+    const brandYearLine = firstYearLine + (brandMin
       ? `\nMinimalny rocznik dla ${brandMin.model ? "modelu" : "marki"} ${BRAND_NAMES[brandMin.brand] || brandMin.brand}: ${minYear} (decyzja właściciela) — rower sprzed ${minYear} → "nie" (TWARDA REGUŁA ROKU, rocznik ustalasz tak samo jak zwykle)${brandMin.hint ? `\n${brandMin.hint}` : ""}`
-      : "";
+      : "");
     // ── v6.7: ZASADA ROCZNIKA I PASMA zależna od etapu (decyzja właściciela 14.11.2026) ──
     // Pierwsza analiza (Haiku): środkowy rok zakresu i środek pasma — dotąd najstarsza generacja i dolna granica
     // odrzucały część dobrych rowerów, zanim zobaczył je weryfikator. Weryfikacja (Sonnet): generacja po ramie ze
@@ -2898,12 +2915,28 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
           if (rocznik != null && (rocznik < 1980 || rocznik > new Date().getFullYear() + 1)) rocznik = null;
           if (rocznik != null) rocznik = Math.round(rocznik);
           const rocznikZrodlo = rocznik == null ? "brak" : (f.rocznik_zrodlo === "podany" ? "podany" : "oszacowany");
-          const zakresM = typeof f.rocznik_zakres === "string" ? f.rocznik_zakres.match(/^\s*(\d{4})\s*[–-]\s*(\d{4})\s*$/) : null;
+          let zakresM = typeof f.rocznik_zakres === "string" ? f.rocznik_zakres.match(/^\s*(\d{4})\s*[–-]\s*(\d{4})\s*$/) : null;
+          // v6.15: nazwa modelu istnieje dopiero od danego rocznika (np. Stereo ONE44 od 2023) — oszacowany rocznik i zakres nie mogą być starsze
+          if (rocznikZrodlo === "oszacowany" && firstYear && rocznik < firstYear.year) {
+            addLog(`ℹ️ Oszacowany rocznik ${rocznik}${zakresM ? ` (zakres ${zakresM[1]}–${zakresM[2]})` : ""}, ale ${firstYear.name} istnieje od ${firstYear.year} — liczę ${firstYear.year} — ${listing.title}`, "info");
+            rocznik = firstYear.year;
+            if (zakresM) zakresM = [null, String(Math.max(+zakresM[1], firstYear.year)), String(Math.max(+zakresM[2], firstYear.year))];
+          }
           // v6.4 (B7): oszacowany rocznik z zakresem sięgającym ${MIN_BIKE_YEAR}+ (np. 2016, zakres 2016–2019) = ${MIN_BIKE_YEAR}
           // — tak każe prompt (KROK 1), ale model czasem wpisuje najstarszy rok; bez tego dobry rower szedł do „stary”
           if (rocznikZrodlo === "oszacowany" && rocznik != null && rocznik < minYear && zakresM && +zakresM[1] <= +zakresM[2] && +zakresM[2] >= minYear) {
             addLog(`ℹ️ Oszacowany rocznik ${rocznik}, ale zakres ${zakresM[1]}–${zakresM[2]} sięga ${minYear} — liczę ${minYear} (zasada z promptu) — ${listing.title}`, "info");
             rocznik = minYear;
+          }
+          // v6.15: ŚRODKOWY rok zakresu w pierwszej analizie liczy program (zasada z v6.7) — model czasem wpisuje najstarszy rok
+          // zakresu (np. 2020 przy 2020–2024). Tylko w górę: rok celowo wyższy od środka (np. z podpowiedzi o ramie) zostaje.
+          // Na decyzję o roczniku nie wpływa — zakres sięgający limitu i tak przechodzi (reguła wyżej).
+          if (!opts?.verify && rocznikZrodlo === "oszacowany" && rocznik != null && zakresM && +zakresM[1] <= +zakresM[2]) {
+            const mid = +zakresM[1] + Math.floor((+zakresM[2] - +zakresM[1]) / 2);
+            if (rocznik < mid) {
+              addLog(`ℹ️ Oszacowany rocznik ${rocznik} przy zakresie ${zakresM[1]}–${zakresM[2]} — liczę środkowy ${mid} (zasada pierwszej analizy) — ${listing.title}`, "info");
+              rocznik = mid;
+            }
           }
           const fakty = {
             rocznik, rocznik_zrodlo: rocznikZrodlo,
@@ -3634,17 +3667,45 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (map[id]) return id;
     return Object.keys(map).find(k => (map[k].ids || []).includes(id)) || null;
   };
+  // v6.15: ponowne wystawienie z poprawionym tytułem („Bronsok v4” → „Bronson v4”) — tytuły „podobne”, gdy mają co najmniej
+  // 3 wspólne słowa i jest to co najmniej 60% słów dłuższego tytułu; słowa od 5 liter mogą różnić się jedną literą (literówka).
+  // Liczby i krótkie słowa (rozmiar, rocznik, „140”/„150”) muszą być identyczne.
+  const typoClose = (a, b) => {
+    if (a === b) return true;
+    if (a.length < 5 || b.length < 5 || Math.abs(a.length - b.length) > 1 || /\d/.test(a + b)) return false;
+    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    let ja = a.length - 1, jb = b.length - 1; while (ja >= i && jb >= i && a[ja] === b[jb]) { ja--; jb--; }
+    return ja - i + 1 <= 1 && jb - i + 1 <= 1; // najwyżej jedna litera zmieniona / dodana / usunięta
+  };
+  const titlesSimilar = (na, nb) => {
+    const A = na.split(" ").filter(Boolean), B = nb.split(" ").filter(Boolean);
+    if (A.length < 3 || B.length < 3) return false;
+    const left = [...B]; let hit = 0;
+    for (const w of A) { const k = left.findIndex(x => typoClose(w, x)); if (k >= 0) { left.splice(k, 1); hit++; } }
+    return hit >= 3 && hit / Math.max(A.length, B.length) >= 0.6;
+  };
   const findDuplicate = (l) => {
     const map = loadDupes();
     const tp = titlePriceKey(l), dk = descKey(l.fullDesc), ik = imgKey(l.images);
+    const nt = normTitle(l.title), priceStr = String(l.price ?? "");
     let maybe = null;
     for (const [key, e] of Object.entries(map)) {
       const id = String(l.listingId);
-      if (key === id || (e.ids || []).includes(id) || e.tp !== tp) continue;
+      if (key === id || (e.ids || []).includes(id)) continue;
       if (l.sellerId && e.seller && e.seller !== l.sellerId) continue; // różni sprzedawcy — różne rowery
       const sameSeller = !!(l.sellerId && e.seller === l.sellerId);
-      if (ik && e.ik === ik) return { key, e, sure: true, why: "identyczne zdjęcia" };
-      if (sameSeller && dk && e.dk === dk) return { key, e, sure: true, why: "ten sam sprzedawca i opis" };
+      if (e.tp !== tp) {
+        // v6.15: inny tytuł, ale ten sam sprzedawca, ta sama cena i podobny tytuł — pewny duplikat tylko przy tym samym opisie
+        // albo identycznych zdjęciach; sam podobny tytuł (np. dwa rozmiary tego samego modelu) → normalna analiza z ostrzeżeniem
+        const cut = String(e.tp || "").lastIndexOf("|");
+        if (!sameSeller || cut < 0 || priceStr === "" || e.tp.slice(cut + 1) !== priceStr || !titlesSimilar(nt, e.tp.slice(0, cut))) continue;
+        if (ik && e.ik === ik) return { key, e, sure: true, why: "ten sam sprzedawca i cena, zmieniony tytuł, identyczne zdjęcia" };
+        if (dk && e.dk === dk) return { key, e, sure: true, why: "ten sam sprzedawca, cena i opis, zmieniony tytuł" };
+        if (!maybe) maybe = { key, e, sure: false, why: "ten sam sprzedawca i cena, podobny tytuł" };
+        continue;
+      }
+      if (ik && e.ik === ik) return { key, e, sure: true, why: "identyczne zdjęcia, ten sam tytuł i cena" };
+      if (sameSeller && dk && e.dk === dk) return { key, e, sure: true, why: "ten sam sprzedawca i opis, ten sam tytuł i cena" };
       if (!maybe && (sameSeller || (dk && e.dk === dk))) maybe = { key, e, sure: false, why: sameSeller ? "ten sam sprzedawca, inny opis i zdjęcia" : "identyczny opis, sprzedawca nieznany" };
     }
     return maybe;
@@ -4281,7 +4342,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               what = "okazja czeka na wysłanie — podmieniam link na nowy";
               addLog(`🔗 Oczekujący alert: link ${oldHref} → ${listing.href}`, "info");
             } else what = e.dec === "tak" ? "okazja już zgłoszona" : "oceniony wcześniej";
-            addLog(`🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}, ten sam tytuł i cena) — bez analizy AI, ${what} (${e.dec}): ${listing.title}`, "info");
+            addLog(`🔁 Duplikat ogłoszenia ${dup.key} (${dup.why}) — bez analizy AI, ${what} (${e.dec}): ${listing.title}`, "info");
             if (["full", "dirt", "elektryk_gorski"].includes(e.typ)) updateSeenType(listing.listingId, e.typ);
             removeJob(listing.listingId);
             persistPending();
@@ -4444,10 +4505,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const key = nightKey();
     let st = nightStateRef.current;
     if (!st || st.key !== key) {
-      const queue = nightCandidates().slice(0, nightCheckMax);
-      st = nightStateRef.current = { key, queue, total: queue.length, checked: 0, drops: 0, queued: 0, gone: 0, startedAt: Date.now(), finishedAt: null };
+      // v6.15: najpierw szukanie nowych „za drogich” (discover), kolejka stron ogłoszeń powstaje po nim
+      const discover = nightOverMaxCap > maxBuyPrice ? BIKE_MODELS.filter(b => selectedBikes.includes(b.id)).map(b => b.id) : [];
+      st = nightStateRef.current = { key, discover, discoverTotal: discover.length, discovered: 0, discoverBlocks: 0, queue: null, total: 0, checked: 0, drops: 0, queued: 0, gone: 0, startedAt: Date.now(), finishedAt: null };
       persistNight();
-      addLog(`🌙 Nocne sprawdzanie cen: ${queue.length} ogłoszeń (z wyceną do obserwacji i „za drogie” do ${nightOverMaxCap} €) — po ${NIGHT_BATCH} na cykl, bez AI, chyba że obniżka coś zmienia`, "info");
+      if (discover.length > 0) addLog(`🌙 Nocne szukanie „za drogich”: ${discover.length} wyszukiwań w cenie ${maxBuyPrice + 1}–${nightOverMaxCap} € — nowe ogłoszenia tylko zapamiętuję (bez AI), ich obniżki sprawdzi nocne sprawdzanie cen`, "info");
     }
     if (st.finishedAt) return;
     // v6.11: w czasie przerwy po blokadzie (stron ogłoszeń albo wyszukiwań) nocne sprawdzanie też czeka
@@ -4455,6 +4517,63 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     if (Date.now() < blockedUntil) {
       addLog(`🌙⛔ Nocne sprawdzanie cen czeka — przerwa po blokadzie Kleinanzeigen do ok. ${new Date(blockedUntil).toLocaleTimeString("pl-PL")}`, "info");
       return;
+    }
+    // ── v6.15: NOCNE SZUKANIE „ZA DROGICH” ──
+    // Od v6.3 adres wyszukiwania ma górną cenę z Ustawień, więc ogłoszenia wystawione POWYŻEJ limitu zakupu nie trafiały już do
+    // pamięci i ich późniejsze obniżki przechodziły niezauważone (pula „za drogich” tylko malała). Raz na noc każde zaznaczone
+    // wyszukiwanie jest odpytywane dodatkowo w przedziale „limit zakupu + 1 … górna granica za drogich”: nowe ogłoszenia są tylko
+    // zapamiętywane (overMax, bez AI); znane „za drogie” dostają aktualną cenę z karty i tej nocy nie wymagają strony ogłoszenia.
+    if (st.discover && st.discover.length > 0) {
+      let done = 0;
+      while (st.discover.length > 0 && done < NIGHT_DISCOVER_BATCH && runningRef.current) {
+        const bike = BIKE_MODELS.find(b => b.id === st.discover[0]);
+        if (!bike || !selectedBikes.includes(bike.id)) { st.discover.shift(); continue; }
+        if (done > 0) await sleep(SEARCH_GAP_MS + Math.random() * 1500);
+        if (!runningRef.current) break;
+        done++;
+        setScanStatus({ phase: "search", i: st.discoverTotal - st.discover.length + 1, n: st.discoverTotal, label: `${bike.label} (noc: za drogie)` });
+        let cards = null, blocked = false;
+        try {
+          const html = await scrapeKleinanzeigen(bike, [maxBuyPrice + 1, nightOverMaxCap]);
+          touchActivity();
+          cards = parseListings(html, bike.label);
+          blocked = cards.blocked === true;
+        } catch (e) {
+          if (!runningRef.current) break;
+          if (/Scrape HTTP (403|429)/.test(e.message)) blocked = true;
+          else { st.discover.shift(); addLog(`⚠️ Nocne szukanie „za drogich” — ${bike.label}: ${String(e.message).slice(0, 120)} — pomijam to wyszukiwanie tej nocy`, "error"); continue; }
+        }
+        if (blocked) {
+          // wyszukiwanie zostaje w kolejce; druga blokada pod rząd → przerwa we wszystkich zapytaniach (jak w zwykłym cyklu)
+          st.discoverBlocks = (st.discoverBlocks || 0) + 1;
+          if (st.discoverBlocks >= 2) {
+            st.discoverBlocks = 0;
+            scrapeBlockedUntilRef.current = Date.now() + SCRAPE_BLOCK_PAUSE_MS;
+            detailBlockedUntilRef.current = Math.max(detailBlockedUntilRef.current, scrapeBlockedUntilRef.current);
+            addLog(`⛔ Nocne szukanie „za drogich”: Kleinanzeigen blokuje wyszukiwania (2 pod rząd) — przerwa ${Math.round(SCRAPE_BLOCK_PAUSE_MS / 60000)} min we wszystkich zapytaniach`, "error");
+          }
+          break;
+        }
+        st.discoverBlocks = 0;
+        st.discover.shift();
+        const now = Date.now();
+        for (const l of cards) {
+          if (l.price == null || l.price <= maxBuyPrice || l.price > nightOverMaxCap) continue; // tylko to, o co pytaliśmy (wyróżnione bywają spoza zakresu)
+          const e = seenIdsRef.current.get(l.listingId);
+          if (!e) { if (!pendingRef.current.has(l.listingId)) { saveSeenEntry(l, false); st.discovered++; } }
+          else if (e.overMax) { e.lastSeenAt = now; e.price = l.price; e.lowest = e.lowest == null ? l.price : Math.min(e.lowest, l.price); }
+        }
+      }
+      persistSeenMap();
+      persistNight();
+      if (st.discover.length > 0) return; // reszta wyszukiwań w następnym cyklu
+      addLog(`🌙 Nocne szukanie „za drogich” zakończone: ${st.discovered} nowych ogłoszeń w pamięci (${st.discoverTotal} wyszukiwań)`, "info");
+    }
+    if (!st.queue) {
+      st.queue = nightCandidates().slice(0, nightCheckMax);
+      st.total = st.queue.length;
+      persistNight();
+      addLog(`🌙 Nocne sprawdzanie cen: ${st.queue.length} ogłoszeń (z wyceną do obserwacji i „za drogie” do ${nightOverMaxCap} €) — po ${NIGHT_BATCH} na cykl, bez AI, chyba że obniżka coś zmienia`, "info");
     }
     let n = 0;
     while (st.queue.length > 0 && n < NIGHT_BATCH && runningRef.current) {
@@ -5753,7 +5872,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                     onCommit={v => setNightOverMaxCap(v)} style={{ width: 80 }} /></label>
                 </div>
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
-                  Wyszukiwania czytają tylko pierwszą stronę wyników, więc obniżki starszych ogłoszeń przechodzą niezauważone. W nocy (przez {NIGHT_WINDOW_H} h od podanej godziny) skaner otwiera strony ogłoszeń z zapamiętaną wyceną i „za drogich” do podanej kwoty — po {NIGHT_BATCH} na cykl, w tym samym odstępie co inne zapytania. Bez kosztu AI; analiza tylko wtedy, gdy przy nowej cenie zysk przechodzi próg albo cena zeszła do limitu zakupu. Usunięte ogłoszenia wypadają z pamięci.
+                  Wyszukiwania czytają tylko pierwszą stronę wyników, więc obniżki starszych ogłoszeń przechodzą niezauważone. W nocy (przez {NIGHT_WINDOW_H} h od podanej godziny) skaner otwiera strony ogłoszeń z zapamiętaną wyceną i „za drogich” do podanej kwoty — po {NIGHT_BATCH} na cykl, w tym samym odstępie co inne zapytania. Bez kosztu AI; analiza tylko wtedy, gdy przy nowej cenie zysk przechodzi próg albo cena zeszła do limitu zakupu. Usunięte ogłoszenia wypadają z pamięci. Na początku nocy każde zaznaczone wyszukiwanie jest dodatkowo sprawdzane w cenie powyżej limitu zakupu (do kwoty „za drogie”) — nowe ogłoszenia są tylko zapamiętywane, żeby ich późniejsze obniżki nie umknęły.
                 </div>
               </div>
 
