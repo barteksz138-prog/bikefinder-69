@@ -18,7 +18,8 @@ export default async function handler(req, res) {
   if (typeof webhookUrl !== "string" || !webhookUrl) return res.status(400).json({ ok: false, status: 400, error: "Brak webhookUrl" });
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return res.status(400).json({ ok: false, status: 400, error: "Brak payload" });
   let payloadText;
-  try { payloadText = JSON.stringify(payload); } catch { return res.status(400).json({ ok: false, status: 400, error: "Niepoprawny payload" }); }
+  // v6.11: tytuł ogłoszenia z „@everyone” / „@here” nie może pingnąć kanału — wyłączamy wszystkie wzmianki
+  try { payloadText = JSON.stringify({ ...payload, allowed_mentions: { parse: [] } }); } catch { return res.status(400).json({ ok: false, status: 400, error: "Niepoprawny payload" }); }
   if (payloadText.length > MAX_PAYLOAD_CHARS) return res.status(413).json({ ok: false, status: 413, error: "Za duża wiadomość" });
 
   // Tylko webhooki Discorda — wcześniej proxy wysyłało dowolne dane pod DOWOLNY adres,

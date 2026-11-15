@@ -1,5 +1,7 @@
 const SCRAPE_TIMEOUT_MS = 20000;      // v6.4
 const SCRAPE_MAX_CHARS = 4_000_000;  // v6.4: strona wyników ~650 tys., ogłoszenia ~270 tys. znaków
+const SCRAPE_MAX_REDIRECTS = 5;      // v6.11
+const KA_HOSTS = ["www.kleinanzeigen.de", "kleinanzeigen.de"];
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -21,17 +23,30 @@ export default async function handler(req, res) {
   try {
     // v6.4: limit czasu (wisząca odpowiedź nie blokuje funkcji) i kontrola domeny po przekierowaniach
     // (krótki adres /s-anzeige/<numer> przekierowuje na pełny — zostaje w kleinanzeigen.de)
-    const resp = await fetch(target.toString(), {
-      signal: AbortSignal.timeout(SCRAPE_TIMEOUT_MS),
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "de-DE,de;q=0.9",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-    });
+    // v6.11: przekierowania obsługujemy sami (redirect: "manual") i sprawdzamy host PRZED pójściem dalej —
+    // wcześniej zapytanie do obcego hosta było już wysłane, zanim kod odrzucił odpowiedź.
+    const signal = AbortSignal.timeout(SCRAPE_TIMEOUT_MS);
+    const headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept-Language": "de-DE,de;q=0.9",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    };
+    let cur = target, resp;
+    for (let hop = 0; ; hop++) {
+      resp = await fetch(cur.toString(), { signal, headers, redirect: "manual" });
+      const loc = resp.status >= 300 && resp.status < 400 ? resp.headers?.get?.("location") : null;
+      if (!loc) break;
+      if (hop >= SCRAPE_MAX_REDIRECTS) return res.status(502).json({ error: "Za dużo przekierowań" });
+      let next;
+      try { next = new URL(loc, cur); } catch { return res.status(502).json({ error: "Niepoprawne przekierowanie" }); }
+      if (next.protocol !== "https:" || !KA_HOSTS.includes(next.hostname)) {
+        return res.status(502).json({ error: `Przekierowanie poza kleinanzeigen.de (${next.hostname})` });
+      }
+      cur = next;
+    }
     let finalHost = "";
-    try { finalHost = new URL(resp.url || target.toString()).hostname; } catch {}
-    if (finalHost && !["www.kleinanzeigen.de", "kleinanzeigen.de"].includes(finalHost)) {
+    try { finalHost = new URL(resp.url || cur.toString()).hostname; } catch {}
+    if (finalHost && !KA_HOSTS.includes(finalHost)) {
       return res.status(502).json({ error: `Przekierowanie poza kleinanzeigen.de (${finalHost})` });
     }
     let html = await resp.text();
@@ -48,7 +63,11 @@ export default async function handler(req, res) {
         html = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>${html.slice(start, end + "</article>".length)}</body></html>`;
       }
     }
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    // v6.11: zwykły tekst + nosniff + sandbox — otwarty w przeglądarce adres /api/scrape?url=… nie uruchomi skryptów
+    // Kleinanzeigen w domenie aplikacji (tam jest localStorage z kluczami API i webhookami). Aplikacja czyta treść przez text().
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "sandbox");
     // Prawdziwy status z Kleinanzeigen (np. 403/429 przy blokadzie, 404/410 dla usuniętego
     // ogłoszenia) — wcześniej zawsze było 200, więc aplikacja nie mogła wykryć blokady.
     return res.status(resp.status).send(html);

@@ -26,6 +26,24 @@ mock = async () => ({ ok: true, status: 200, url: "https://evil.example/landing"
 r = await call("https://www.kleinanzeigen.de/s-anzeige/123");
 assert.equal(r.code, 502);
 
+// v6.11: przekierowanie (3xx) poza kleinanzeigen.de → 502 BEZ zapytania do obcego hosta
+let asked = [];
+mock = async (u, o) => { asked.push(u); assert.equal(o.redirect, "manual");
+  return u.includes("evil") ? { ok: true, status: 200, url: u, text: async () => "zły" } : { ok: false, status: 302, url: u, headers: new Headers({ location: "https://evil.example/landing" }), text: async () => "" }; };
+r = await call("https://www.kleinanzeigen.de/s-anzeige/123");
+assert.equal(r.code, 502); assert.deepEqual(asked, ["https://www.kleinanzeigen.de/s-anzeige/123"], "obcy host nie odpytany");
+// przekierowanie względne w obrębie kleinanzeigen.de → idziemy dalej
+asked = [];
+mock = async (u) => { asked.push(u); return u.endsWith("/123") ? { ok: false, status: 301, url: u, headers: new Headers({ location: "/s-anzeige/rad/123-217-1" }), text: async () => "" }
+  : { ok: true, status: 200, url: u, headers: new Headers(), text: async () => "<html>ok</html>" }; };
+r = await call("https://www.kleinanzeigen.de/s-anzeige/123");
+assert.equal(r.code, 200); assert.equal(asked[1], "https://www.kleinanzeigen.de/s-anzeige/rad/123-217-1");
+// nagłówki: tekst, nosniff, sandbox — strona nie uruchomi się jako HTML w domenie aplikacji
+assert.match(r.headers["Content-Type"], /^text\/plain/); assert.equal(r.headers["X-Content-Type-Options"], "nosniff"); assert.equal(r.headers["Content-Security-Policy"], "sandbox");
+// pętla przekierowań → 502
+mock = async (u) => ({ ok: false, status: 302, url: u, headers: new Headers({ location: "https://www.kleinanzeigen.de/s-anzeige/123" }), text: async () => "" });
+assert.equal((await call("https://www.kleinanzeigen.de/s-anzeige/123")).code, 502);
+
 // za duża odpowiedź → 502
 mock = async (u) => ({ ok: true, status: 200, url: u, text: async () => "x".repeat(4_000_001) });
 r = await call("https://www.kleinanzeigen.de/s-anzeige/123");
