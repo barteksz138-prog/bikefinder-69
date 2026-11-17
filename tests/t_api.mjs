@@ -88,4 +88,27 @@ calls.length = 0; res = mkRes();
 await handler({ method: "POST", body: { provider: "gemini", model: "gemini-2.5-flash", apiKey: "k", imageUrls: [IMG], messages: [{ role: "user", parts: [{ text: "ALL" }] }] } }, res);
 const gb3 = JSON.parse(calls.find(c => c.url.includes("generativelanguage")).opts.body);
 assert.ok(gb3.contents[0].parts[0].inlineData); assert.equal(gb3.contents[0].parts[1].text, "ALL");
+
+// 6. v6.20: pośrednik Freemodel — ten sam format Anthropic, adres claude-n-codex.com:8443; nieznany pośrednik odrzucony
+calls.length = 0;
+nextResp = okResp({ stop_reason: "end_turn", content: [{ type: "text", text: "{}" }], usage: { input_tokens: 5, output_tokens: 3 } });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "sk-myapi_x", relay: "freemodel", messages: [{ role: "user", parts: [{ text: "x" }] }], generationConfig: { claudeEffort: "high" } } }, res);
+assert.equal(res.code, 200);
+assert.equal(calls[0].url, "https://claude-n-codex.com:8443/v1/messages");
+assert.equal(calls[0].opts.headers["x-api-key"], "sk-myapi_x");
+assert.equal(JSON.parse(calls[0].opts.body).output_config.effort, "high");
+calls.length = 0; res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(calls[0].url, "https://api.anthropic.com/v1/messages", "bez relay — Anthropic");
+nextResp = okResp({ type: "error", error: { type: "billing_error", message: "insufficient balance" } }, 402);
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "freemodel", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 402); assert.match(res.body.error.message, /^Freemodel HTTP 402/);
+calls.length = 0; res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "https://evil.example", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 400); assert.equal(calls.length, 0, "nieznany pośrednik — bez zapytania");
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "__proto__", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 400);
 console.log("API TESTS OK");

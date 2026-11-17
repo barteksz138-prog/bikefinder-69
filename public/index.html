@@ -1616,7 +1616,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.19 (2026-11-15)";
+const APP_VERSION = "v6.20 (2026-11-17)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1761,6 +1761,8 @@ function App() {
   });
   // Klucz Claude (Anthropic) — potrzebny, gdy model analizy albo model weryfikacji to Claude.
   const [claudeKey,      setClaudeKey]      = useState(cfg.claudeKey || "");
+  // v6.20: klucz pośrednika Freemodel (claude-n-codex.com) — przez niego idą modele Claude oprócz Haiku (np. Sonnet do weryfikacji); Haiku zawsze przez klucz Anthropic
+  const [freemodelKey,   setFreemodelKey]   = useState(cfg.freemodelKey || "");
   // Model do trudnych przypadków i weryfikacji okazji (dawniej na sztywno Gemini 2.5 Pro).
   const [strongModel,    setStrongModel]    = useState(() =>
     STRONG_MODELS.some(m => m.id === cfg.strongModel) ? cfg.strongModel : STRONG_GEMINI_MODEL);
@@ -2171,7 +2173,7 @@ function App() {
   }, [results]);
 
   const saveSettings = (silent = false) => {
-    const data = { geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
+    const data = { geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
     try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
     if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
@@ -2181,7 +2183,7 @@ function App() {
     if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
     const t = setTimeout(() => saveSettings(true), 600);
     return () => clearTimeout(t);
-  }, [geminiKey, claudeKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
+  }, [geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -2225,6 +2227,8 @@ function App() {
   // Dostawca i klucz dla danego modelu (Groq / Gemini / Claude)
   const providerFor = (model) => provider === "groq" ? "groq" : isClaudeModel(model) ? "anthropic" : "gemini";
   const keyFor = (model) => provider !== "groq" && isClaudeModel(model) ? claudeKey : geminiKey;
+  // v6.20: czy ten model idzie przez Freemodel — tylko Claude i nie Haiku (Haiku 5.5 Freemodel odrzuca błędem 400, test 17.11.2026)
+  const usesFreemodel = (model) => provider !== "groq" && !!String(freemodelKey || "").trim() && isClaudeModel(model) && !/haiku/i.test(model);
   // Tryb pracy wg wydatków: "premium" (w tempie budżetu) → "normal" (wydatki wyprzedzają tempo) →
   // "eco" (budżet wyczerpany). Tempo = budżet rozłożony równo na dni miesiąca + zapas jednego dnia,
   // żeby pieniądze nie zniknęły w pierwszym tygodniu.
@@ -2306,7 +2310,8 @@ function App() {
     const model = modelOverride || geminiModel;
     const prov = providerFor(model);
     const apiKey = keyFor(model);
-    if (!apiKey) throw new Error(prov === "anthropic" ? "Brak klucza Claude (Anthropic) — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach");
+    const viaFreemodel = usesFreemodel(model);
+    if (!apiKey && !viaFreemodel) throw new Error(prov === "anthropic" ? "Brak klucza Claude (Anthropic) — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach");
     const fullText = cachePrefix ? `${cachePrefix}\n\n${prompt}` : prompt;
     if (prov !== "groq") {
       const maxOut = overrides.maxOutputTokens || 600;
@@ -2320,10 +2325,9 @@ function App() {
         throw err;
       }
     }
-    const data = await callProxy({
+    const proxyBody = {
       provider: prov,
       model,
-      apiKey,
       ...(prov !== "groq" && Array.isArray(imageUrls) && imageUrls.length > 0 ? { imageUrls } : {}),
       // Stała część (cacheControl) jako osobny blok — proxy wstawia zdjęcia ZA nią, przed danymi ogłoszenia,
       // żeby wspólny początek promptu (i cache) był taki sam dla wszystkich ogłoszeń. Dla Gemini znacznik jest usuwany.
@@ -2342,7 +2346,29 @@ function App() {
               || ((overrides.thinkingBudget === -1 || ["medium", "high"].includes(overrides.thinkingLevel)) ? "medium" : "low"),
           }
         : { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json", ...overrides },
-    }, { session: true });
+    };
+    let data, viaLabel = "";
+    if (viaFreemodel) {
+      // v6.20: najpierw Freemodel; gdy nie odpowie albo zwróci błąd (np. skończone saldo) — to samo zapytanie przez klucz Anthropic.
+      // STOP (przerwanie sesji) nie przełącza na zapas — przerywa jak zawsze.
+      let fmErr = null;
+      try {
+        data = await callProxy({ ...proxyBody, apiKey: String(freemodelKey).trim(), relay: "freemodel" }, { session: true });
+        if (data?.error) fmErr = data.error?.message || JSON.stringify(data.error);
+      } catch (e) {
+        if (e?.name === "AbortError") throw e;
+        fmErr = e?.message || String(e);
+      }
+      if (fmErr) {
+        if (!apiKey) throw new Error(`Freemodel: ${fmErr} (brak klucza Anthropic na zapas)`);
+        addLog(`⚠️ Freemodel nie odpowiedział (${String(fmErr).slice(0, 160)}) — ponawiam ${model} przez klucz Anthropic`, "error");
+        data = await callProxy({ ...proxyBody, apiKey }, { session: true });
+      } else {
+        viaLabel = " przez Freemodel";
+      }
+    } else {
+      data = await callProxy({ ...proxyBody, apiKey }, { session: true });
+    }
     if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
     if (provider === "groq") {
       const choice = data?.choices?.[0];
@@ -2357,7 +2383,7 @@ function App() {
       const nImg = Number(data.imagesAttached) || 0;
       addAiCostUsd(usd, stage, u, nImg);
       // v5.14: koszt KAŻDEGO zapytania w logu — tokeny wejścia (w tym z cache i zapis do cache), wyjścia (z myśleniem), zdjęcia
-      addLog(`💲 ${model} [${stage}]: wejście ${u.promptTokenCount || 0} tok (z cache ${u.cachedContentTokenCount || 0}${u.cacheWriteTokenCount ? `, zapis do cache ${u.cacheWriteTokenCount}` : ""}), wyjście ${(u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0)} tok${nImg ? `, zdjęć ${nImg}` : ""} → ${(usd * USD_PLN_RATE * 100).toFixed(2)} gr`, "info");
+      addLog(`💲 ${model}${viaLabel} [${stage}]: wejście ${u.promptTokenCount || 0} tok (z cache ${u.cachedContentTokenCount || 0}${u.cacheWriteTokenCount ? `, zapis do cache ${u.cacheWriteTokenCount}` : ""}), wyjście ${(u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0)} tok${nImg ? `, zdjęć ${nImg}` : ""} → ${(usd * USD_PLN_RATE * 100).toFixed(2)} gr`, "info");
     }
     return data;
   };
@@ -5616,7 +5642,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
   const startLoop = async () => {
     if (!keyFor(geminiModel)) { addLog(`❌ Brak klucza API (${provider === "groq" ? "Groq" : aiName(geminiModel)}) dla modelu ${geminiModel}`, "error"); setTab("settings"); return; }
     // Model weryfikacji okazji (Gemini/Claude) potrzebuje własnego klucza — bez niego każda okazja kończyłaby jako "niepewne"
-    if (provider !== "groq" && !keyFor(strongModel)) { addLog(`❌ Brak klucza ${aiName(strongModel)} — wybrany model weryfikacji okazji to ${strongModel} (Ustawienia)`, "error"); setTab("settings"); return; }
+    if (provider !== "groq" && !keyFor(strongModel) && !usesFreemodel(strongModel)) { addLog(`❌ Brak klucza ${aiName(strongModel)} — wybrany model weryfikacji okazji to ${strongModel} (Ustawienia)`, "error"); setTab("settings"); return; }
     if (!discordWebhook) { addLog("❌ Brak Discord Webhook",    "error"); setTab("settings"); return; }
     if (runningRef.current || startingRef.current) return;
     startingRef.current = true;
@@ -5940,6 +5966,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                     ? [[provider === "groq" ? "Groq API" : "Gemini API", geminiKey ? "✅ OK" : "❌ Brak", geminiKey ? "#22c55e" : "#f87171"]] : []),
                   ...(isClaudeModel(geminiModel) || isClaudeModel(strongModel) || claudeKey
                     ? [["Claude API", claudeKey ? "✅ OK" : "❌ Brak", claudeKey ? "#22c55e" : "#f87171"]] : []),
+                  ...(provider !== "groq" && String(freemodelKey || "").trim() ? [["Freemodel", "✅ klucz wpisany", "#22c55e"]] : []),
                   ["Discord",       discordWebhook ? "✅ OK" : "❌ Brak", discordWebhook ? "#22c55e" : "#f87171"],
                   ["AI (miesiąc)", `${(aiSpend.usd * USD_PLN_RATE).toFixed(0)} / ${aiBudgetPln} zł`, aiSpend.usd * USD_PLN_RATE >= aiBudgetPln ? "#f87171" : "#94a3b8"],
                   ["Aktywne modele",`${selectedBikes.length}/${BIKE_MODELS.length}`, "#f59e0b"],
@@ -6308,6 +6335,19 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                     value={claudeKey} onChange={e => setClaudeKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
                     console.anthropic.com → API Keys (płatność z góry: Billing → doładowanie). Potrzebny tylko, gdy wybierzesz model Claude.
+                  </div>
+                </div>
+              )}
+
+              {provider !== "groq" && (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                    Klucz Freemodel (claude-n-codex.com) (opcjonalne)
+                  </label>
+                  <input type="password" placeholder="sk-myapi_..."
+                    value={freemodelKey} onChange={e => setFreemodelKey(e.target.value)} />
+                  <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
+                    Gdy wpisany — modele Claude oprócz Haiku (np. Sonnet do weryfikacji okazji) idą przez Freemodel. Haiku zawsze idzie przez klucz Anthropic. Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic.
                   </div>
                 </div>
               )}
