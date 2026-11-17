@@ -113,6 +113,12 @@ const attachImages = async (messages, imageUrls, maxPerImage = Infinity) => {
 // i temperature są odrzucane przez API, więc ich nie wysyłamy.
 const CLAUDE_MAX_IMAGE_BASE64 = 5 * 1024 * 1024; // limit Anthropic: 5 MB na zdjęcie (po zakodowaniu)
 const CLAUDE_EFFORTS = ["low", "medium", "high"];
+// v6.20: pośrednik Freemodel (claude-n-codex.com) — ten sam format Messages API co Anthropic, inny adres i klucz.
+// Adres jest na stałe w kodzie (tylko ten jeden dodatkowy host), żeby publiczny /api/gemini nie przekazywał zapytań dokądkolwiek.
+const CLAUDE_ENDPOINTS = {
+  anthropic: "https://api.anthropic.com/v1/messages",
+  freemodel: "https://claude-n-codex.com:8443/v1/messages",
+};
 
 // Poziom myślenia: jawny claudeEffort z frontendu albo przybliżenie z "gałek" Gemini.
 const claudeEffortFrom = (cfg) => {
@@ -138,14 +144,14 @@ const toClaudeContent = (parts) => (Array.isArray(parts) ? parts : []).map(p => 
   return block;
 }).filter(b => b.type !== "text" || b.text.length > 0);
 
-const callClaude = async ({ model, apiKey, contents, generationConfig }) => {
+const callClaude = async ({ model, apiKey, contents, generationConfig, relay = "anthropic" }) => {
   const messages = contents.map(m => ({
     role: m.role === "model" || m.role === "assistant" ? "assistant" : "user",
     content: toClaudeContent(m.parts),
   })).filter(m => m.content.length > 0);
   const effort = claudeEffortFrom(generationConfig);
   const minTokens = effort === "high" ? 32000 : effort === "medium" ? 16000 : 8000; // myślenie liczy się do max_tokens
-  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+  const resp = await fetch(CLAUDE_ENDPOINTS[relay] || CLAUDE_ENDPOINTS.anthropic, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -164,7 +170,7 @@ const callClaude = async ({ model, apiKey, contents, generationConfig }) => {
   if (!resp.ok || data?.type === "error") {
     // Komunikat z kodem HTTP — frontend rozpoznaje po nim limity (429) i przeciążenie (529)
     const retryAfter = resp.headers.get("retry-after");
-    const msg = `Claude HTTP ${resp.status} ${data?.error?.type || ""}: ${data?.error?.message || "nieznany błąd"}`
+    const msg = `${relay === "freemodel" ? "Freemodel" : "Claude"} HTTP ${resp.status} ${data?.error?.type || ""}: ${data?.error?.message || "nieznany błąd"}`
       + (retryAfter ? ` (retry in ${retryAfter}s)` : "");
     return { status: resp.ok ? 500 : resp.status, body: { error: { message: msg, code: resp.status } } };
   }
@@ -202,7 +208,7 @@ export default async function handler(req, res) {
   let body;
   try { body = req.body; } catch { return res.status(400).json({ error: "Niepoprawny JSON" }); }
 
-  const { provider, model, apiKey, messages, generationConfig, action, cachedContent, ttlSeconds, systemInstruction, cacheName, imageUrls } = body || {};
+  const { provider, model, apiKey, messages, generationConfig, action, cachedContent, ttlSeconds, systemInstruction, cacheName, imageUrls, relay } = body || {};
   if (!apiKey)   return res.status(400).json({ error: "Brak apiKey" });
   if (!model)    return res.status(400).json({ error: "Brak model" });
 
@@ -318,10 +324,11 @@ export default async function handler(req, res) {
 
     } else if (provider === "anthropic") {
       if (!/^claude-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model Claude" } });
+      if (relay != null && !Object.prototype.hasOwnProperty.call(CLAUDE_ENDPOINTS, relay)) return res.status(400).json({ error: { message: "Nieznany pośrednik Claude" } });
       const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;
       // Anthropic odrzuca zdjęcia powyżej 5 MB (base64) — takie pomijamy od razu, zamiast tracić całe zapytanie
       const { contents, attached } = wantsImages ? await attachImages(messages, imageUrls, CLAUDE_MAX_IMAGE_BASE64) : { contents: messages, attached: 0 };
-      const { status, body: out } = await callClaude({ model, apiKey, contents, generationConfig });
+      const { status, body: out } = await callClaude({ model, apiKey, contents, generationConfig, relay: relay || "anthropic" });
       if (wantsImages && out && !out.error) out.imagesAttached = attached;
       return res.status(status).json(out);
 

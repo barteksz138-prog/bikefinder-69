@@ -124,6 +124,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - Repo jest PUBLICZNE (klucze tylko w localStorage — nic poufnego do repo); ostrzeżenie Node `DEP0169 url.parse()` w `/api/scrape` jest niegroźne (pochodzi ze środowiska Vercela).
 
 ## 6. Ryzyka i ograniczenia
+- Freemodel (v6.20) to nieznany zewnętrzny pośrednik (brak informacji publicznych o operatorze) — może przestać działać z dnia na dzień; dlatego zapas na kluczu Anthropic. Prompty i zdjęcia ogłoszeń przechodzą przez ten serwis.
 - Regulamin Kleinanzeigen (§ 5 pkt 1) zakazuje automatycznego pobierania treści bez zgody — dotyczy całego skanera. Nie przyspieszać odpytywania; blokady mają bezpiecznik.
 - Zapytania idą z serwerów Vercela (`/api/scrape`), nie z komputera właściciela.
 - Chrome usypia karty w tle (Ustawienia → Wydajność → dodać adres skanera do „zawsze aktywne”); Opera GX ma limity GX Control.
@@ -131,6 +132,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - Log w aplikacji trzyma ok. 500 linii — od v5.14 bez rutynowych linii na każde wyszukiwanie (wcześniej starczało na ok. 25 min). Do historii: „Dziennik zdarzeń” w Statusie i trwałe „Wyniki” (`ddf_results`, ostatnie 200).
 
 ## 7. Historia wersji (skrót)
+- v6.20: klucz Freemodel (claude-n-codex.com, pośrednik w formacie Anthropic) — pole w Ustawieniach; modele Claude oprócz Haiku (weryfikacja Sonnetem) idą przez Freemodel, Haiku przez Anthropic; przy błędzie Freemodel (saldo, awaria, przekroczony czas) to samo zapytanie idzie przez klucz Anthropic; w logu kosztu dopisek „przez Freemodel”. Test 17.11.2026: Sonnet 5.5 i Sonnet 5 działają, Haiku 5.5 → 400; ceny jak u Anthropic; serwis sam zapisuje prompt w cache (zapis 1,25×) i dokłada ok. 230 tokenów własnego polecenia; 5 $ startowego salda.
 - v6.18: szosy i gravele (etap 3) — po teście na 780 prawdziwych ogłoszeniach: „tak” bez ustalonego rocznika → „niepewne”, w bazie dowody rocznika 2014+ i starsze generacje modeli, Groq odsiewa 9- / 10-rzędowe Ultegra / 105 / Dura-Ace, filtr słów rozszerzony o części i rowery uszkodzone. Raport: `docs/test-szosy-kleinanzeigen-2026-11.md`.
 - v6.16: szosy i gravele (etapy 1 i 2) — przełącznik na karcie Skaner (domyślnie wyłączony), 41 wyszukiwań 200–800 € (linki sprawdzone na żywo), własny filtr słów, Groq szosa / gravel, osobne polecenie analizy i weryfikacji z polem `naped`, rocznik od 2014, alerty z etykietą 🚴, opcjonalny osobny kanał; baza cen `KB_ROAD` z danych OLX (2322 oferty): tabele kategorii, 15 wpisów marek z nazewnictwem wersji, ściąga rozpoznawania osprzętu na zdjęciach. Szczegóły: p. 1a, dane: `docs/ceny-szosy-olx-2026-11.md`.
 - v6.17: naturalna wiadomość do sprzedawcy („na granicy”) — zamiast „Mein Preisvorschlag berücksichtigt: …” jedno zdanie z najwyżej 2 konkretnymi rzeczami do naprawy / wymiany (albo samo „Wären X € für Sie in Ordnung?”) + „Ich könnte es kurzfristig abholen und bar bezahlen.” (decyzja właściciela 15.11.2026: odbiór osobisty, gotówka). Polecenia AI: bez rocznika, porównań z rynkiem, cen, cytatów ze sprzedawcy i nazw osprzętu; filtr w kodzie (`negotiationReasons`) wyrzuca takie powody, gdyby AI je wpisało.
