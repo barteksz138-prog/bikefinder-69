@@ -960,6 +960,7 @@ const PROVIDERS = {
       { id: "gemini-flash-latest",   label: "Gemini 3.5 Flash (najnowszy, droższy)" },
       { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro" },
       { id: "claude-haiku-5-5",      label: "Claude Haiku 5.5 (Anthropic — tańszy, wymaga klucza Claude)" },
+      { id: "gpt-6.1-terra",         label: "GPT-6.1 Terra (Freemodel — wymaga klucza Freemodel; zapas: Haiku przez Anthropic)" },
     ],
     keyPlaceholder: "AIza...",
     keyHint: "aistudio.google.com/apikey",
@@ -1004,11 +1005,18 @@ const GEMINI_PRICES = {
   // Cache Claude nie ma opłaty za przechowywanie — płaci się tylko za zapis i odczyty.
   "claude-haiku-5-5":      { in: 0.10, cached: 0.01,  out: 0.50,  storage: 0, write: 0.20 },
   "claude-sonnet-5-5":     { in: 2.00, cached: 0.10,  out: 10.00, storage: 0, write: 4.00 },
+  // v6.21: GPT-6.1 Terra przez Freemodel — stawki z rozliczenia Freemodel (test 17.11.2026): wejście 1 $, wyjście ok. 5 $,
+  // zapis do cache 1,25×, odczyt z cache 0,1× (serwis sam zapisuje prompt w cache).
+  "gpt-6.1-terra":         { in: 1.00, cached: 0.10,  out: 5.00,  storage: 0, write: 1.25 },
 };
 const GEMINI_PRICE_FALLBACK = { in: 2.00, cached: 0.20, out: 12.00, storage: 4.50 }; // nieznany model — liczymy jak najdroższy
 
 const isClaudeModel = (m) => /^claude-/i.test(m || "");
-const aiName = (m) => isClaudeModel(m) ? "Claude" : "Gemini";
+// v6.21: modele GPT przez pośrednika Freemodel (format OpenAI); zapas przy błędzie Freemodel — Haiku przez klucz Anthropic
+const isGptModel = (m) => /^gpt-/i.test(m || "");
+const isGeminiModel = (m) => /^gemini-/i.test(m || "");
+const GPT_FALLBACK_MODEL = "claude-haiku-5-5";
+const aiName = (m) => isClaudeModel(m) ? "Claude" : isGptModel(m) ? "Freemodel" : "Gemini";
 
 // Mocniejszy model do decyzji, w których błąd kosztuje najwięcej: weryfikacja okazji i trudne przypadki.
 // Domyślnie Gemini 2.5 Pro (jak dotąd); w Ustawieniach można wybrać tańszy model.
@@ -1616,7 +1624,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.20 (2026-11-17)";
+const APP_VERSION = "v6.21 (2026-11-17)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -2225,8 +2233,9 @@ function App() {
     return ((prompt - cached - written) * pr.in + cached * pr.cached + written * (pr.write ?? pr.in) + out * pr.out) / 1e6;
   };
   // Dostawca i klucz dla danego modelu (Groq / Gemini / Claude)
-  const providerFor = (model) => provider === "groq" ? "groq" : isClaudeModel(model) ? "anthropic" : "gemini";
-  const keyFor = (model) => provider !== "groq" && isClaudeModel(model) ? claudeKey : geminiKey;
+  const providerFor = (model) => provider === "groq" ? "groq" : isGptModel(model) ? "freemodel-gpt" : isClaudeModel(model) ? "anthropic" : "gemini";
+  const keyFor = (model) => provider !== "groq" && isGptModel(model) ? String(freemodelKey || "").trim()
+    : provider !== "groq" && isClaudeModel(model) ? claudeKey : geminiKey;
   // v6.20: czy ten model idzie przez Freemodel — tylko Claude i nie Haiku (Haiku 5.5 Freemodel odrzuca błędem 400, test 17.11.2026)
   const usesFreemodel = (model) => provider !== "groq" && !!String(freemodelKey || "").trim() && isClaudeModel(model) && !/haiku/i.test(model);
   // Tryb pracy wg wydatków: "premium" (w tempie budżetu) → "normal" (wydatki wyprzedzają tempo) →
@@ -2248,7 +2257,7 @@ function App() {
   // razem z rezerwą na jego maksymalny koszt (pełny limit tokenów odpowiedzi). Groq nie jest wliczany.
   const estimateCallCostUsd = (model, promptChars, maxOutputTokens, nImages) => {
     const pr = GEMINI_PRICES[model] || GEMINI_PRICE_FALLBACK;
-    const imgTokens = isClaudeModel(model) ? 1600 : /gemini-3|flash-latest/i.test(model || "") ? 1120 : 1300;
+    const imgTokens = isGptModel(model) ? 2700 : isClaudeModel(model) ? 1600 : /gemini-3|flash-latest/i.test(model || "") ? 1120 : 1300;
     const inTokens = (promptChars || 0) / 3 + (nImages || 0) * imgTokens;
     return (inTokens * pr.in + (maxOutputTokens || 2048) * pr.out) / 1e6;
   };
@@ -2311,14 +2320,14 @@ function App() {
     const prov = providerFor(model);
     const apiKey = keyFor(model);
     const viaFreemodel = usesFreemodel(model);
-    if (!apiKey && !viaFreemodel) throw new Error(prov === "anthropic" ? "Brak klucza Claude (Anthropic) — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach");
+    if (!apiKey && !viaFreemodel) throw new Error(prov === "anthropic" ? "Brak klucza Claude (Anthropic) — wpisz go w Ustawieniach" : prov === "freemodel-gpt" ? "Brak klucza Freemodel — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach");
     const fullText = cachePrefix ? `${cachePrefix}\n\n${prompt}` : prompt;
     if (prov !== "groq") {
       const maxOut = overrides.maxOutputTokens || 600;
       let est = estimateCallCostUsd(model, fullText.length, maxOut, Array.isArray(imageUrls) ? imageUrls.length : 0);
       // Claude: najgorszy przypadek — cała stała część promptu zapisywana do cache (zapis 1 h jest droższy od zwykłego wejścia)
       const prC = GEMINI_PRICES[model];
-      if (isClaudeModel(model) && cachePrefix && cacheable && prC?.write) est += (cachePrefix.length / 3) * (prC.write - prC.in) / 1e6;
+      if ((isClaudeModel(model) || isGptModel(model)) && cachePrefix && cacheable && prC?.write) est += (cachePrefix.length / 3) * (prC.write - prC.in) / 1e6;
       if (!budgetAllows(est)) {
         const err = new Error(`budżet AI na ten miesiąc wyczerpany (${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} z ${aiBudgetPln} zł)`);
         err.budget = true;
@@ -2347,8 +2356,30 @@ function App() {
           }
         : { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json", ...overrides },
     };
-    let data, viaLabel = "";
-    if (viaFreemodel) {
+    let data, viaLabel = "", usedModel = model;
+    if (prov === "freemodel-gpt") {
+      // v6.21: GPT przez Freemodel; gdy nie odpowie / skończy się saldo — to samo zapytanie Haiku przez klucz Anthropic
+      // (poziom myślenia przeniesiony 1:1). STOP przerywa jak zawsze, bez zapasu.
+      let fmErr = null;
+      try {
+        data = await callProxy({ ...proxyBody, apiKey }, { session: true });
+        if (data?.error) fmErr = data.error?.message || JSON.stringify(data.error);
+      } catch (e) {
+        if (e?.name === "AbortError") throw e;
+        fmErr = e?.message || String(e);
+      }
+      if (fmErr) {
+        if (!claudeKey) throw new Error(`Freemodel: ${fmErr} (brak klucza Anthropic na zapas — Haiku)`);
+        addLog(`⚠️ Freemodel nie odpowiedział (${String(fmErr).slice(0, 160)}) — ponawiam przez ${GPT_FALLBACK_MODEL} (klucz Anthropic)`, "error");
+        const gc = proxyBody.generationConfig || {};
+        const effort = ["low", "medium", "high"].includes(gc.reasoningEffort) ? gc.reasoningEffort : undefined;
+        usedModel = GPT_FALLBACK_MODEL;
+        data = await callProxy({ ...proxyBody, provider: "anthropic", model: GPT_FALLBACK_MODEL, apiKey: claudeKey,
+          generationConfig: { ...gc, ...(effort ? { claudeEffort: effort } : {}) } }, { session: true });
+      } else {
+        viaLabel = " przez Freemodel";
+      }
+    } else if (viaFreemodel) {
       // v6.20: najpierw Freemodel; gdy nie odpowie albo zwróci błąd (np. skończone saldo) — to samo zapytanie przez klucz Anthropic.
       // STOP (przerwanie sesji) nie przełącza na zapas — przerywa jak zawsze.
       let fmErr = null;
@@ -2379,11 +2410,11 @@ function App() {
       return { candidates: [{ content: { parts: [{ text }] }, finishReason }] };
     }
     if (data?.usageMetadata) {
-      const u = data.usageMetadata, usd = geminiCallCostUsd(model, u);
+      const u = data.usageMetadata, usd = geminiCallCostUsd(usedModel, u);
       const nImg = Number(data.imagesAttached) || 0;
       addAiCostUsd(usd, stage, u, nImg);
       // v5.14: koszt KAŻDEGO zapytania w logu — tokeny wejścia (w tym z cache i zapis do cache), wyjścia (z myśleniem), zdjęcia
-      addLog(`💲 ${model}${viaLabel} [${stage}]: wejście ${u.promptTokenCount || 0} tok (z cache ${u.cachedContentTokenCount || 0}${u.cacheWriteTokenCount ? `, zapis do cache ${u.cacheWriteTokenCount}` : ""}), wyjście ${(u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0)} tok${nImg ? `, zdjęć ${nImg}` : ""} → ${(usd * USD_PLN_RATE * 100).toFixed(2)} gr`, "info");
+      addLog(`💲 ${usedModel}${viaLabel} [${stage}]: wejście ${u.promptTokenCount || 0} tok (z cache ${u.cachedContentTokenCount || 0}${u.cacheWriteTokenCount ? `, zapis do cache ${u.cacheWriteTokenCount}` : ""}), wyjście ${(u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0)} tok${nImg ? `, zdjęć ${nImg}` : ""} → ${(usd * USD_PLN_RATE * 100).toFixed(2)} gr`, "info");
     }
     return data;
   };
@@ -2425,7 +2456,7 @@ function App() {
         : historyForApi.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
 
       if (provider !== "groq") {
-        const est = estimateCallCostUsd(geminiModel, JSON.stringify(messages).length, isClaudeModel(geminiModel) ? 16000 : 8192, 0);
+        const est = estimateCallCostUsd(geminiModel, JSON.stringify(messages).length, !isGeminiModel(geminiModel) ? 16000 : 8192, 0);
         if (!budgetAllows(est)) throw new Error(`Budżet AI na ten miesiąc wyczerpany (${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} z ${aiBudgetPln} zł) — zwiększ go w Ustawieniach`);
       }
       const data = await callProxy({
@@ -3417,7 +3448,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     // zero regresji funkcjonalnej, cache to czysta optymalizacja kosztu.
     const cacheKey = `${geminiModel}|${hashStr(geminiKey)}|${hashStr(staticPrefix)}`;
     const getCachedContentName = async () => {
-      if (provider === "groq" || isClaudeModel(geminiModel)) return null; // explicit cache tylko Gemini (Claude: znacznik cache w zapytaniu)
+      if (provider === "groq" || !isGeminiModel(geminiModel)) return null; // explicit cache tylko Gemini (Claude: znacznik cache w zapytaniu)
       const now = Date.now();
       const existing = cacheMapRef.current[cacheKey];
       if (existing && existing.expiresAt > now) return existing.name;
@@ -3980,6 +4011,11 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     const stepConfig = (step) => {
       if (provider === "groq") return [{ reasoningEffort: step.effort, maxOutputTokens: step.effort === "low" ? 3000 : 8000 }, {}];
       const model = step.model || geminiModel;
+      // v6.21: GPT przez Freemodel — ten sam poziom myślenia co Claude (reasoning_effort), limit z zapasem
+      if (isGptModel(model)) {
+        const effort = ["low", "medium", "high"].includes(step.level) ? step.level : "medium";
+        return [{ reasoningEffort: effort, maxOutputTokens: effort === "high" ? 32000 : effort === "medium" ? 16000 : 8000 }, { model: step.model || null }];
+      }
       // Claude: poziom myślenia (effort) z planu; limit wyjścia z zapasem, bo myślenie liczy się do limitu
       if (isClaudeModel(model)) {
         const effort = ["low", "medium", "high"].includes(step.level) ? step.level : "medium";
@@ -3996,7 +4032,7 @@ Przeanalizuj to ogłoszenie i odpowiedz w formacie JSON dokładnie wg schematu p
     const stepLabel = (step) => {
       if (provider === "groq") return `rozumowanie ${step.effort}`;
       const model = step.model || geminiModel;
-      if (isClaudeModel(model)) return `${model}, myślenie ${step.level || "medium"}`;
+      if (isClaudeModel(model) || isGptModel(model)) return `${model}, myślenie ${step.level || "medium"}`;
       return `${model}, myślenie ${isGen3(model) ? step.level : step.budget === -1 ? "dynamiczne" : step.budget}`;
     };
 
@@ -5962,11 +5998,11 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               <div style={{ background: "#0d1526", border: "1px solid #1a2d4a", borderRadius: 14, padding: 20 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14, color: "#94a3b8" }}>📊 Status</div>
                 {[
-                  ...(provider === "groq" || !isClaudeModel(geminiModel) || !isClaudeModel(strongModel) || geminiKey
+                  ...(provider === "groq" || isGeminiModel(geminiModel) || isGeminiModel(strongModel) || geminiKey
                     ? [[provider === "groq" ? "Groq API" : "Gemini API", geminiKey ? "✅ OK" : "❌ Brak", geminiKey ? "#22c55e" : "#f87171"]] : []),
                   ...(isClaudeModel(geminiModel) || isClaudeModel(strongModel) || claudeKey
                     ? [["Claude API", claudeKey ? "✅ OK" : "❌ Brak", claudeKey ? "#22c55e" : "#f87171"]] : []),
-                  ...(provider !== "groq" && String(freemodelKey || "").trim() ? [["Freemodel", "✅ klucz wpisany", "#22c55e"]] : []),
+                  ...(provider !== "groq" && (String(freemodelKey || "").trim() || isGptModel(geminiModel)) ? [["Freemodel", String(freemodelKey || "").trim() ? "✅ klucz wpisany" : "❌ Brak", String(freemodelKey || "").trim() ? "#22c55e" : "#f87171"]] : []),
                   ["Discord",       discordWebhook ? "✅ OK" : "❌ Brak", discordWebhook ? "#22c55e" : "#f87171"],
                   ["AI (miesiąc)", `${(aiSpend.usd * USD_PLN_RATE).toFixed(0)} / ${aiBudgetPln} zł`, aiSpend.usd * USD_PLN_RATE >= aiBudgetPln ? "#f87171" : "#94a3b8"],
                   ["Aktywne modele",`${selectedBikes.length}/${BIKE_MODELS.length}`, "#f59e0b"],
@@ -6293,7 +6329,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
               <div style={{ marginBottom: 14 }}>
                 <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                  {provider === "groq" ? "Klucz API *" : `Klucz API Gemini${isClaudeModel(geminiModel) && isClaudeModel(strongModel) ? " (opcjonalne)" : " *"}`}
+                  {provider === "groq" ? "Klucz API *" : `Klucz API Gemini${!isGeminiModel(geminiModel) && !isGeminiModel(strongModel) ? " (opcjonalne)" : " *"}`}
                 </label>
                 <input type="password" placeholder={PROVIDERS[provider].keyPlaceholder}
                   value={geminiKey} onChange={e => setGeminiKey(e.target.value)} />
@@ -6329,7 +6365,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               {provider !== "groq" && (
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                    Klucz API Claude (Anthropic){isClaudeModel(geminiModel) || isClaudeModel(strongModel) ? " *" : " (opcjonalne)"}
+                    Klucz API Claude (Anthropic){isClaudeModel(geminiModel) || isClaudeModel(strongModel) ? " *" : isGptModel(geminiModel) ? " (zapas dla GPT — zalecany)" : " (opcjonalne)"}
                   </label>
                   <input type="password" placeholder="sk-ant-..."
                     value={claudeKey} onChange={e => setClaudeKey(e.target.value)} />
@@ -6342,12 +6378,12 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               {provider !== "groq" && (
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                    Klucz Freemodel (claude-n-codex.com) (opcjonalne)
+                    Klucz Freemodel (claude-n-codex.com){isGptModel(geminiModel) ? " *" : " (opcjonalne)"}
                   </label>
                   <input type="password" placeholder="sk-myapi_..."
                     value={freemodelKey} onChange={e => setFreemodelKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
-                    Gdy wpisany — modele Claude oprócz Haiku (np. Sonnet do weryfikacji okazji) idą przez Freemodel. Haiku zawsze idzie przez klucz Anthropic. Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic.
+                    Gdy wpisany — modele Claude oprócz Haiku (np. Sonnet do weryfikacji okazji) idą przez Freemodel. Haiku zawsze idzie przez klucz Anthropic. Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic. Model analizy GPT-6.1 Terra działa tylko przez Freemodel (zapas: Haiku przez klucz Anthropic).
                   </div>
                 </div>
               )}
