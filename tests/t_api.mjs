@@ -111,4 +111,42 @@ assert.equal(res.code, 400); assert.equal(calls.length, 0, "nieznany pośrednik 
 res = mkRes();
 await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "__proto__", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
 assert.equal(res.code, 400);
+
+// 7. v6.21: GPT przez Freemodel — format OpenAI, zdjęcia jako data URL (za stałą częścią), mapowanie odpowiedzi na Gemini
+calls.length = 0;
+nextResp = okResp({ model: "gpt-6.1-terra", choices: [{ index: 0, message: { role: "assistant", content: "{\"decyzja\":\"nie\"}" }, finish_reason: "stop" }],
+  usage: { prompt_tokens: 3051, completion_tokens: 247, prompt_tokens_details: { cached_tokens: 100, cache_write_tokens: 2497 } } });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "freemodel-gpt", model: "gpt-6.1-terra", apiKey: "sk-myapi_g", imageUrls: [IMG],
+  messages: [{ role: "user", parts: [{ text: "STATIC", cacheControl: true }, { text: "DYN" }] }],
+  generationConfig: { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json", reasoningEffort: "medium" } } }, res);
+assert.equal(res.code, 200);
+const g7 = calls.find(c => c.url === "https://claude-n-codex.com:8443/v1/chat/completions");
+assert.ok(g7, "zapytanie do Freemodel /v1/chat/completions");
+assert.equal(g7.opts.headers["Authorization"], "Bearer sk-myapi_g");
+const gb7 = JSON.parse(g7.opts.body);
+assert.equal(gb7.model, "gpt-6.1-terra"); assert.equal(gb7.reasoning_effort, "medium"); assert.equal(gb7.max_completion_tokens, 16000);
+assert.deepEqual(gb7.response_format, { type: "json_object" }); assert.ok(!("temperature" in gb));
+const gc7 = gb7.messages[0].content;
+assert.deepEqual(gc7[0], { type: "text", text: "STATIC" });
+assert.equal(gc7[1].type, "image_url"); assert.equal(gc7[1].image_url.url, "data:image/jpeg;base64," + Buffer.from([1,2,3,4]).toString("base64"));
+assert.deepEqual(gc7[2], { type: "text", text: "DYN" });
+assert.equal(res.body.candidates[0].content.parts[0].text, "{\"decyzja\":\"nie\"}");
+assert.equal(res.body.candidates[0].finishReason, "STOP");
+assert.equal(res.body.imagesAttached, 1);
+assert.deepEqual(res.body.usageMetadata, { promptTokenCount: 3051, cachedContentTokenCount: 100, cacheWriteTokenCount: 2497, candidatesTokenCount: 247, thoughtsTokenCount: 0 });
+// ucięta odpowiedź → MAX_TOKENS (frontend ponawia z większym limitem)
+nextResp = okResp({ choices: [{ message: { content: "{" }, finish_reason: "length" }], usage: {} });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "freemodel-gpt", model: "gpt-6.1-terra", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }], generationConfig: {} } }, res);
+assert.equal(res.body.candidates[0].finishReason, "MAX_TOKENS");
+// błąd Freemodel → komunikat z kodem HTTP (frontend przełącza wtedy na Haiku)
+nextResp = okResp({ error: { message: "insufficient balance", type: "billing_error" } }, 402);
+res = mkRes();
+await handler({ method: "POST", body: { provider: "freemodel-gpt", model: "gpt-6.1-terra", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 402); assert.match(res.body.error.message, /^Freemodel HTTP 402 billing_error: insufficient balance/);
+// niepoprawny model — bez zapytania
+calls.length = 0; res = mkRes();
+await handler({ method: "POST", body: { provider: "freemodel-gpt", model: "claude-haiku-5-5", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 400); assert.equal(calls.length, 0);
 console.log("API TESTS OK");

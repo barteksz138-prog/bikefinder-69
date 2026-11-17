@@ -198,6 +198,67 @@ const callClaude = async ({ model, apiKey, contents, generationConfig, relay = "
   };
 };
 
+// ── GPT przez Freemodel (v6.21) ──────────────────────────────────────────────────────────
+// Freemodel przyjmuje modele GPT tylko w formacie OpenAI (/v1/chat/completions; /v1/messages zwraca 400 —
+// test 17.11.2026). Frontend wysyła jak zawsze format Gemini; tu tłumaczymy go na OpenAI, a odpowiedź
+// z powrotem na format Gemini (candidates, finishReason, usageMetadata) — jak przy Claude.
+// Zdjęcia idą jako data URL (base64) w kolejności z attachImages: za stałą częścią promptu, przed ogłoszeniem.
+const FREEMODEL_CHAT_URL = "https://claude-n-codex.com:8443/v1/chat/completions";
+const GPT_EFFORTS = ["low", "medium", "high"];
+const toOpenAiContent = (parts) => (Array.isArray(parts) ? parts : []).map(p => {
+  if (p?.inlineData?.data) return { type: "image_url", image_url: { url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}` } };
+  return { type: "text", text: String(p?.text ?? "") };
+}).filter(b => b.type !== "text" || b.text.length > 0);
+
+const callFreemodelGpt = async ({ model, apiKey, contents, generationConfig }) => {
+  const messages = contents.map(m => ({
+    role: m.role === "model" || m.role === "assistant" ? "assistant" : "user",
+    content: toOpenAiContent(m.parts),
+  })).filter(m => m.content.length > 0);
+  const effort = GPT_EFFORTS.includes(generationConfig?.reasoningEffort) ? generationConfig.reasoningEffort : claudeEffortFrom(generationConfig);
+  const minTokens = effort === "high" ? 32000 : effort === "medium" ? 16000 : 8000; // rozumowanie liczy się do limitu
+  const resp = await fetch(FREEMODEL_CHAT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages,
+      reasoning_effort: effort,
+      max_completion_tokens: Math.min(64000, Math.max(minTokens, Number(generationConfig?.maxOutputTokens) || 0)),
+      ...(generationConfig?.responseMimeType === "application/json" ? { response_format: { type: "json_object" } } : {}),
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.error) {
+    const retryAfter = resp.headers.get("retry-after");
+    const e = data?.error || {};
+    const msg = `Freemodel HTTP ${resp.status} ${e.type || e.code || ""}: ${e.message || (typeof data?.error === "string" ? data.error : "nieznany błąd")}`
+      + (retryAfter ? ` (retry in ${retryAfter}s)` : "");
+    return { status: resp.ok ? 500 : resp.status, body: { error: { message: msg, code: resp.status } } };
+  }
+  const choice = data.choices?.[0] || {};
+  const text = typeof choice.message?.content === "string" ? choice.message.content
+    : Array.isArray(choice.message?.content) ? choice.message.content.map(c => c?.text || "").join("") : "";
+  const finishReason = choice.finish_reason === "length" ? "MAX_TOKENS" : choice.finish_reason === "content_filter" ? "SAFETY" : "STOP";
+  const u = data.usage || {};
+  const d = u.prompt_tokens_details || {};
+  return {
+    status: 200,
+    body: {
+      candidates: [{ content: { role: "model", parts: [{ text }] }, finishReason }],
+      // prompt_tokens obejmuje już odczyt i zapis do cache (rozliczenie Freemodel: wejście = prompt − cache)
+      usageMetadata: {
+        promptTokenCount: u.prompt_tokens || 0,
+        cachedContentTokenCount: d.cached_tokens || 0,
+        cacheWriteTokenCount: d.cache_write_tokens || 0,
+        candidatesTokenCount: u.completion_tokens || 0, // obejmuje tokeny rozumowania
+        thoughtsTokenCount: 0,
+      },
+      modelVersion: data.model || model,
+    },
+  };
+};
+
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -321,6 +382,14 @@ export default async function handler(req, res) {
       });
       const data = await resp.json();
       return res.status(resp.status).json(data);
+
+    } else if (provider === "freemodel-gpt") {
+      if (!/^gpt-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model GPT" } });
+      const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;
+      const { contents, attached } = wantsImages ? await attachImages(messages, imageUrls, CLAUDE_MAX_IMAGE_BASE64) : { contents: messages, attached: 0 };
+      const { status, body: out } = await callFreemodelGpt({ model, apiKey, contents, generationConfig });
+      if (wantsImages && out && !out.error) out.imagesAttached = attached;
+      return res.status(status).json(out);
 
     } else if (provider === "anthropic") {
       if (!/^claude-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model Claude" } });
