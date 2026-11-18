@@ -91,7 +91,7 @@ await test("Dirt: marka nieznana + widelec nierozpoznany + wygląda staro → od
   const app = await run(B, { ai: aiBy({ ...DIRT, dirt: { marka: "nieznana", wyglada_staro: true } }) }, { cfg: { nearWebhook: NEAR } });
   try {
     const p = promptOf(genReqs(app.st)[0]);
-    assert.ok(p.includes('"wyglada_staro"') && p.includes("Najtańsze dirty”; gdy do tego widelec jest nierozpoznany"), "pole dirt i reguła bazy w prompcie");
+    assert.ok(p.includes('"wyglada_staro"') && p.includes("Gdy widelec jest nierozpoznany i rower wygląda na stary → rower odrzucony"), "pole dirt i reguła bazy w prompcie");
     const a = await resultOf(app, B.id);
     assert.equal(a.odrzucenie, "dirt_stary");
     assert.match(a.krotki_opis, /Dirt nieznanej marki z nierozpoznanym widelcem, wygląda na stary — odrzucone/);
