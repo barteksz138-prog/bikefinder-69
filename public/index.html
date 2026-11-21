@@ -57,11 +57,18 @@ const BIKE_MODELS = [
   { id: "trek_fuel_ex",      label: "Trek Fuel EX",        query: "Trek Fuel EX" },
   { id: "trek_session",      label: "Trek Session",        query: "Trek Session" },
   { id: "trek_ticket",       label: "Trek Ticket",         query: "Trek Ticket" },
+  // v6.23: e-MTB z katalogu bazy (emtb_<marka>), których nie łapało żadne wyszukiwanie — liczby wyników sprawdzone na żywo
+  // 21.11.2026 (200–1400 €, typ ebike + mountainbike): Rail 5 (głównie części), Powerfly 45, Levo 79, Kenevo 6 (głównie części),
+  // Jam2 9, Haibike AllMtn 26, FullSeven 34, Nduro 11, Merida eOne 8, Moterra 2. „(e-MTB)” w etykiecie → do analizy dochodzi katalog e-MTB.
+  { id: "trek_rail",         label: "Trek Rail (e-MTB)",     query: "Trek Rail" },
+  { id: "trek_powerfly",     label: "Trek Powerfly (e-MTB)", query: "Trek Powerfly" },
   { id: "specialized_stumpjumper", label: "Specialized Stumpjumper", query: "Specialized Stumpjumper" },
   { id: "specialized_enduro",      label: "Specialized Enduro",      query: "Specialized Enduro" },
   { id: "specialized_camber",      label: "Specialized Camber",      query: "Specialized Camber" },
   { id: "specialized_demo",        label: "Specialized Demo",        query: "Specialized Demo" },
   { id: "specialized_p3",          label: "Specialized P.3",         query: "Specialized P.3" },
+  { id: "specialized_levo",        label: "Specialized Turbo Levo (e-MTB)", query: "Specialized Levo" },   // także Levo SL i Levo HT
+  { id: "specialized_kenevo",      label: "Specialized Kenevo (e-MTB)",     query: "Specialized Kenevo" },
   { id: "cube_stereo",       label: "Cube Stereo",         query: "Cube Stereo" },
   { id: "cube_ams",          label: "Cube AMS",            query: "Cube AMS" },
   { id: "santa_cruz",  label: "Santa Cruz (cała marka)",  query: "Santa Cruz" },
@@ -74,6 +81,7 @@ const BIKE_MODELS = [
   { id: "focus_jam",    label: "Focus Jam",    query: "Focus Jam" },
   { id: "focus_sam",    label: "Focus Sam",    query: "Focus Sam" },
   { id: "focus_thron",  label: "Focus Thron",  query: "Focus Thron" },
+  { id: "focus_jam2",   label: "Focus Jam² (e-MTB, pisownia „Jam2”)", query: "Focus Jam2" }, // „Focus Jam” nie łapie „Jam2” pisanego razem
   { id: "gt_force",     label: "GT Force",     query: "GT Force" },
   { id: "gt_fury",      label: "GT Fury",      query: "GT Fury" },
   { id: "rose_bruce",   label: "Rose The Bruce", query: "Rose The Bruce" },
@@ -90,6 +98,15 @@ const BIKE_MODELS = [
   { id: "intense",        label: "Intense (cała marka)",        query: "Intense" },
   { id: "raaw",           label: "Raaw (cała marka)",           query: "Raaw" },
   { id: "beddo",          label: "Beddo (dirt)",                query: "Beddo" },
+  // ── v6.23: marki tylko z katalogu e-MTB — wyszukiwania modeli, NIE całych marek: „Haibike” (200–1400 €) to 1833 wyniki,
+  // głównie trekkingi i miejskie. Pominięte po sprawdzeniu 21.11.2026: Scott (Genius eRide / Patron: 0 wyników do 1400 €,
+  // „Scott eRide” = trekkingi i miejskie), Orbea Wild / Rise (same części), Cube Reaction Hybrid (361 ofert, cena PL ≈ cena DE),
+  // Focus Sam2 (tylko akumulator).
+  { id: "haibike_allmtn",     label: "Haibike AllMtn (e-MTB)",                  query: "Haibike AllMtn" },
+  { id: "haibike_fullseven",  label: "Haibike FullSeven (e-MTB)",               query: "Haibike FullSeven" },
+  { id: "haibike_nduro",      label: "Haibike Nduro (e-MTB)",                   query: "Haibike Nduro" },
+  { id: "merida_eone",        label: "Merida eOne (e-MTB: eOne-Sixty / Forty)", query: "Merida eOne" },
+  { id: "cannondale_moterra", label: "Cannondale Moterra (e-MTB)",              query: "Cannondale Moterra" },
   // Giant: gotowy link — cała marka od 400 €, typ "mountainbike" ORAZ "ebike" (wcześniej tylko mountainbike)
   { id: "giant", label: "Giant (cała marka, MTB + e-bike, od 400 €)", isCategory: true,
     categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:400:/giant/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)" },
@@ -1624,7 +1641,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.22 (2026-11-18)";
+const APP_VERSION = "v6.23 (2026-11-21)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
