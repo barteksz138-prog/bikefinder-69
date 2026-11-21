@@ -16,6 +16,7 @@ Szczegółowa wiedza (HTML Kleinanzeigen, przebieg analizy, decyzje, historia we
 - `api/gemini.js` — pośrednik AI: Gemini, Groq, Anthropic (zamienia format Gemini ↔ Claude, pobiera zdjęcia z img.kleinanzeigen.de, cache 1 h). Od v6.20 Claude także przez pośrednika Freemodel (`relay: "freemodel"` → `claude-n-codex.com:8443`, jedyny dozwolony dodatkowy adres). Od v6.21 `provider: "freemodel-gpt"` — modele GPT przez Freemodel w formacie OpenAI (`/v1/chat/completions`, zdjęcia jako data URL).
 - `api/discord.js` — wysyłka na webhooki Discorda (tylko discord.com, zwraca status/retryAfter).
 - `api/scrape.js` — pobiera strony kleinanzeigen.de (tylko ta domena), zwraca prawdziwy status HTTP; strony wyników przycina do kart.
+- `docs/PLAN-oceny-i-rynek.md` — plan (niewdrożony) oceny trafności alertów i monitora rynku PL z OLX, z listą decyzji właściciela do podjęcia.
 - `tests/` — testy (Playwright + atrapy Kleinanzeigen/AI/Discorda). `node tests/run-all.mjs` albo pojedynczy plik: `node tests/run-all.mjs tests512.mjs`. Na nowym komputerze: `cd tests && npm run setup` (esbuild + playwright + Chromium), potem `npm test`.
 
 ## Stan w przeglądarce (localStorage — osobny dla każdej przeglądarki i adresu!)

@@ -116,6 +116,7 @@ Pomiar 12.11.2026 (Haiku, prawdziwe dirty, ciepły cache): pierwsza analiza dirt
 - Stare notatki cenowe z lipca 2026 (sprzeczne z bazą) — usunięte przez właściciela 11.11.2026.
 
 ## 5. Pomysły na później (nie zaczynać bez zgody)
+- **Ocena trafności alertów i monitor rynku PL (OLX)** — wybrane przez właściciela 20.11.2026, plan i otwarte decyzje: `docs/PLAN-oceny-i-rynek.md`. Monitor wymaga planu płatnego Claude (zaplanowane zadania) — dalsza praca na drugim koncie z Pro.
 - Wersja serwerowa (bez komputera właściciela): Vercel Hobby pozwala na cron tylko raz dziennie → zewnętrzny zegar (np. cron-job.org) wołający funkcję co minutę albo Vercel Pro; stan zamiast localStorage w bazie (np. Upstash Redis); praca dzielona na krótkie kawałki (limit czasu funkcji); klucze w zmiennych środowiskowych Vercela; strona = tylko panel.
 - Dane w alertach: lokalizacja, sprzedawca (prywatny/firma, konto od kiedy, liczba ogłoszeń), wysyłka/odbiór, stan (selektory w p. 2).
 - Przypominanie „prawie okazji”, gdy cena spadnie do kwoty „opłaca się do”; historia kupionych/sprzedanych rowerów → notatki cenowe.
