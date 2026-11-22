@@ -383,6 +383,29 @@ export default async function handler(req, res) {
       const data = await resp.json();
       return res.status(resp.status).json(data);
 
+    } else if (provider === "deepseek") {
+      // v6.24: DeepSeek Flash (format OpenAI) — wyciąganie danych z ogłoszenia i zastępstwo Groqa w etapie 1.
+      // Adres na stałe w kodzie (publiczny /api/gemini nie przekazuje zapytań dokądkolwiek). Myślenie domyślnie
+      // WYŁĄCZONE (w API jest domyślnie włączone i dokłada płatne tokeny), JSON na życzenie frontendu.
+      if (!/^deepseek-[a-z0-9.\-]+$/i.test(model || "")) return res.status(400).json({ error: { message: "Niepoprawny model DeepSeek" } });
+      const thinking = generationConfig?.thinking === true;
+      const resp = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model,
+          messages,
+          max_tokens: generationConfig?.maxOutputTokens ?? 1024,
+          thinking: { type: thinking ? "enabled" : "disabled" },
+          ...(thinking ? {} : { temperature: generationConfig?.temperature ?? 0.1 }),
+          ...(generationConfig?.json ? { response_format: { type: "json_object" } } : {}),
+        }),
+        signal: AbortSignal.timeout(55000),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok && !data?.error) data.error = { message: `DeepSeek HTTP ${resp.status}` };
+      return res.status(resp.status).json(data);
+
     } else if (provider === "freemodel-gpt") {
       if (!/^gpt-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model GPT" } });
       const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;

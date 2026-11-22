@@ -115,6 +115,12 @@ const BIKE_MODELS = [
     categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:250:/dirt/k0c217" },
   { id: "dirtbike_search", label: "Dirtbike — wyszukiwanie ogólne (od 200 €)", isCategory: true,
     categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:200:/dirtbike/k0c217" },
+  // ── v6.24: cała kategoria Mountainbikes (typ „mountainbike”, 200 € – limit zakupu). Sprawdzone na żywo 22.11.2026: ok. 55 tys.
+  // wyników, od najnowszych, w niedzielę w południe ok. 25 nowych kart na 10 min. Wymaga klucza DeepSeek (Groq na darmowym planie
+  // nie przerobi takiego napływu — DeepSeek go zastępuje); 3 błędy DeepSeeka pod rząd → 20 min przerwy w tym wyszukiwaniu.
+  // Decyzja właściciela 22.11.2026: osobna pozycja z przyciskiem — do wyłączenia jak każde wyszukiwanie.
+  { id: "mtb_category", label: "Cała kategoria Mountainbikes (wymaga DeepSeek)", isCategory: true, fullCategory: true,
+    categoryUrl: "https://www.kleinanzeigen.de/s-fahrraeder/preis:200:/c217+fahrraeder.type_s:mountainbike" },
 ];
 
 // Wyszukiwania dodane po v5.1 — przy starej zapisanej konfiguracji (bez listy "knownBikes") włączamy je
@@ -1089,6 +1095,23 @@ const NIGHT_DISCOVER_BATCH = 10;                  // v6.15: nocne szukanie „za
 const NIGHT_WINDOW_H = 5;                         // v6.4: okno nocnego sprawdzania (od godziny z Ustawień)
 const NIGHT_SKIP_SEEN_MS = 12 * 60 * 60 * 1000;   // v6.4: widziane w wynikach w ostatnich 12 h — zmianę ceny skaner i tak zauważy
 const SEEN_HARD_REJ = new Set(["stary", "inny", "slowa", "czesc", "ebike", "sklep", "dirt_stary"]); // v6.4: odrzucone na stałe — obniżka nic nie zmienia             // v6.3: pusta lista tam, gdzie ostatnio było ≥ 5 ogłoszeń = podejrzana (powtórka na końcu cyklu)              // v6.3: oferta czekająca dłużej w kolejce wyprzedza nowsze (najstarsze najpierw)
+// v6.24: DeepSeek Flash — wyciąganie danych z ogłoszenia przed analizą + zastępstwo Groqa w etapie 1 (decyzja właściciela 22.11.2026)
+const DEEPSEEK_MODEL = "deepseek-flash";          // nazwa z cennika DeepSeek (22.11.2026; „deepseek-v4-flash” = stara nazwa tego samego modelu)
+const DEEPSEEK_PRICES = { in: 0.15, cacheRead: 0.003, out: 0.60 }; // USD / 1 mln tokenów poza szczytem (cennik 22.11.2026); w szczycie ×2
+const DEEPSEEK_FAIL_LIMIT = 3;                    // tyle błędów DeepSeeka pod rząd…
+const DEEPSEEK_PAUSE_MS = 20 * 60 * 1000;         // …→ 20 min bez DeepSeeka i bez wyszukiwania całej kategorii
+const FULL_CATEGORY_MAX_PAGES = 3;                // cała kategoria: gdy cała strona wyników jest nowa, dobieramy następną (najwyżej 3 strony)
+// Szczyt cenowy DeepSeek: pn–pt 01:00–04:00 i 06:00–10:00 UTC (ceny ×2)
+const deepseekPeak = (d = new Date()) => { const w = d.getUTCDay(), h = d.getUTCHours(); return w >= 1 && w <= 5 && ((h >= 1 && h < 4) || (h >= 6 && h < 10)); };
+const deepseekCostUsd = (u, d = new Date()) => {
+  if (!u) return 0;
+  const hit = u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0;
+  const miss = u.prompt_cache_miss_tokens ?? Math.max(0, (u.prompt_tokens || 0) - hit);
+  const mult = deepseekPeak(d) ? 2 : 1;
+  return mult * (miss * DEEPSEEK_PRICES.in + hit * DEEPSEEK_PRICES.cacheRead + (u.completion_tokens || 0) * DEEPSEEK_PRICES.out) / 1e6;
+};
+// Strona N wyników: /preis:200:1400/seite:2/c217+… (format sprawdzony na żywo 22.11.2026)
+const searchPageUrl = (url, page) => page > 1 ? url.replace(/\/((?:k0)?c217)/, `/seite:${page}/$1`) : url;
 const SEARCH_GAP_MS = 6000;                       // v5.12: odstęp między wyszukiwaniami (+ losowo do 1,5 s); w v5.11 było 3 s — za szybko (blokady)
 const EVENTS_MAX = 300;                           // dziennik ważnych zdarzeń (Status → Dziennik) — trwały, przeżywa odświeżenie
 // Ważne zdarzenia do dziennika (oprócz wszystkich błędów): start/stop, wysłane alerty, blokady, budżet, autostart
@@ -1194,6 +1217,59 @@ const repairJsonText = (src) => {
     .replace(/("|\d|true|false|null|\}|\])(\s*\n\s*)(")/g, "$1,$2$3") // brakujący przecinek przed kolejnym polem
     .replace(/,(\s*[}\]])/g, "$1");                                     // przecinek przed } / ]
 };
+// ==DS_START== (v6.24, blok testowany osobno: tests/tests6240.mjs)
+// DeepSeek wypisuje dane z TEKSTU ogłoszenia (bez zdjęć, bez oceny) — wynik trafia do analizy jako dane pomocnicze.
+// Stała część polecenia na początku (DeepSeek cache'uje wspólny początek zapytań — taniej).
+const DS_EXTRACT_RULES = `Wypisz dane z ogłoszenia roweru z Kleinanzeigen (tekst po niemiecku). Podawaj TYLKO to, co wprost wynika z tytułu i opisu — nie zgaduj, nie oceniaj ceny ani opłacalności. Brak informacji → null. Teksty krótko, po polsku (nazwy modeli i podzespołów bez tłumaczenia).
+Zwróć WYŁĄCZNIE obiekt JSON:
+{"marka": tekst|null, "model": tekst z wersją (np. "Spectral AL 6.0")|null, "rocznik": liczba|null, "rocznik_zrodlo": "podany" (rok modelowy / produkcji wprost w tekście) | "zakup" (w tekście tylko rok zakupu) | "brak", "rama_material": "karbon"|"alu"|"stal"|null, "rozmiar_ramy": tekst|null, "kola": tekst (np. "29", "27,5", "mullet")|null, "widelec": tekst|null, "amortyzator": tekst|null, "naped": tekst (grupa i liczba biegów, np. "SRAM GX Eagle 1x12")|null, "hamulce": tekst|null, "silnik_bateria": tekst (tylko e-bike)|null, "stan": tekst (maks. 8 słów)|null, "uszkodzenia": tekst (maks. 12 słów)|null, "kompletny_rower": true|false|null, "upgrade": tekst (maks. 12 słów)|null}`;
+const DS_TEXT_FIELDS = ["marka", "model", "rama_material", "rozmiar_ramy", "kola", "widelec", "amortyzator", "naped", "hamulce", "silnik_bateria", "stan", "uszkodzenia", "upgrade"];
+const dsExtractPrompt = (title, price, desc) => `${DS_EXTRACT_RULES}
+
+Tytuł: ${title}
+Cena: ${price != null ? `${price} €` : "brak"}
+Opis:
+${desc}`;
+// Odpowiedź → uporządkowany obiekt albo null (zepsuty JSON / nie obiekt). Teksty przycięte, bez nowych linii.
+const parseDsExtract = (text) => {
+  let src = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+  const a = src.indexOf("{"), b = src.lastIndexOf("}");
+  if (a < 0 || b <= a) return null;
+  src = src.slice(a, b + 1);
+  let j;
+  try { j = JSON.parse(src); } catch { try { j = JSON.parse(repairJsonText(src)); } catch { return null; } }
+  if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+  const out = {};
+  for (const k of DS_TEXT_FIELDS) {
+    const v = j[k];
+    if (v == null || typeof v === "object") continue;
+    const t = String(v).replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").replace(/"/g, "'").trim().slice(0, 80);
+    if (t && !/^(null|brak|nieznan\w*|-|\?)$/i.test(t)) out[k] = t;
+  }
+  const y = Number(j.rocznik);
+  if (Number.isInteger(y) && y >= 1990 && y <= new Date().getFullYear() + 1) {
+    out.rocznik = y;
+    out.rocznik_zrodlo = j.rocznik_zrodlo === "zakup" ? "zakup" : "podany";
+  }
+  if (j.kompletny_rower === true || j.kompletny_rower === false) out.kompletny_rower = j.kompletny_rower;
+  return out;
+};
+// Linia do części dynamicznej polecenia analizy ("" gdy brak danych — polecenie bez zmian)
+const dsPromptLine = (ds) => {
+  if (!ds || typeof ds !== "object") return "";
+  const parts = [];
+  const add = (label, v) => { if (v != null && v !== "") parts.push(`${label}: ${v}`); };
+  add("marka", ds.marka); add("model", ds.model);
+  if (ds.rocznik) add("rocznik", `${ds.rocznik} (${ds.rocznik_zrodlo === "zakup" ? "rok zakupu" : "podany w tekście"})`);
+  add("rama", ds.rama_material); add("rozmiar ramy", ds.rozmiar_ramy); add("koła", ds.kola);
+  add("widelec", ds.widelec); add("amortyzator", ds.amortyzator); add("napęd", ds.naped); add("hamulce", ds.hamulce);
+  add("silnik / bateria", ds.silnik_bateria); add("stan", ds.stan); add("uszkodzenia", ds.uszkodzenia);
+  if (ds.kompletny_rower === false) parts.push("kompletny rower: NIE");
+  add("upgrade", ds.upgrade);
+  if (parts.length === 0) return "";
+  return `\nDane wypisane z tekstu ogłoszenia przez inny model (pomocniczo — mogą być błędne; tekst ogłoszenia i zdjęcia mają pierwszeństwo, wszystkie zasady oceny bez zmian): ${parts.join(" · ")}`;
+};
+// ==DS_END==
 const fmtDuration = (ms) => {
   const s = Math.round(ms / 1000);
   return s >= 60 ? `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")} s` : `${s} s`;
@@ -1641,7 +1717,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.23 (2026-11-21)";
+const APP_VERSION = "v6.24 (2026-11-22)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1805,6 +1881,7 @@ function App() {
   // Klucz Groq używany WYŁĄCZNIE do szybkiej, lekkiej klasyfikacji typu roweru (etap 1) — niezależnie od
   // tego jaki provider jest wybrany do właściwej analizy opłacalności (etap 2, zwykle Gemini).
   const [groqClassifierKey, setGroqClassifierKey] = useState(cfg.groqClassifierKey || "");
+  const [deepseekKey, setDeepseekKey] = useState(cfg.deepseekKey || ""); // v6.24
   // Ile rowerów maksymalnie wysyłamy do Gemini (etap 2, drogi/limitowany) w ramach JEDNEGO cyklu skanowania.
   const [maxGeminiPerCycle, setMaxGeminiPerCycle] = useState(cfg.maxGeminiPerCycle ?? 25);
   // Ogłoszenia sklasyfikowane przez Groq jako "niepewne" (z ceną) idą do Gemini TYLKO jeśli cena >= ten próg.
@@ -1957,6 +2034,8 @@ function App() {
   const sessionAbortRef = useRef(null); // przerywa trwające zapytania (AI, Kleinanzeigen) po kliknięciu STOP
   const groqKeyIndexRef = useRef(0); // wskaźnik round-robin do rotacji kluczy Groq między wywołaniami
   const groqKeyCooldownsRef = useRef({}); // { [apiKey]: timestampMs } — cooldown PER KLUCZ po dziennym limicie (TPD)
+  const deepseekFailStreakRef = useRef(0); // v6.24: błędy DeepSeeka pod rząd
+  const deepseekPauseUntilRef = useRef(0); // v6.24: przerwa po DEEPSEEK_FAIL_LIMIT błędach (bez całej kategorii)
 
   // ── Gemini explicit context caching ─────────────────────────────────────────────────────
   // Duży statyczny blok promptu (cennik/reguły osprzętu, patrz analyzeWithGemini) jest identyczny
@@ -2198,7 +2277,7 @@ function App() {
   }, [results]);
 
   const saveSettings = (silent = false) => {
-    const data = { geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
+    const data = { geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, deepseekKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
     try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
     if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
@@ -2208,7 +2287,7 @@ function App() {
     if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
     const t = setTimeout(() => saveSettings(true), 600);
     return () => clearTimeout(t);
-  }, [geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
+  }, [geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, deepseekKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -2745,34 +2824,8 @@ function App() {
   const getGroqKeyList = () =>
     [...new Set(groqClassifierKey.split(/[\n,]/).map(s => s.trim()).filter(Boolean))];
 
-  const classifyWithGroq = async (listing) => {
-    const road = isRoad(listing); // v6.16: szosy / gravele — własne polecenie i typy (szosa / gravel)
-    const keys = getGroqKeyList();
-    if (keys.length === 0) return "niedostepny"; // brak klucza = etap 1 wyłączony — wszystko idzie do analizy AI
-
-    // ── Wiele kluczy Groq + cooldown PER KLUCZ po dziennym limicie tokenów (TPD) ──────────────
-    // UWAGA: limity Groqa liczą się na ORGANIZACJĘ (konto), nie na klucz — kilka kluczy z jednego
-    // konta dzieli ten sam limit. Darmowy limit GPT-OSS to ok. 200k tokenów/dzień na model.
-    // Najprościej zwiększyć go podpinając kartę (koszt rzędu 1-3 $/mies.). Klucze są używane rotacyjnie (round-robin) między
-    // wywołaniami, więc obciążenie rozkłada się równo i żaden klucz nie wyczerpuje się sam pierwszy.
-    // Gdy dany klucz dostanie błąd "tokens per day" — dostaje WŁASNY cooldown (nie blokuje innych
-    // kluczy) i w TYM SAMYM wywołaniu od razu próbujemy KOLEJNEGO klucza z listy, zamiast czekać.
-    // Dopiero gdy WSZYSTKIE klucze są w cooldownie, przepuszczamy jako "niepewne" bez wywołania API.
-    const now = Date.now();
-    const startIdx = groqKeyIndexRef.current % keys.length;
-    groqKeyIndexRef.current = (groqKeyIndexRef.current + 1) % keys.length; // rotacja na następne wywołanie
-    const ordered = keys.map((_, i) => keys[(startIdx + i) % keys.length]);
-    const usableKeys = ordered.filter(k => (groqKeyCooldownsRef.current[k] || 0) <= now);
-
-    if (usableKeys.length === 0) {
-      const soonest = Math.min(...keys.map(k => groqKeyCooldownsRef.current[k] || 0));
-      const remainingSec = Math.max(0, Math.ceil((soonest - now) / 1000));
-      addLog(`⏸️ Groq: wszystkie klucze (${keys.length}) w cooldownie (TPD) — pomijam wywołanie, najbliższy wznowi za ~${remainingSec}s — ${listing.title}`, "info");
-      notifyStatus("groq_tpd", `⏸️ Groq (etap 1): dzienny limit tokenów wyczerpany na wszystkich kluczach — oferty idą do analizy AI bez wstępnej klasyfikacji (drożej). Wznowienie za ok. ${Math.ceil(remainingSec / 60)} min.`);
-      return "niedostepny";
-    }
-
-    const prompt = `Klasyfikator ogłoszeń rowerowych. Na podstawie tytułu i opisu określ TYLKO typ roweru.
+  // v6.24: polecenie etapu 1 dla MTB jako osobna funkcja — to samo dostaje Groq i DeepSeek (zastępstwo)
+  const mtbGroqPrompt = (listing) => `Klasyfikator ogłoszeń rowerowych. Na podstawie tytułu i opisu określ TYLKO typ roweru.
 
 Typy:
 - full — PEŁNE zawieszenie (amortyzator z tyłu + widelec z przodu): enduro/trail/all-mountain/downhill.
@@ -2798,6 +2851,125 @@ Tytuł: ${listing.title}
 Opis: ${listing.fullDesc || listing.desc}
 
 FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 słów) — co przeważyło o klasyfikacji. Następnie w OSTATNIEJ, OSOBNEJ linii podaj WYŁĄCZNIE jedno słowo z: full/dirt/elektryk_gorski/inny/niepewne/stary — nic więcej w tej linii, żadnej kropki ani komentarza.`;
+
+  // ── v6.24: DeepSeek ─────────────────────────────────────────────────────────────────────
+  // Wyciąganie danych z ogłoszenia przed analizą (pomocniczo dla modelu analizy) i zastępstwo Groqa w etapie 1.
+  // DEEPSEEK_FAIL_LIMIT błędów pod rząd → DEEPSEEK_PAUSE_MS przerwy: bez DeepSeeka i bez wyszukiwania całej kategorii.
+  const deepseekPaused = () => Date.now() < deepseekPauseUntilRef.current;
+  const noteDeepseekFailure = (reason) => {
+    deepseekFailStreakRef.current++;
+    if (deepseekFailStreakRef.current < DEEPSEEK_FAIL_LIMIT) return;
+    deepseekFailStreakRef.current = 0;
+    deepseekPauseUntilRef.current = Date.now() + DEEPSEEK_PAUSE_MS;
+    const until = new Date(deepseekPauseUntilRef.current).toLocaleTimeString("pl-PL");
+    addLog(`⛔ DeepSeek: ${DEEPSEEK_FAIL_LIMIT} błędy pod rząd (ostatni: ${reason}) — ${Math.round(DEEPSEEK_PAUSE_MS / 60000)} min przerwy: cała kategoria Mountainbikes nie jest skanowana, zostają zwykłe wyszukiwania; wznowię ok. ${until}`, "error");
+    notifyStatus("deepseek_down", `⛔ DeepSeek nie odpowiada (${DEEPSEEK_FAIL_LIMIT} błędy pod rząd: ${String(reason).slice(0, 120)}). Przez ${Math.round(DEEPSEEK_PAUSE_MS / 60000)} min skaner działa bez niego: bez całej kategorii Mountainbikes i bez wyciągania danych, etap 1 tylko Groq. Wznowienie ok. ${until}.`);
+  };
+  const callDeepseek = async (content, { maxTokens = 600, json = false, stage = "deepseek" } = {}) => {
+    const apiKey = String(deepseekKey || "").trim();
+    if (!apiKey) return { ok: false, reason: "brak klucza DeepSeek" };
+    if (deepseekPaused()) return { ok: false, paused: true, reason: `wstrzymany po błędach do ${new Date(deepseekPauseUntilRef.current).toLocaleTimeString("pl-PL")}` };
+    const startedAt = Date.now();
+    try {
+      const data = await callProxy({
+        provider: "deepseek", model: DEEPSEEK_MODEL, apiKey,
+        messages: [{ role: "user", content }],
+        generationConfig: { temperature: 0.1, maxOutputTokens: maxTokens, json },
+      }, { session: true, timeoutMs: 60000 });
+      if (data?.error) throw new Error(typeof data.error === "string" ? data.error : (data.error.message || "błąd API"));
+      const choice = data?.choices?.[0];
+      const text = choice?.message?.content;
+      if (typeof text !== "string" || !text.trim()) throw new Error(choice?.finish_reason === "length" ? "odpowiedź ucięta (limit tokenów)" : "pusta odpowiedź");
+      deepseekFailStreakRef.current = 0;
+      const u = data.usage || null;
+      const usd = deepseekCostUsd(u);
+      if (usd > 0) addAiCostUsd(usd, stage, { promptTokenCount: u.prompt_tokens || 0, cachedContentTokenCount: u.prompt_cache_hit_tokens ?? u.prompt_tokens_details?.cached_tokens ?? 0, candidatesTokenCount: u.completion_tokens || 0 });
+      return { ok: true, text, ms: Date.now() - startedAt };
+    } catch (e) {
+      if (!runningRef.current) return { ok: false, aborted: true, reason: "zatrzymano" };
+      const reason = String(e?.message || e).slice(0, 160);
+      noteDeepseekFailure(reason);
+      return { ok: false, reason };
+    }
+  };
+  // Typ z odpowiedzi etapu 1 (ostatnia linia = słowo klasyfikacji, wcześniej krótkie uzasadnienie) — jak u Groqa
+  const stage1TypeFromText = (text, road) => {
+    const raw = String(text || "").toLowerCase().trim();
+    const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+    const last = lines.length ? lines[lines.length - 1] : raw;
+    let typ;
+    if (road) typ = last.includes("stary") ? "stary" : last.includes("gravel") ? "gravel" : last.includes("szosa") ? "szosa" : last.includes("inny") ? "inny" : "niepewne";
+    else if (last.includes("stary")) typ = "stary";
+    else if (last.includes("elektryk")) typ = "elektryk_gorski";
+    else if (last.includes("dirt")) typ = "dirt";
+    else if (last.includes("full")) typ = "full";
+    else if (last.includes("inny")) typ = "inny";
+    else typ = "niepewne";
+    return { typ, reason: lines.length > 1 ? lines.slice(0, -1).join(" ").slice(0, 80) : "" };
+  };
+  // Etap 1: najpierw Groq (za darmo); gdy niedostępny (brak klucza, błąd, dzienny limit na wszystkich kluczach) — DeepSeek
+  const classifyWithGroq = async (listing) => {
+    const typ = await classifyWithGroqApi(listing);
+    if (typ !== "niedostepny" || !runningRef.current || !String(deepseekKey || "").trim()) return typ;
+    const road = isRoad(listing);
+    const r = await callDeepseek(road ? roadGroqPrompt(listing) : mtbGroqPrompt(listing), { maxTokens: 300, stage: "deepseek etap 1" });
+    if (!r.ok) {
+      if (!r.aborted) addLog(`⚠️ DeepSeek (zastępstwo Groqa): ${r.reason} — przepuszczam do analizy AI — ${listing.title}`, r.paused ? "info" : "error");
+      return "niedostepny";
+    }
+    const { typ: t, reason } = stage1TypeFromText(r.text, road);
+    listing._groqReason = reason || null;
+    const icon = { full: "🟢", dirt: "🟠", elektryk_gorski: "⚡", szosa: "🚴", gravel: "🪨", inny: "⚫", niepewne: "❓", stary: "🕰️" }[t];
+    addLog(`${icon} DeepSeek za Groqa (${r.ms}ms): typ="${t}"${reason ? ` — powód: "${reason}"` : ""} — ${listing.title}`, "info");
+    return t;
+  };
+
+  // v6.24: dane z tekstu ogłoszenia (DeepSeek) → obiekt z parseDsExtract albo null
+  const extractWithDeepseek = async (listing) => {
+    const r = await callDeepseek(dsExtractPrompt(listing.title, listing.price, listing.fullDesc), { maxTokens: 700, json: true, stage: "deepseek dane" });
+    if (!r.ok) {
+      if (!r.aborted) addLog(`⚠️ DeepSeek (dane z ogłoszenia): ${r.reason} — analiza bez tych danych — ${listing.title}`, r.paused ? "info" : "error");
+      return null;
+    }
+    const ds = parseDsExtract(r.text);
+    if (!ds) {
+      noteDeepseekFailure("niepoprawny JSON");
+      addLog(`⚠️ DeepSeek (dane z ogłoszenia): niepoprawny JSON — analiza bez tych danych — ${listing.title}`, "error");
+      return null;
+    }
+    const short = [ds.marka, ds.model, ds.rocznik, ds.widelec].filter(Boolean).join(" · ");
+    addLog(`🐳 DeepSeek (${r.ms}ms): dane z ogłoszenia — ${short || "mało konkretów"} — ${listing.title}`, "info");
+    return ds;
+  };
+
+  const classifyWithGroqApi = async (listing) => {
+    const road = isRoad(listing); // v6.16: szosy / gravele — własne polecenie i typy (szosa / gravel)
+    const keys = getGroqKeyList();
+    if (keys.length === 0) return "niedostepny"; // brak klucza = etap 1 wyłączony — wszystko idzie do analizy AI
+
+    // ── Wiele kluczy Groq + cooldown PER KLUCZ po dziennym limicie tokenów (TPD) ──────────────
+    // UWAGA: limity Groqa liczą się na ORGANIZACJĘ (konto), nie na klucz — kilka kluczy z jednego
+    // konta dzieli ten sam limit. Darmowy limit GPT-OSS to ok. 200k tokenów/dzień na model.
+    // Najprościej zwiększyć go podpinając kartę (koszt rzędu 1-3 $/mies.). Klucze są używane rotacyjnie (round-robin) między
+    // wywołaniami, więc obciążenie rozkłada się równo i żaden klucz nie wyczerpuje się sam pierwszy.
+    // Gdy dany klucz dostanie błąd "tokens per day" — dostaje WŁASNY cooldown (nie blokuje innych
+    // kluczy) i w TYM SAMYM wywołaniu od razu próbujemy KOLEJNEGO klucza z listy, zamiast czekać.
+    // Dopiero gdy WSZYSTKIE klucze są w cooldownie, przepuszczamy jako "niepewne" bez wywołania API.
+    const now = Date.now();
+    const startIdx = groqKeyIndexRef.current % keys.length;
+    groqKeyIndexRef.current = (groqKeyIndexRef.current + 1) % keys.length; // rotacja na następne wywołanie
+    const ordered = keys.map((_, i) => keys[(startIdx + i) % keys.length]);
+    const usableKeys = ordered.filter(k => (groqKeyCooldownsRef.current[k] || 0) <= now);
+
+    if (usableKeys.length === 0) {
+      const soonest = Math.min(...keys.map(k => groqKeyCooldownsRef.current[k] || 0));
+      const remainingSec = Math.max(0, Math.ceil((soonest - now) / 1000));
+      addLog(`⏸️ Groq: wszystkie klucze (${keys.length}) w cooldownie (TPD) — pomijam wywołanie, najbliższy wznowi za ~${remainingSec}s — ${listing.title}`, "info");
+      notifyStatus("groq_tpd", `⏸️ Groq (etap 1): dzienny limit tokenów wyczerpany na wszystkich kluczach — ${String(deepseekKey || "").trim() ? "etap 1 przejmuje DeepSeek" : "oferty idą do analizy AI bez wstępnej klasyfikacji (drożej)"}. Wznowienie za ok. ${Math.ceil(remainingSec / 60)} min.`);
+      return "niedostepny";
+    }
+
+    const prompt = mtbGroqPrompt(listing);
 
     addLog(`🔎 Groq: klasyfikuję — ${listing.title}${listing.price != null ? ` (${listing.price}€)` : ""}${keys.length > 1 ? ` [klucz ${ordered.indexOf(usableKeys[0]) + 1}/${keys.length}]` : ""}`, "info");
 
@@ -2906,14 +3078,14 @@ FORMAT ODPOWIEDZI: Najpierw, w JEDNEJ linii, krótkie uzasadnienie (maks. 15 sł
   const searchUrlFor = (bike, range) => bike.profile === "road" ? roadSearchUrl(bike, range ? range[0] : minListingPrice, range ? range[1] : roadMaxBuyPrice) : bike.isCategory
     ? bike.categoryUrl.replace("/s-fahrraeder/", "/s-fahrraeder/anzeige:angebote/").replace(/preis:(\d+):\//, (m0, lo) => `preis:${range ? range[0] : lo}:${range ? range[1] : maxBuyPrice}/`)
     : `https://www.kleinanzeigen.de/s-fahrraeder/anzeige:angebote/preis:${range ? range[0] : minListingPrice}:${range ? range[1] : maxBuyPrice}/${encodeURIComponent(bike.query)}/k0c217+fahrraeder.type_s:(ebike%2Cmountainbike)`;
-  const scrapeKleinanzeigen = async (bike, range) => {
+  const scrapeKleinanzeigen = async (bike, range, page = 1) => {
     // Kategorie mają gotowy URL z filtrem Kleinanzeigen (np. type_s:mountainbike)
     // Modele/marki konkretne używają wyszukiwania po frazie + DOPIĘTEGO filtra
     // "fahrraeder.type_s:mountainbike" — to ogranicza wyniki TYLKO do ogłoszeń otagowanych
     // przez sprzedającego jako rower górski, więc np. "Giant"/"Marin"/"Norco" (marki które
     // robią też szosówki/miejskie) nie zaśmiecają wyników niezwiązanymi typami rowerów.
     // Format zweryfikowany na realnych URL-ach Kleinanzeigen: /s-fahrraeder/{fraza}/k0c217+fahrraeder.type_s:mountainbike
-    const url = searchUrlFor(bike, range);
+    const url = searchPageUrl(searchUrlFor(bike, range), page); // v6.24: kolejne strony (cała kategoria)
     // v5.12: typ "Mountainbike" ORAZ "E-Bike" — sam Mountainbike gubił wszystkie e-MTB (np. Torque:ON, Heckler)
     await kaSlot();
     if (!runningRef.current) throw new Error("zatrzymano");
@@ -3437,7 +3609,7 @@ ${typeHint}
 Tytuł: ${listing.title}
 Cena z ogłoszenia: ${listing.price != null ? listing.price + "€" : "BRAK CENY"}
 Minimalny zysk dla tej ceny zakupu: ${minProfitFor(listing.price)}% ceny zakupu, po odjęciu transportu (progi: ${tiersTxt()})
-${frameTextLine}${brandYearLine}
+${frameTextLine}${brandYearLine}${dsPromptLine(listing._ds)}
 Lokalizacja: ${listing.location}
 ${listing.fullDesc
   ? `Opis (PEŁNY, ze strony ogłoszenia${listing.fullDescTruncated ? ` — bardzo długi, przycięty do ${DESC_MAX_CHARS} znaków` : ""} — główne źródło informacji o stanie, osprzęcie i roczniku):\n${listing.fullDesc}`
@@ -5092,6 +5264,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         const resume = job.firstResult && job.firstResultKey === cKey ? job.firstResult : null;
         if (job.firstResult && !resume) { delete job.firstResult; delete job.firstResultKey; }
         setAiStatus({ phase: "ai", title: listing.title });
+        // ── v6.24: DeepSeek wypisuje dane z tekstu ogłoszenia (pomocniczo dla analizy; raz na treść ogłoszenia) ──
+        // Błąd / przerwa DeepSeeka nie zatrzymuje analizy — idzie bez tych danych, jak przed v6.24.
+        delete listing._ds;
+        if (job.ds && job.dsKey === cKey) listing._ds = job.ds;
+        else if (listing.fullDesc && String(deepseekKey || "").trim() && !deepseekPaused()) {
+          const ds = await extractWithDeepseek(listing);
+          if (!runningRef.current) return;
+          if (ds) { job.ds = ds; job.dsKey = cKey; listing._ds = ds; persistPending(); }
+        }
         const analysis = await analyzeWithGemini(listing, groqType, resume);
         touchActivity();
         // v6.3: w trakcie analizy pętla zbierania zmieniła ofertę (nowy tytuł → ocena od początku) albo usunęła ją z kolejki
@@ -5368,11 +5549,15 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
     const cycleStartedAt = Date.now();
     purgeRoadJobsIfOff(); // v6.16
     const roadBikes = roadEnabled ? ROAD_SEARCHES.filter(b => selectedRoad.includes(b.id)) : [];
-    const selBikes = [...BIKE_MODELS.filter(b => selectedBikes.includes(b.id)), ...roadBikes];
+    // v6.24: cała kategoria Mountainbikes tylko z kluczem DeepSeek i poza przerwą po jego błędach — wtedy zostają zwykłe wyszukiwania
+    const fullCatSelected = BIKE_MODELS.some(b => b.fullCategory && selectedBikes.includes(b.id));
+    const fullCatOff = !String(deepseekKey || "").trim() ? "brak klucza DeepSeek" : deepseekPaused() ? `przerwa po błędach DeepSeeka do ${new Date(deepseekPauseUntilRef.current).toLocaleTimeString("pl-PL")}` : null;
+    const selBikes = [...BIKE_MODELS.filter(b => selectedBikes.includes(b.id) && !(b.fullCategory && fullCatOff)), ...roadBikes];
     // v6.3: co cykl zaczynamy od innego wyszukiwania — pierwsze marki na liście nie są stale uprzywilejowane
     const rot = selBikes.length ? (cycleN - 1) % selBikes.length : 0;
     const activeBikes = [...selBikes.slice(rot), ...selBikes.slice(0, rot)];
     addLog(`🔄 Cykl #${cycleN} — sprawdzam ${activeBikes.length} wyszukiwań${roadBikes.length ? ` (w tym ${roadBikes.length} szos / graveli do ${roadMaxBuyPrice}€)` : ""}`, "success");
+    if (fullCatSelected && fullCatOff) addLog(`⏸️ Cała kategoria Mountainbikes pominięta w tym cyklu (${fullCatOff}) — skanuję zwykłe wyszukiwania`, "info");
     addLog(
       groqClassifierKey
         ? `🤖 Etap 1 (Groq) AKTYWNY — model ${GROQ_CLASSIFIER_MODEL}, ${getGroqKeyList().length} klucz(e), limit analiz AI/cykl = ${maxGeminiPerCycle}`
@@ -5412,6 +5597,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
       const isRetry = bikeIdx >= activeBikes.length;
       if (!runningRef.current) return;
       // v5.11 (A): wyszukiwanie bez nowych ofert od 3 dni sprawdzamy co ok. 10 min — cykl jest krótszy, więc popularne częściej
+      if (bike.fullCategory && deepseekPaused()) continue; // v6.24: DeepSeek wstrzymany w trakcie cyklu — zostają zwykłe wyszukiwania
       const stPre = scanStateRef.current.searches[bike.id];
       if (stPre?.baselineAt && !isRetry) {
         if (stPre.lastNewAt == null) stPre.lastNewAt = Date.now(); // migracja: 3 dni "na start"
@@ -5433,6 +5619,24 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
         blocked = listings.blocked === true; // sprawdzić PRZED kopiowaniem tablicy (kopia gubi flagi)
         priceBroken = listings.priceParseBroken === true;
         const pageHeading = listings.pageHeading || "";
+        // v6.24: cała kategoria — gdy (prawie) cała strona to nieznane ogłoszenia, część mogła zjechać na następną stronę
+        // między skanami; dobieramy kolejne strony (najwyżej FULL_CATEGORY_MAX_PAGES). Pierwszy skan = tylko zapamiętanie.
+        if (bike.fullCategory && !blocked && !priceBroken && scanStateRef.current.searches[bike.id]?.baselineAt) {
+          let pageCards = listings;
+          for (let page = 2; page <= FULL_CATEGORY_MAX_PAGES && runningRef.current; page++) {
+            const unseen = pageCards.filter(l => !seenIdsRef.current.has(l.listingId)).length;
+            if (pageCards.length < 20 || unseen < pageCards.length - 2) break; // 2 = miejsce na wyróżnione (TOP) karty
+            await sleep(SEARCH_GAP_MS + Math.random() * 1500);
+            if (!runningRef.current) break;
+            let more;
+            try { more = parseListings(await scrapeKleinanzeigen(bike, null, page), bike.label); } catch (e) { addLog(`⚠️ ${bike.label}: strona ${page} — ${e.message}`, "error"); break; }
+            touchActivity();
+            if (more.blocked === true || more.priceParseBroken === true || more.length === 0) break;
+            addLog(`📄 ${bike.label}: cała strona ${page - 1} nowa — dobieram stronę ${page} (${more.length} ogłoszeń)`, "info");
+            listings = [...listings, ...more];
+            pageCards = more;
+          }
+        }
         // Usuń duplikaty WEWNĄTRZ tego samego skanu (wyróżnione + zwykłe)
         const uniqueMap = new Map();
         listings.forEach(l => { if (!uniqueMap.has(l.listingId)) uniqueMap.set(l.listingId, l); });
@@ -6019,6 +6223,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                     ? [[provider === "groq" ? "Groq API" : "Gemini API", geminiKey ? "✅ OK" : "❌ Brak", geminiKey ? "#22c55e" : "#f87171"]] : []),
                   ...(isClaudeModel(geminiModel) || isClaudeModel(strongModel) || claudeKey
                     ? [["Claude API", claudeKey ? "✅ OK" : "❌ Brak", claudeKey ? "#22c55e" : "#f87171"]] : []),
+                  ...(String(deepseekKey || "").trim() ? [["DeepSeek", deepseekPaused() ? "⏸️ przerwa po błędach" : "✅ klucz wpisany", deepseekPaused() ? "#f59e0b" : "#22c55e"]] : []),
                   ...(provider !== "groq" && (String(freemodelKey || "").trim() || isGptModel(geminiModel)) ? [["Freemodel", String(freemodelKey || "").trim() ? "✅ klucz wpisany" : "❌ Brak", String(freemodelKey || "").trim() ? "#22c55e" : "#f87171"]] : []),
                   ["Discord",       discordWebhook ? "✅ OK" : "❌ Brak", discordWebhook ? "#22c55e" : "#f87171"],
                   ["AI (miesiąc)", `${(aiSpend.usd * USD_PLN_RATE).toFixed(0)} / ${aiBudgetPln} zł`, aiSpend.usd * USD_PLN_RATE >= aiBudgetPln ? "#f87171" : "#94a3b8"],
@@ -6528,6 +6733,19 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   value={groqClassifierKey} onChange={e => setGroqClassifierKey(e.target.value)} />
                 <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
                   console.groq.com/keys — model openai/gpt-oss-120b (mocny w niuansach: część/cały rower, szacowanie roku). Darmowy plan: ok. 200 000 tokenów dziennie, liczone na KONTO (kilka kluczy z jednego konta dzieli ten sam limit). Z podpiętą kartą limit przestaje być problemem, a koszt klasyfikacji to grosze. Możesz wkleić kilka kluczy (każdy w nowej linii lub po przecinku) — program używa ich rotacyjnie i przełącza się na kolejny, gdy dany trafi dzienny limit. Każde świeże ogłoszenie (po przejściu filtra słów i filtra roku) dostaje krótkie pytanie z miejscem na jednozdaniowe uzasadnienie: full / dirt / elektryk górski / inny / niepewne / stary. Tylko "inny" i "stary" (rower sprzed 2017) są od razu odrzucane — nie idą do Gemini. "Niepewne" przechodzi dalej, ale z niższym priorytetem w Etapie 2. Gdy Groq jest niedostępny (błąd, limit) — oferta idzie do analizy AI bez progu ceny dla niepewnych. Puste pole = ten etap jest wyłączony, wszystko idzie od razu do analizy AI.
+                </div>
+              </div>
+
+              {/* v6.24: DeepSeek — zastępstwo Groqa, dane z ogłoszenia przed analizą, cała kategoria Mountainbikes */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Klucz API DeepSeek (opcjonalnie)
+                </label>
+                <input type="password" placeholder="sk-..." data-testid="deepseek-key"
+                  style={{ width: "100%", fontFamily: "monospace", fontSize: 12 }}
+                  value={deepseekKey} onChange={e => setDeepseekKey(e.target.value)} />
+                <div style={{ fontSize: 11, color: "#334155", marginTop: 5, lineHeight: 1.5 }}>
+                  platform.deepseek.com — model {DEEPSEEK_MODEL}, bez myślenia (grosze za ogłoszenie). Z kluczem: (1) gdy Groq nie działa (błąd, brak klucza, dzienny limit na wszystkich kluczach) — etap 1 robi DeepSeek z tym samym poleceniem; (2) przed analizą AI DeepSeek wypisuje z opisu markę, model, rocznik, ramę, widelec, napęd itd. — model analizy dostaje to jako dane pomocnicze; (3) działa wyszukiwanie „Cała kategoria Mountainbikes” (na liście wyszukiwań, można je odznaczyć). 3 błędy DeepSeeka pod rząd → 20 min przerwy: bez całej kategorii (zostają zwykłe wyszukiwania), bez danych z ogłoszenia, etap 1 tylko Groq. Puste pole = skaner działa jak przed v6.24.
                 </div>
               </div>
 
