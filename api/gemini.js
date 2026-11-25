@@ -114,10 +114,21 @@ const attachImages = async (messages, imageUrls, maxPerImage = Infinity) => {
 const CLAUDE_MAX_IMAGE_BASE64 = 5 * 1024 * 1024; // limit Anthropic: 5 MB na zdjęcie (po zakodowaniu)
 const CLAUDE_EFFORTS = ["low", "medium", "high"];
 // v6.20: pośrednik Freemodel (claude-n-codex.com) — ten sam format Messages API co Anthropic, inny adres i klucz.
-// Adres jest na stałe w kodzie (tylko ten jeden dodatkowy host), żeby publiczny /api/gemini nie przekazywał zapytań dokądkolwiek.
+// v6.24: pośrednik ApiDuck (apiduck.servepics.com) — też format Anthropic (instrukcja ApiDuck: ANTHROPIC_BASE_URL
+// + ANTHROPIC_AUTH_TOKEN, czyli klucz jako "Authorization: Bearer"; sprawdzone na stronie 25.11.2026).
+// Adresy są na stałe w kodzie (tylko te dodatkowe hosty), żeby publiczny /api/gemini nie przekazywał zapytań dokądkolwiek.
 const CLAUDE_ENDPOINTS = {
   anthropic: "https://api.anthropic.com/v1/messages",
   freemodel: "https://claude-n-codex.com:8443/v1/messages",
+  apiduck: "https://apiduck.servepics.com/v1/messages",
+};
+const RELAY_LABELS = { anthropic: "Claude", freemodel: "Freemodel", apiduck: "ApiDuck" };
+// Pośrednicy z kluczem jako Bearer (ApiDuck); x-api-key wysyłamy zawsze — Anthropic i Freemodel czytają tylko ten nagłówek
+const BEARER_RELAYS = new Set(["apiduck"]);
+// Komunikat błędu niezależnie od kształtu odpowiedzi pośrednika ({error:{message}}, {error:"..."}, {message})
+const errorText = (data) => {
+  const e = data?.error;
+  return (e && typeof e === "object" ? e.message : typeof e === "string" ? e : "") || (typeof data?.message === "string" ? data.message : "") || "nieznany błąd";
 };
 
 // Poziom myślenia: jawny claudeEffort z frontendu albo przybliżenie z "gałek" Gemini.
@@ -151,11 +162,13 @@ const callClaude = async ({ model, apiKey, contents, generationConfig, relay = "
   })).filter(m => m.content.length > 0);
   const effort = claudeEffortFrom(generationConfig);
   const minTokens = effort === "high" ? 32000 : effort === "medium" ? 16000 : 8000; // myślenie liczy się do max_tokens
+  const label = RELAY_LABELS[relay] || RELAY_LABELS.anthropic;
   const resp = await fetch(CLAUDE_ENDPOINTS[relay] || CLAUDE_ENDPOINTS.anthropic, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
+      ...(BEARER_RELAYS.has(relay) ? { "Authorization": `Bearer ${apiKey}` } : {}),
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
@@ -170,9 +183,13 @@ const callClaude = async ({ model, apiKey, contents, generationConfig, relay = "
   if (!resp.ok || data?.type === "error") {
     // Komunikat z kodem HTTP — frontend rozpoznaje po nim limity (429) i przeciążenie (529)
     const retryAfter = resp.headers.get("retry-after");
-    const msg = `${relay === "freemodel" ? "Freemodel" : "Claude"} HTTP ${resp.status} ${data?.error?.type || ""}: ${data?.error?.message || "nieznany błąd"}`
+    const msg = `${label} HTTP ${resp.status} ${data?.error?.type || ""}: ${errorText(data)}`
       + (retryAfter ? ` (retry in ${retryAfter}s)` : "");
     return { status: resp.ok ? 500 : resp.status, body: { error: { message: msg, code: resp.status } } };
+  }
+  // v6.24: pośrednik, który zwróci 200 bez treści (np. stronę błędu), traktujemy jak błąd — frontend przejdzie wtedy do zapasu
+  if (relay !== "anthropic" && !Array.isArray(data?.content)) {
+    return { status: 502, body: { error: { message: `${label} HTTP ${resp.status}: odpowiedź bez treści`, code: 502 } } };
   }
   const text = (data.content || []).filter(b => b?.type === "text").map(b => b.text).join("");
   const finishReason = data.stop_reason === "max_tokens" ? "MAX_TOKENS"
@@ -203,21 +220,26 @@ const callClaude = async ({ model, apiKey, contents, generationConfig, relay = "
 // test 17.11.2026). Frontend wysyła jak zawsze format Gemini; tu tłumaczymy go na OpenAI, a odpowiedź
 // z powrotem na format Gemini (candidates, finishReason, usageMetadata) — jak przy Claude.
 // Zdjęcia idą jako data URL (base64) w kolejności z attachImages: za stałą częścią promptu, przed ogłoszeniem.
-const FREEMODEL_CHAT_URL = "https://claude-n-codex.com:8443/v1/chat/completions";
+// v6.24: ApiDuck ma ten sam format OpenAI (apiduck.servepics.com/v1, klucz jako Bearer) — wspólna funkcja dla obu pośredników.
+const OPENAI_RELAYS = {
+  "freemodel-gpt": { url: "https://claude-n-codex.com:8443/v1/chat/completions", label: "Freemodel" },
+  "apiduck-gpt":   { url: "https://apiduck.servepics.com/v1/chat/completions",    label: "ApiDuck" },
+};
 const GPT_EFFORTS = ["low", "medium", "high"];
 const toOpenAiContent = (parts) => (Array.isArray(parts) ? parts : []).map(p => {
   if (p?.inlineData?.data) return { type: "image_url", image_url: { url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}` } };
   return { type: "text", text: String(p?.text ?? "") };
 }).filter(b => b.type !== "text" || b.text.length > 0);
 
-const callFreemodelGpt = async ({ model, apiKey, contents, generationConfig }) => {
+const callOpenAiRelay = async ({ relay, model, apiKey, contents, generationConfig }) => {
+  const { url, label } = OPENAI_RELAYS[relay] || OPENAI_RELAYS["freemodel-gpt"];
   const messages = contents.map(m => ({
     role: m.role === "model" || m.role === "assistant" ? "assistant" : "user",
     content: toOpenAiContent(m.parts),
   })).filter(m => m.content.length > 0);
   const effort = GPT_EFFORTS.includes(generationConfig?.reasoningEffort) ? generationConfig.reasoningEffort : claudeEffortFrom(generationConfig);
   const minTokens = effort === "high" ? 32000 : effort === "medium" ? 16000 : 8000; // rozumowanie liczy się do limitu
-  const resp = await fetch(FREEMODEL_CHAT_URL, {
+  const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -231,12 +253,16 @@ const callFreemodelGpt = async ({ model, apiKey, contents, generationConfig }) =
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok || data?.error) {
     const retryAfter = resp.headers.get("retry-after");
-    const e = data?.error || {};
-    const msg = `Freemodel HTTP ${resp.status} ${e.type || e.code || ""}: ${e.message || (typeof data?.error === "string" ? data.error : "nieznany błąd")}`
+    const e = data?.error && typeof data.error === "object" ? data.error : {};
+    const msg = `${label} HTTP ${resp.status} ${e.type || e.code || ""}: ${errorText(data)}`
       + (retryAfter ? ` (retry in ${retryAfter}s)` : "");
     return { status: resp.ok ? 500 : resp.status, body: { error: { message: msg, code: resp.status } } };
   }
-  const choice = data.choices?.[0] || {};
+  // v6.24: 200 bez odpowiedzi modelu → błąd (frontend przejdzie do zapasu), zamiast pustego tekstu
+  if (!Array.isArray(data?.choices) || data.choices.length === 0) {
+    return { status: 502, body: { error: { message: `${label} HTTP ${resp.status}: odpowiedź bez treści`, code: 502 } } };
+  }
+  const choice = data.choices[0] || {};
   const text = typeof choice.message?.content === "string" ? choice.message.content
     : Array.isArray(choice.message?.content) ? choice.message.content.map(c => c?.text || "").join("") : "";
   const finishReason = choice.finish_reason === "length" ? "MAX_TOKENS" : choice.finish_reason === "content_filter" ? "SAFETY" : "STOP";
@@ -383,11 +409,12 @@ export default async function handler(req, res) {
       const data = await resp.json();
       return res.status(resp.status).json(data);
 
-    } else if (provider === "freemodel-gpt") {
+    } else if (Object.prototype.hasOwnProperty.call(OPENAI_RELAYS, provider)) {
+      // freemodel-gpt (v6.21) albo apiduck-gpt (v6.24) — modele GPT w formacie OpenAI
       if (!/^gpt-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model GPT" } });
       const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;
       const { contents, attached } = wantsImages ? await attachImages(messages, imageUrls, CLAUDE_MAX_IMAGE_BASE64) : { contents: messages, attached: 0 };
-      const { status, body: out } = await callFreemodelGpt({ model, apiKey, contents, generationConfig });
+      const { status, body: out } = await callOpenAiRelay({ relay: provider, model, apiKey, contents, generationConfig });
       if (wantsImages && out && !out.error) out.imagesAttached = attached;
       return res.status(status).json(out);
 

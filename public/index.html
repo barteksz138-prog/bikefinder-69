@@ -977,7 +977,7 @@ const PROVIDERS = {
       { id: "gemini-flash-latest",   label: "Gemini 3.5 Flash (najnowszy, droższy)" },
       { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro" },
       { id: "claude-haiku-5-5",      label: "Claude Haiku 5.5 (Anthropic — tańszy, wymaga klucza Claude)" },
-      { id: "gpt-6.1-terra",         label: "GPT-6.1 Terra (Freemodel — wymaga klucza Freemodel; zapas: Haiku przez Anthropic)" },
+      { id: "gpt-6.1-terra",         label: "GPT-6.1 Terra (Freemodel / ApiDuck — wymaga klucza jednego z nich; zapas: Haiku przez Anthropic)" },
     ],
     keyPlaceholder: "AIza...",
     keyHint: "aistudio.google.com/apikey",
@@ -1030,10 +1030,11 @@ const GEMINI_PRICE_FALLBACK = { in: 2.00, cached: 0.20, out: 12.00, storage: 4.5
 
 const isClaudeModel = (m) => /^claude-/i.test(m || "");
 // v6.21: modele GPT przez pośrednika Freemodel (format OpenAI); zapas przy błędzie Freemodel — Haiku przez klucz Anthropic
+// v6.24: GPT także przez ApiDuck (kolejka Freemodel → ApiDuck → Haiku przez Anthropic)
 const isGptModel = (m) => /^gpt-/i.test(m || "");
 const isGeminiModel = (m) => /^gemini-/i.test(m || "");
 const GPT_FALLBACK_MODEL = "claude-haiku-5-5";
-const aiName = (m) => isClaudeModel(m) ? "Claude" : isGptModel(m) ? "Freemodel" : "Gemini";
+const aiName = (m) => isClaudeModel(m) ? "Claude" : isGptModel(m) ? "Freemodel / ApiDuck" : "Gemini";
 
 // Mocniejszy model do decyzji, w których błąd kosztuje najwięcej: weryfikacja okazji i trudne przypadki.
 // Domyślnie Gemini 2.5 Pro (jak dotąd); w Ustawieniach można wybrać tańszy model.
@@ -1641,7 +1642,7 @@ const UNCERTAIN_LABELS = {
 };
 
 // Znacznik wersji — widoczny w nagłówku i w logu startu, żeby łatwo sprawdzić co działa na Vercelu.
-const APP_VERSION = "v6.23 (2026-11-21)";
+const APP_VERSION = "v6.24 (2026-11-25)";
 
 // ── Analiza zdjęć ──
 // Pierwsza analiza każdego ogłoszenia: 4 pierwsze zdjęcia. Dokładniejsza analiza "niepewnego" ogłoszenia
@@ -1786,8 +1787,10 @@ function App() {
   });
   // Klucz Claude (Anthropic) — potrzebny, gdy model analizy albo model weryfikacji to Claude.
   const [claudeKey,      setClaudeKey]      = useState(cfg.claudeKey || "");
-  // v6.20: klucz pośrednika Freemodel (claude-n-codex.com) — przez niego idą modele Claude oprócz Haiku (np. Sonnet do weryfikacji); Haiku zawsze przez klucz Anthropic
+  // v6.20: klucz pośrednika Freemodel (claude-n-codex.com) — przez niego idą modele Claude oprócz Haiku (np. Sonnet do weryfikacji); od v6.24 pierwszy w kolejce (patrz aiRoutes)
   const [freemodelKey,   setFreemodelKey]   = useState(cfg.freemodelKey || "");
+  // v6.24: klucz pośrednika ApiDuck (apiduck.servepics.com) — drugi w kolejce: Freemodel → ApiDuck → Anthropic (także Haiku, którego Freemodel nie obsługuje)
+  const [apiduckKey,     setApiduckKey]     = useState(cfg.apiduckKey || "");
   // Model do trudnych przypadków i weryfikacji okazji (dawniej na sztywno Gemini 2.5 Pro).
   const [strongModel,    setStrongModel]    = useState(() =>
     STRONG_MODELS.some(m => m.id === cfg.strongModel) ? cfg.strongModel : STRONG_GEMINI_MODEL);
@@ -2198,7 +2201,7 @@ function App() {
   }, [results]);
 
   const saveSettings = (silent = false) => {
-    const data = { geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
+    const data = { geminiKey, claudeKey, freemodelKey, apiduckKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, knownBikes: BIKE_MODELS.map(b => b.id), provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad, knownRoad: ROAD_SEARCHES.map(b => b.id), filterMigratedV56: true };
     try { localStorage.setItem("ddf_cfg", JSON.stringify(data)); } catch {}
     if (!silent) addLog("💾 Ustawienia zapisane", "success");
   };
@@ -2208,7 +2211,7 @@ function App() {
     if (!settingsReadyRef.current) { settingsReadyRef.current = true; return; }
     const t = setTimeout(() => saveSettings(true), 600);
     return () => clearTimeout(t);
-  }, [geminiKey, claudeKey, freemodelKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
+  }, [geminiKey, claudeKey, freemodelKey, apiduckKey, strongModel, geminiModel, geminiChatName, discordWebhook, discordThread, uncertainWebhook, statusWebhook, nearWebhook, filterKeywords, groqClassifierKey, maxGeminiPerCycle, minUncertainPrice, minListingPrice, selectedBikes, provider, minProfit, profitTiers, excludeElektryk, analyzePhotos, maxBuyPrice, aiBudgetPln, transportCostEur, nightCheckEnabled, nightCheckHour, nightCheckMax, nightOverMaxCap, roadEnabled, roadMaxBuyPrice, roadFilterKeywords, roadWebhook, selectedRoad]);
 
   // ── Licznik wydatków na Gemini (z danych zużycia zwracanych przez Google) ─────────────
   // Liczony w tej przeglądarce, osobno dla każdego miesiąca kalendarzowego.
@@ -2249,12 +2252,67 @@ function App() {
     const out = (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0);
     return ((prompt - cached - written) * pr.in + cached * pr.cached + written * (pr.write ?? pr.in) + out * pr.out) / 1e6;
   };
-  // Dostawca i klucz dla danego modelu (Groq / Gemini / Claude)
-  const providerFor = (model) => provider === "groq" ? "groq" : isGptModel(model) ? "freemodel-gpt" : isClaudeModel(model) ? "anthropic" : "gemini";
-  const keyFor = (model) => provider !== "groq" && isGptModel(model) ? String(freemodelKey || "").trim()
-    : provider !== "groq" && isClaudeModel(model) ? claudeKey : geminiKey;
-  // v6.20: czy ten model idzie przez Freemodel — tylko Claude i nie Haiku (Haiku 5.5 Freemodel odrzuca błędem 400, test 17.11.2026)
-  const usesFreemodel = (model) => provider !== "groq" && !!String(freemodelKey || "").trim() && isClaudeModel(model) && !/haiku/i.test(model);
+  // v6.24: kolejka dróg do modelu — każdy krok tylko z wpisanym kluczem; przy błędzie (saldo, awaria, czas) następny krok:
+  //  - Claude: Freemodel → ApiDuck → klucz Anthropic. Haiku pomija Freemodel (odrzuca go błędem 400, test 17.11.2026).
+  //  - GPT: Freemodel → ApiDuck → Haiku 5.5 przez klucz Anthropic (zapas innym modelem: fallbackModel).
+  //  - Gemini / Groq: tylko własny klucz.
+  // via = nazwa pośrednika do logu („przez Freemodel”), pusta dla bezpośredniego klucza.
+  const aiRoutes = (model) => {
+    if (provider === "groq") return geminiKey ? [{ via: "", body: { provider: "groq", apiKey: geminiKey } }] : [];
+    const fm = String(freemodelKey || "").trim(), ad = String(apiduckKey || "").trim(), an = String(claudeKey || "").trim();
+    if (isGptModel(model)) return [
+      ...(fm ? [{ via: "Freemodel", body: { provider: "freemodel-gpt", apiKey: fm } }] : []),
+      ...(ad ? [{ via: "ApiDuck", body: { provider: "apiduck-gpt", apiKey: ad } }] : []),
+      ...(an ? [{ via: "", fallbackModel: GPT_FALLBACK_MODEL, body: { provider: "anthropic", model: GPT_FALLBACK_MODEL, apiKey: an } }] : []),
+    ];
+    if (isClaudeModel(model)) return [
+      ...(fm && !/haiku/i.test(model) ? [{ via: "Freemodel", body: { provider: "anthropic", relay: "freemodel", apiKey: fm } }] : []),
+      ...(ad ? [{ via: "ApiDuck", body: { provider: "anthropic", relay: "apiduck", apiKey: ad } }] : []),
+      ...(an ? [{ via: "", body: { provider: "anthropic", apiKey: an } }] : []),
+    ];
+    return geminiKey ? [{ via: "", body: { provider: "gemini", apiKey: geminiKey } }] : [];
+  };
+  // Czy model ma czym odpowiedzieć — sam zapas innym modelem (Haiku za GPT) nie wystarcza
+  const hasAiRoute = (model) => aiRoutes(model).some(r => !r.fallbackModel);
+  const noAiRouteMsg = (model) => provider === "groq" ? "Brak klucza API Groq — wpisz go w Ustawieniach"
+    : isClaudeModel(model) ? "Brak klucza Claude (Anthropic) ani pośrednika (Freemodel / ApiDuck) — wpisz go w Ustawieniach"
+    : isGptModel(model) ? "Brak klucza Freemodel ani ApiDuck — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach";
+  // Zapytanie po kolei przez drogi z aiRoutes. STOP (przerwanie sesji) przerywa od razu, bez zapasu.
+  // Zwraca { data, usedModel, viaLabel } — usedModel różni się od model, gdy odpowiedział zapas (Haiku za GPT).
+  const callAiRoutes = async (model, body, opts = {}) => {
+    const routes = aiRoutes(model).filter((r, i, all) => !r.fallbackModel || all.slice(0, i).some(x => !x.fallbackModel));
+    if (routes.length === 0) throw new Error(noAiRouteMsg(model));
+    let lastErr = null, lastThrown = null;
+    for (let i = 0; i < routes.length; i++) {
+      const r = routes[i], next = routes[i + 1];
+      const usedModel = r.fallbackModel || model;
+      let gc = body.generationConfig || {};
+      if (r.fallbackModel) {
+        // GPT → Haiku: poziom rozumowania przeniesiony 1:1 na effort Claude
+        const effort = ["low", "medium", "high"].includes(gc.reasoningEffort) ? gc.reasoningEffort : undefined;
+        gc = { ...gc, ...(effort ? { claudeEffort: effort } : {}) };
+      }
+      let data = null, err = null, thrown = null;
+      try {
+        data = await callProxy({ ...body, model: usedModel, ...r.body, generationConfig: gc }, opts);
+        if (data?.error) err = data.error?.message || JSON.stringify(data.error);
+      } catch (e) {
+        if (e?.name === "AbortError") throw e;
+        err = e?.message || String(e);
+        thrown = e;
+      }
+      if (!err) return { data, usedModel, viaLabel: r.via ? ` przez ${r.via}` : "" };
+      lastErr = err; lastThrown = thrown;
+      if (!next) break;
+      const who = r.via || "Klucz Anthropic";
+      const nextDesc = next.fallbackModel ? `przez ${next.fallbackModel} (klucz Anthropic)` : `${model} przez ${next.via || "klucz Anthropic"}`;
+      addLog(`⚠️ ${who} nie odpowiedział (${String(err).slice(0, 160)}) — ponawiam ${nextDesc}`, "error");
+    }
+    const last = routes[routes.length - 1];
+    if (last.via) throw new Error(`${last.via}: ${lastErr} (brak klucza Anthropic na zapas${isGptModel(model) ? " — Haiku" : ""})`);
+    // Bezpośredni klucz: błąd jak dawniej (oryginalny wyjątek zachowuje np. TimeoutError dla ponawiania)
+    throw lastThrown || new Error(lastErr);
+  };
   // Tryb pracy wg wydatków: "premium" (w tempie budżetu) → "normal" (wydatki wyprzedzają tempo) →
   // "eco" (budżet wyczerpany). Tempo = budżet rozłożony równo na dni miesiąca + zapas jednego dnia,
   // żeby pieniądze nie zniknęły w pierwszym tygodniu.
@@ -2334,12 +2392,10 @@ function App() {
   const callGemini = async (prompt, overrides = {}, cachedContent = null, modelOverride = null, imageUrls = null, cachePrefix = null, cacheable = true, stage = "analiza") => {
     touchActivity(); // v6.1: linia stanu — każdy etap analizy (pierwsza, dokładna, weryfikacja) to aktywność
     const model = modelOverride || geminiModel;
-    const prov = providerFor(model);
-    const apiKey = keyFor(model);
-    const viaFreemodel = usesFreemodel(model);
-    if (!apiKey && !viaFreemodel) throw new Error(prov === "anthropic" ? "Brak klucza Claude (Anthropic) — wpisz go w Ustawieniach" : prov === "freemodel-gpt" ? "Brak klucza Freemodel — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach");
+    const isGroq = provider === "groq";
+    if (!hasAiRoute(model)) throw new Error(noAiRouteMsg(model));
     const fullText = cachePrefix ? `${cachePrefix}\n\n${prompt}` : prompt;
-    if (prov !== "groq") {
+    if (!isGroq) {
       const maxOut = overrides.maxOutputTokens || 600;
       let est = estimateCallCostUsd(model, fullText.length, maxOut, Array.isArray(imageUrls) ? imageUrls.length : 0);
       // Claude: najgorszy przypadek — cała stała część promptu zapisywana do cache (zapis 1 h jest droższy od zwykłego wejścia)
@@ -2351,13 +2407,13 @@ function App() {
         throw err;
       }
     }
+    // provider i klucz dokłada każdy krok kolejki (callAiRoutes)
     const proxyBody = {
-      provider: prov,
       model,
-      ...(prov !== "groq" && Array.isArray(imageUrls) && imageUrls.length > 0 ? { imageUrls } : {}),
+      ...(!isGroq && Array.isArray(imageUrls) && imageUrls.length > 0 ? { imageUrls } : {}),
       // Stała część (cacheControl) jako osobny blok — proxy wstawia zdjęcia ZA nią, przed danymi ogłoszenia,
       // żeby wspólny początek promptu (i cache) był taki sam dla wszystkich ogłoszeń. Dla Gemini znacznik jest usuwany.
-      messages: prov === "groq"
+      messages: isGroq
         ? [{ role: "user", content: fullText }]
         : cachePrefix
           ? [{ role: "user", parts: [{ text: cachePrefix, ...(cacheable ? { cacheControl: true } : {}) }, { text: prompt }] }]
@@ -2373,51 +2429,8 @@ function App() {
           }
         : { temperature: 0.3, maxOutputTokens: 600, responseMimeType: "application/json", ...overrides },
     };
-    let data, viaLabel = "", usedModel = model;
-    if (prov === "freemodel-gpt") {
-      // v6.21: GPT przez Freemodel; gdy nie odpowie / skończy się saldo — to samo zapytanie Haiku przez klucz Anthropic
-      // (poziom myślenia przeniesiony 1:1). STOP przerywa jak zawsze, bez zapasu.
-      let fmErr = null;
-      try {
-        data = await callProxy({ ...proxyBody, apiKey }, { session: true });
-        if (data?.error) fmErr = data.error?.message || JSON.stringify(data.error);
-      } catch (e) {
-        if (e?.name === "AbortError") throw e;
-        fmErr = e?.message || String(e);
-      }
-      if (fmErr) {
-        if (!claudeKey) throw new Error(`Freemodel: ${fmErr} (brak klucza Anthropic na zapas — Haiku)`);
-        addLog(`⚠️ Freemodel nie odpowiedział (${String(fmErr).slice(0, 160)}) — ponawiam przez ${GPT_FALLBACK_MODEL} (klucz Anthropic)`, "error");
-        const gc = proxyBody.generationConfig || {};
-        const effort = ["low", "medium", "high"].includes(gc.reasoningEffort) ? gc.reasoningEffort : undefined;
-        usedModel = GPT_FALLBACK_MODEL;
-        data = await callProxy({ ...proxyBody, provider: "anthropic", model: GPT_FALLBACK_MODEL, apiKey: claudeKey,
-          generationConfig: { ...gc, ...(effort ? { claudeEffort: effort } : {}) } }, { session: true });
-      } else {
-        viaLabel = " przez Freemodel";
-      }
-    } else if (viaFreemodel) {
-      // v6.20: najpierw Freemodel; gdy nie odpowie albo zwróci błąd (np. skończone saldo) — to samo zapytanie przez klucz Anthropic.
-      // STOP (przerwanie sesji) nie przełącza na zapas — przerywa jak zawsze.
-      let fmErr = null;
-      try {
-        data = await callProxy({ ...proxyBody, apiKey: String(freemodelKey).trim(), relay: "freemodel" }, { session: true });
-        if (data?.error) fmErr = data.error?.message || JSON.stringify(data.error);
-      } catch (e) {
-        if (e?.name === "AbortError") throw e;
-        fmErr = e?.message || String(e);
-      }
-      if (fmErr) {
-        if (!apiKey) throw new Error(`Freemodel: ${fmErr} (brak klucza Anthropic na zapas)`);
-        addLog(`⚠️ Freemodel nie odpowiedział (${String(fmErr).slice(0, 160)}) — ponawiam ${model} przez klucz Anthropic`, "error");
-        data = await callProxy({ ...proxyBody, apiKey }, { session: true });
-      } else {
-        viaLabel = " przez Freemodel";
-      }
-    } else {
-      data = await callProxy({ ...proxyBody, apiKey }, { session: true });
-    }
-    if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
+    // v6.24: kolejka Freemodel → ApiDuck → Anthropic (GPT: zapas Haiku przez Anthropic) — patrz aiRoutes
+    const { data, usedModel, viaLabel } = await callAiRoutes(model, proxyBody, { session: true });
     if (provider === "groq") {
       const choice = data?.choices?.[0];
       const text = choice?.message?.content || "";
@@ -2438,7 +2451,7 @@ function App() {
 
   const sendChatMessage = async () => {
     if (!chatInput.trim() || chatLoading) return;
-    if (!keyFor(geminiModel)) { alert(`Wpisz klucz API ${provider === "groq" ? "Groq" : aiName(geminiModel)} w Ustawieniach, żeby korzystać z chatu.`); return; }
+    if (!hasAiRoute(geminiModel)) { alert(`Wpisz klucz API ${provider === "groq" ? "Groq" : aiName(geminiModel)} w Ustawieniach, żeby korzystać z chatu.`); return; }
     const userMsg = { role: "user", content: chatInput.trim(), time: new Date().toLocaleTimeString("pl-PL") };
     const newMsgs = [...chatMessages, userMsg];
     setChatMessages(newMsgs);
@@ -2476,19 +2489,17 @@ function App() {
         const est = estimateCallCostUsd(geminiModel, JSON.stringify(messages).length, !isGeminiModel(geminiModel) ? 16000 : 8192, 0);
         if (!budgetAllows(est)) throw new Error(`Budżet AI na ten miesiąc wyczerpany (${(aiSpendRef.current.usd * USD_PLN_RATE).toFixed(2)} z ${aiBudgetPln} zł) — zwiększ go w Ustawieniach`);
       }
-      const data = await callProxy({
-        provider: providerFor(geminiModel),
+      // v6.24: czat tą samą kolejką co analiza (Freemodel → ApiDuck → Anthropic)
+      const { data, usedModel } = await callAiRoutes(geminiModel, {
         model: geminiModel,
-        apiKey: keyFor(geminiModel),
         messages,
         generationConfig: { temperature: 0.7, maxOutputTokens: 8192 },
       });
-      if (data?.error) throw new Error(data.error?.message || JSON.stringify(data.error));
       if (provider === "groq") {
         responseText = data?.choices?.[0]?.message?.content || "(brak odpowiedzi)";
       } else {
         responseText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "(brak odpowiedzi)";
-        if (data?.usageMetadata) addAiCostUsd(geminiCallCostUsd(geminiModel, data.usageMetadata), "czat", data.usageMetadata);
+        if (data?.usageMetadata) addAiCostUsd(geminiCallCostUsd(usedModel, data.usageMetadata), "czat", data.usageMetadata);
       }
       const aiMsg = { role: "assistant", content: responseText, time: new Date().toLocaleTimeString("pl-PL") };
       const finalMsgs = [...newMsgs, aiMsg];
@@ -5693,9 +5704,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
 
   // ── Continuous loop ────────────────────────────────────────────────────
   const startLoop = async () => {
-    if (!keyFor(geminiModel)) { addLog(`❌ Brak klucza API (${provider === "groq" ? "Groq" : aiName(geminiModel)}) dla modelu ${geminiModel}`, "error"); setTab("settings"); return; }
+    if (!hasAiRoute(geminiModel)) { addLog(`❌ Brak klucza API (${provider === "groq" ? "Groq" : aiName(geminiModel)}) dla modelu ${geminiModel}`, "error"); setTab("settings"); return; }
     // Model weryfikacji okazji (Gemini/Claude) potrzebuje własnego klucza — bez niego każda okazja kończyłaby jako "niepewne"
-    if (provider !== "groq" && !keyFor(strongModel) && !usesFreemodel(strongModel)) { addLog(`❌ Brak klucza ${aiName(strongModel)} — wybrany model weryfikacji okazji to ${strongModel} (Ustawienia)`, "error"); setTab("settings"); return; }
+    if (provider !== "groq" && !hasAiRoute(strongModel)) { addLog(`❌ Brak klucza ${aiName(strongModel)} — wybrany model weryfikacji okazji to ${strongModel} (Ustawienia)`, "error"); setTab("settings"); return; }
     if (!discordWebhook) { addLog("❌ Brak Discord Webhook",    "error"); setTab("settings"); return; }
     if (runningRef.current || startingRef.current) return;
     startingRef.current = true;
@@ -6018,8 +6029,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   ...(provider === "groq" || isGeminiModel(geminiModel) || isGeminiModel(strongModel) || geminiKey
                     ? [[provider === "groq" ? "Groq API" : "Gemini API", geminiKey ? "✅ OK" : "❌ Brak", geminiKey ? "#22c55e" : "#f87171"]] : []),
                   ...(isClaudeModel(geminiModel) || isClaudeModel(strongModel) || claudeKey
-                    ? [["Claude API", claudeKey ? "✅ OK" : "❌ Brak", claudeKey ? "#22c55e" : "#f87171"]] : []),
-                  ...(provider !== "groq" && (String(freemodelKey || "").trim() || isGptModel(geminiModel)) ? [["Freemodel", String(freemodelKey || "").trim() ? "✅ klucz wpisany" : "❌ Brak", String(freemodelKey || "").trim() ? "#22c55e" : "#f87171"]] : []),
+                    ? [["Claude API", claudeKey ? "✅ OK" : String(apiduckKey || "").trim() ? "⚠️ Brak — bez zapasu za ApiDuck" : "❌ Brak", claudeKey ? "#22c55e" : String(apiduckKey || "").trim() ? "#f59e0b" : "#f87171"]] : []),
+                  ...(provider !== "groq" && (String(freemodelKey || "").trim() || (isGptModel(geminiModel) && !String(apiduckKey || "").trim())) ? [["Freemodel", String(freemodelKey || "").trim() ? "✅ klucz wpisany" : "❌ Brak", String(freemodelKey || "").trim() ? "#22c55e" : "#f87171"]] : []),
+                  ...(provider !== "groq" && String(apiduckKey || "").trim() ? [["ApiDuck", "✅ klucz wpisany", "#22c55e"]] : []),
                   ["Discord",       discordWebhook ? "✅ OK" : "❌ Brak", discordWebhook ? "#22c55e" : "#f87171"],
                   ["AI (miesiąc)", `${(aiSpend.usd * USD_PLN_RATE).toFixed(0)} / ${aiBudgetPln} zł`, aiSpend.usd * USD_PLN_RATE >= aiBudgetPln ? "#f87171" : "#94a3b8"],
                   ["Aktywne modele",`${selectedBikes.length}/${BIKE_MODELS.length}`, "#f59e0b"],
@@ -6387,7 +6399,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   <input type="password" placeholder="sk-ant-..."
                     value={claudeKey} onChange={e => setClaudeKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
-                    console.anthropic.com → API Keys (płatność z góry: Billing → doładowanie). Potrzebny tylko, gdy wybierzesz model Claude.
+                    console.anthropic.com → API Keys (płatność z góry: Billing → doładowanie). Potrzebny, gdy wybierzesz model Claude — ostatni w kolejce (zapas za Freemodel i ApiDuck); bez niego wystarczy ApiDuck, ale wtedy nie ma zapasu.
                   </div>
                 </div>
               )}
@@ -6395,12 +6407,25 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               {provider !== "groq" && (
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                    Klucz Freemodel (claude-n-codex.com){isGptModel(geminiModel) ? " *" : " (opcjonalne)"}
+                    Klucz Freemodel (claude-n-codex.com){isGptModel(geminiModel) && !String(apiduckKey || "").trim() ? " *" : " (opcjonalne)"}
                   </label>
                   <input type="password" placeholder="sk-myapi_..."
                     value={freemodelKey} onChange={e => setFreemodelKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
-                    Gdy wpisany — modele Claude oprócz Haiku (np. Sonnet do weryfikacji okazji) idą przez Freemodel. Haiku zawsze idzie przez klucz Anthropic. Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic. Model analizy GPT-6.1 Terra działa tylko przez Freemodel (zapas: Haiku przez klucz Anthropic).
+                    Pierwszy w kolejce: Freemodel → ApiDuck → klucz Anthropic. Gdy wpisany — modele Claude oprócz Haiku (np. Sonnet do weryfikacji okazji) idą najpierw przez Freemodel (Haiku Freemodel odrzuca). Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie dalej w kolejce. Model analizy GPT-6.1 Terra: Freemodel → ApiDuck → zapas Haiku przez klucz Anthropic.
+                  </div>
+                </div>
+              )}
+
+              {provider !== "groq" && (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                    Klucz ApiDuck (apiduck.servepics.com) (opcjonalne)
+                  </label>
+                  <input type="password" placeholder="klucz z panelu ApiDuck"
+                    value={apiduckKey} onChange={e => setApiduckKey(e.target.value)} />
+                  <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
+                    Drugi w kolejce: po Freemodel, przed kluczem Anthropic — dla wszystkich modeli Claude (także Haiku) i GPT-6.1 Terra. Gdy ApiDuck nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic. Saldo i log zapytań: apiduck.servepics.com.
                   </div>
                 </div>
               )}
