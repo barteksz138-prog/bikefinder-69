@@ -149,4 +149,91 @@ assert.equal(res.code, 402); assert.match(res.body.error.message, /^Freemodel HT
 calls.length = 0; res = mkRes();
 await handler({ method: "POST", body: { provider: "freemodel-gpt", model: "claude-haiku-5-5", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
 assert.equal(res.code, 400); assert.equal(calls.length, 0);
+
+// 8. v6.24: pośrednik ApiDuck — format Anthropic na apiduck.servepics.com/v1/messages, klucz jako Bearer (i x-api-key)
+calls.length = 0;
+nextResp = okResp({ stop_reason: "end_turn", content: [{ type: "text", text: "{}" }], usage: { input_tokens: 7, output_tokens: 2 } });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-haiku-5-5", apiKey: "duck_k", relay: "apiduck", imageUrls: [IMG],
+  messages: [{ role: "user", parts: [{ text: "STATIC", cacheControl: true }, { text: "DYN" }] }], generationConfig: { claudeEffort: "low" } } }, res);
+assert.equal(res.code, 200);
+const d8 = calls.find(c => c.url.startsWith("https://apiduck."));
+assert.equal(d8.url, "https://apiduck.servepics.com/v1/messages");
+assert.equal(d8.opts.headers["Authorization"], "Bearer duck_k"); assert.equal(d8.opts.headers["x-api-key"], "duck_k");
+assert.equal(d8.opts.headers["anthropic-version"], "2023-06-01");
+{ const db = JSON.parse(d8.opts.body); assert.equal(db.model, "claude-haiku-5-5"); assert.equal(db.messages[0].content[1].type, "image"); }
+assert.equal(res.body.imagesAttached, 1);
+// Anthropic i Freemodel bez nagłówka Authorization (jak dotąd)
+calls.length = 0; res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "freemodel", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.ok(!("Authorization" in calls[0].opts.headers), "Freemodel bez Bearer");
+// błąd w innym kształcie ({ error: "tekst" }) → komunikat z nazwą pośrednika i kodem HTTP
+nextResp = okResp({ error: "invalid api key" }, 401);
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "apiduck", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 401); assert.match(res.body.error.message, /^ApiDuck HTTP 401 .*invalid api key/);
+// 200 bez treści (np. strona błędu) → 502, żeby frontend przeszedł do zapasu
+nextResp = okResp({ ok: true });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "apiduck", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 502); assert.match(res.body.error.message, /^ApiDuck HTTP 200: odpowiedź bez treści/);
+// odpowiedź nie-JSON (np. HTML z bramki) → błąd z kodem HTTP
+nextResp = () => ({ ok: false, status: 502, headers: { get: () => null }, json: async () => { throw new Error("not json"); } });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "anthropic", model: "claude-sonnet-5-5", apiKey: "k", relay: "apiduck", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 502); assert.match(res.body.error.message, /^ApiDuck HTTP 502 : nieznany błąd/);
+
+// 9. v6.24: ApiDuck w formacie OpenAI (apiduck.servepics.com/v1/chat/completions) — GPT jak u Freemodel
+calls.length = 0;
+nextResp = okResp({ choices: [{ message: { content: "{\"decyzja\":\"tak\"}" }, finish_reason: "stop" }], usage: { prompt_tokens: 50, completion_tokens: 5 } });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-openai", model: "gpt-6.1-terra", apiKey: "duck_g", messages: [{ role: "user", parts: [{ text: "x" }] }],
+  generationConfig: { responseMimeType: "application/json", reasoningEffort: "medium" } } }, res);
+assert.equal(res.code, 200);
+assert.equal(calls[0].url, "https://apiduck.servepics.com/v1/chat/completions");
+assert.equal(calls[0].opts.headers["Authorization"], "Bearer duck_g");
+{ const b9 = JSON.parse(calls[0].opts.body); assert.equal(b9.reasoning_effort, "medium"); assert.equal(b9.max_completion_tokens, 16000); assert.ok(!("max_tokens" in b9)); }
+assert.equal(res.body.candidates[0].content.parts[0].text, "{\"decyzja\":\"tak\"}");
+// DeepSeek V4.1 Flash: reasoning_effort tylko low/high (medium → high), max_tokens zamiast max_completion_tokens,
+// zdjęcia jako data URL, tryb JSON; odczyt z cache jako prompt_cache_hit_tokens
+calls.length = 0;
+nextResp = okResp({ model: "deepseek-v4.1-flash", choices: [{ message: { content: "{\"decyzja\":\"nie\"}", reasoning_content: "myślę…" }, finish_reason: "stop" }],
+  usage: { prompt_tokens: 9000, completion_tokens: 700, prompt_cache_hit_tokens: 8000, prompt_cache_miss_tokens: 1000 } });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-openai", model: "deepseek-v4.1-flash", apiKey: "duck_d", imageUrls: [IMG],
+  messages: [{ role: "user", parts: [{ text: "STATIC", cacheControl: true }, { text: "DYN" }] }],
+  generationConfig: { maxOutputTokens: 600, responseMimeType: "application/json", claudeEffort: "medium" } } }, res);
+assert.equal(res.code, 200);
+const d9 = calls.find(c => c.url === "https://apiduck.servepics.com/v1/chat/completions");
+{ const db = JSON.parse(d9.opts.body);
+  assert.equal(db.model, "deepseek-v4.1-flash"); assert.equal(db.reasoning_effort, "high", "medium → high");
+  assert.equal(db.max_tokens, 16000); assert.ok(!("max_completion_tokens" in db));
+  assert.deepEqual(db.response_format, { type: "json_object" });
+  assert.deepEqual(db.messages[0].content[0], { type: "text", text: "STATIC" });
+  assert.equal(db.messages[0].content[1].type, "image_url"); assert.deepEqual(db.messages[0].content[2], { type: "text", text: "DYN" }); }
+assert.equal(res.body.candidates[0].content.parts[0].text, "{\"decyzja\":\"nie\"}", "bez tokenów rozumowania w odpowiedzi");
+assert.equal(res.body.usageMetadata.cachedContentTokenCount, 8000);
+assert.equal(res.body.imagesAttached, 1);
+calls.length = 0; res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-openai", model: "deepseek-v4.1-flash", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }], generationConfig: { reasoningEffort: "low" } } }, res);
+assert.equal(JSON.parse(calls[0].opts.body).reasoning_effort, "low");
+// błędy ApiDuck → komunikat z kodem HTTP; 200 bez choices → 502 (zapas)
+nextResp = okResp({ error: { message: "insufficient balance", type: "billing_error" } }, 402);
+res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-openai", model: "deepseek-v4.1-flash", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 402); assert.match(res.body.error.message, /^ApiDuck HTTP 402 billing_error: insufficient balance/);
+nextResp = okResp({ object: "chat.completion" });
+res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-openai", model: "gpt-6.1-terra", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 502); assert.match(res.body.error.message, /odpowiedź bez treści/);
+// dozwolone modele: ApiDuck — GPT i DeepSeek; Freemodel — tylko GPT
+calls.length = 0; res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-openai", model: "claude-haiku-5-5", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 400); assert.equal(calls.length, 0, "apiduck-openai bez Claude");
+res = mkRes();
+await handler({ method: "POST", body: { provider: "freemodel-gpt", model: "deepseek-v4.1-flash", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(res.code, 400); assert.equal(calls.length, 0, "Freemodel bez DeepSeek");
+res = mkRes();
+await handler({ method: "POST", body: { provider: "apiduck-gpt", model: "gpt-6.1-terra", apiKey: "k", messages: [{ role: "user", parts: [{ text: "x" }] }] } }, res);
+assert.equal(calls.length === 0 || !calls.some(c => c.url.includes("apiduck")), true, "stara nazwa apiduck-gpt nie trafia do ApiDuck");
 console.log("API TESTS OK");
