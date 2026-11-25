@@ -977,7 +977,7 @@ const PROVIDERS = {
       { id: "gemini-flash-latest",   label: "Gemini 3.5 Flash (najnowszy, droższy)" },
       { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro" },
       { id: "claude-haiku-5-5",      label: "Claude Haiku 5.5 (Anthropic — tańszy, wymaga klucza Claude)" },
-      { id: "gpt-6.1-terra",         label: "GPT-6.1 Terra (Freemodel / ApiDuck — wymaga klucza jednego z nich; zapas: Haiku przez Anthropic)" },
+      { id: "gpt-6.1-terra",         label: "GPT-6.1 Terra (Freemodel — wymaga klucza Freemodel; zapas: DeepSeek przez ApiDuck, potem Haiku przez Anthropic)" },
     ],
     keyPlaceholder: "AIza...",
     keyHint: "aistudio.google.com/apikey",
@@ -1025,6 +1025,9 @@ const GEMINI_PRICES = {
   // v6.21: GPT-6.1 Terra przez Freemodel — stawki z rozliczenia Freemodel (test 17.11.2026): wejście 1 $, wyjście ok. 5 $,
   // zapis do cache 1,25×, odczyt z cache 0,1× (serwis sam zapisuje prompt w cache).
   "gpt-6.1-terra":         { in: 1.00, cached: 0.10,  out: 5.00,  storage: 0, write: 1.25 },
+  // v6.24: DeepSeek V4.1 Flash przez ApiDuck — cennik DeepSeek (11.2026, poza zniżką nocną): wejście 0,30 $, z cache 0,006 $, wyjście 1,20 $.
+  // ApiDuck rozlicza saldo własnym mnożnikiem (×0,19 w cenniku 25.11.2026) — licznik liczy cenę DeepSeek, czyli raczej zawyża.
+  "deepseek-v4.1-flash":   { in: 0.30, cached: 0.006, out: 1.20,  storage: 0 },
 };
 const GEMINI_PRICE_FALLBACK = { in: 2.00, cached: 0.20, out: 12.00, storage: 4.50 }; // nieznany model — liczymy jak najdroższy
 
@@ -1034,7 +1037,10 @@ const isClaudeModel = (m) => /^claude-/i.test(m || "");
 const isGptModel = (m) => /^gpt-/i.test(m || "");
 const isGeminiModel = (m) => /^gemini-/i.test(m || "");
 const GPT_FALLBACK_MODEL = "claude-haiku-5-5";
-const aiName = (m) => isClaudeModel(m) ? "Claude" : isGptModel(m) ? "Freemodel / ApiDuck" : "Gemini";
+// v6.24: w ApiDuck model analizy (GPT-6.1 Terra albo Haiku 5.5) zastępuje DeepSeek V4.1 Flash — tańszy, czyta zdjęcia
+// (decyzja właściciela 25.11.2026). Weryfikacja Sonnetem idzie przez ApiDuck nadal jako Sonnet.
+const APIDUCK_ANALYSIS_MODEL = "deepseek-v4.1-flash";
+const aiName = (m) => isClaudeModel(m) ? "Claude" : isGptModel(m) ? "Freemodel" : "Gemini";
 
 // Mocniejszy model do decyzji, w których błąd kosztuje najwięcej: weryfikacja okazji i trudne przypadki.
 // Domyślnie Gemini 2.5 Pro (jak dotąd); w Ustawieniach można wybrać tańszy model.
@@ -2253,42 +2259,47 @@ function App() {
     return ((prompt - cached - written) * pr.in + cached * pr.cached + written * (pr.write ?? pr.in) + out * pr.out) / 1e6;
   };
   // v6.24: kolejka dróg do modelu — każdy krok tylko z wpisanym kluczem; przy błędzie (saldo, awaria, czas) następny krok:
-  //  - Claude: Freemodel → ApiDuck → klucz Anthropic. Haiku pomija Freemodel (odrzuca go błędem 400, test 17.11.2026).
-  //  - GPT: Freemodel → ApiDuck → Haiku 5.5 przez klucz Anthropic (zapas innym modelem: fallbackModel).
+  //  - Sonnet i inne Claude poza Haiku: Freemodel → ApiDuck (ten sam model) → klucz Anthropic.
+  //  - Haiku 5.5: ApiDuck jako DeepSeek V4.1 Flash → Haiku przez klucz Anthropic (Freemodel odrzuca Haiku, test 17.11.2026).
+  //  - GPT-6.1 Terra: Freemodel → ApiDuck jako DeepSeek V4.1 Flash → Haiku 5.5 przez klucz Anthropic.
   //  - Gemini / Groq: tylko własny klucz.
-  // via = nazwa pośrednika do logu („przez Freemodel”), pusta dla bezpośredniego klucza.
+  // useModel = inny model niż wybrany (zastępstwo), via = nazwa pośrednika do logu („przez Freemodel”), pusta dla klucza Anthropic.
   const aiRoutes = (model) => {
     if (provider === "groq") return geminiKey ? [{ via: "", body: { provider: "groq", apiKey: geminiKey } }] : [];
     const fm = String(freemodelKey || "").trim(), ad = String(apiduckKey || "").trim(), an = String(claudeKey || "").trim();
+    const duckSub = ad ? [{ via: "ApiDuck", useModel: APIDUCK_ANALYSIS_MODEL, body: { provider: "apiduck-openai", apiKey: ad } }] : [];
     if (isGptModel(model)) return [
       ...(fm ? [{ via: "Freemodel", body: { provider: "freemodel-gpt", apiKey: fm } }] : []),
-      ...(ad ? [{ via: "ApiDuck", body: { provider: "apiduck-gpt", apiKey: ad } }] : []),
-      ...(an ? [{ via: "", fallbackModel: GPT_FALLBACK_MODEL, body: { provider: "anthropic", model: GPT_FALLBACK_MODEL, apiKey: an } }] : []),
+      ...duckSub,
+      ...(an ? [{ via: "", useModel: GPT_FALLBACK_MODEL, body: { provider: "anthropic", apiKey: an } }] : []),
     ];
-    if (isClaudeModel(model)) return [
-      ...(fm && !/haiku/i.test(model) ? [{ via: "Freemodel", body: { provider: "anthropic", relay: "freemodel", apiKey: fm } }] : []),
-      ...(ad ? [{ via: "ApiDuck", body: { provider: "anthropic", relay: "apiduck", apiKey: ad } }] : []),
-      ...(an ? [{ via: "", body: { provider: "anthropic", apiKey: an } }] : []),
-    ];
+    if (isClaudeModel(model)) {
+      const haiku = /haiku/i.test(model);
+      return [
+        ...(fm && !haiku ? [{ via: "Freemodel", body: { provider: "anthropic", relay: "freemodel", apiKey: fm } }] : []),
+        ...(haiku ? duckSub : ad ? [{ via: "ApiDuck", body: { provider: "anthropic", relay: "apiduck", apiKey: ad } }] : []),
+        ...(an ? [{ via: "", body: { provider: "anthropic", apiKey: an } }] : []),
+      ];
+    }
     return geminiKey ? [{ via: "", body: { provider: "gemini", apiKey: geminiKey } }] : [];
   };
-  // Czy model ma czym odpowiedzieć — sam zapas innym modelem (Haiku za GPT) nie wystarcza
-  const hasAiRoute = (model) => aiRoutes(model).some(r => !r.fallbackModel);
+  // Czy wybrany model jest osiągalny — same zastępstwa (DeepSeek, Haiku za GPT) nie wystarczają do startu
+  const hasAiRoute = (model) => aiRoutes(model).some(r => !r.useModel);
   const noAiRouteMsg = (model) => provider === "groq" ? "Brak klucza API Groq — wpisz go w Ustawieniach"
-    : isClaudeModel(model) ? "Brak klucza Claude (Anthropic) ani pośrednika (Freemodel / ApiDuck) — wpisz go w Ustawieniach"
-    : isGptModel(model) ? "Brak klucza Freemodel ani ApiDuck — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach";
+    : isClaudeModel(model) ? (/haiku/i.test(model) ? "Brak klucza Claude (Anthropic) — wpisz go w Ustawieniach" : "Brak klucza Claude (Anthropic) ani pośrednika (Freemodel / ApiDuck) — wpisz go w Ustawieniach")
+    : isGptModel(model) ? "Brak klucza Freemodel — wpisz go w Ustawieniach" : "Brak klucza API Gemini — wpisz go w Ustawieniach";
   // Zapytanie po kolei przez drogi z aiRoutes. STOP (przerwanie sesji) przerywa od razu, bez zapasu.
   // Zwraca { data, usedModel, viaLabel } — usedModel różni się od model, gdy odpowiedział zapas (Haiku za GPT).
   const callAiRoutes = async (model, body, opts = {}) => {
-    const routes = aiRoutes(model).filter((r, i, all) => !r.fallbackModel || all.slice(0, i).some(x => !x.fallbackModel));
-    if (routes.length === 0) throw new Error(noAiRouteMsg(model));
+    const routes = aiRoutes(model);
+    if (!routes.some(r => !r.useModel)) throw new Error(noAiRouteMsg(model));
     let lastErr = null, lastThrown = null;
     for (let i = 0; i < routes.length; i++) {
       const r = routes[i], next = routes[i + 1];
-      const usedModel = r.fallbackModel || model;
+      const usedModel = r.useModel || model;
       let gc = body.generationConfig || {};
-      if (r.fallbackModel) {
-        // GPT → Haiku: poziom rozumowania przeniesiony 1:1 na effort Claude
+      if (r.useModel) {
+        // zastępstwo: poziom rozumowania GPT przeniesiony 1:1 na effort Claude (DeepSeek: pośrednik mapuje sam)
         const effort = ["low", "medium", "high"].includes(gc.reasoningEffort) ? gc.reasoningEffort : undefined;
         gc = { ...gc, ...(effort ? { claudeEffort: effort } : {}) };
       }
@@ -2305,7 +2316,7 @@ function App() {
       lastErr = err; lastThrown = thrown;
       if (!next) break;
       const who = r.via || "Klucz Anthropic";
-      const nextDesc = next.fallbackModel ? `przez ${next.fallbackModel} (klucz Anthropic)` : `${model} przez ${next.via || "klucz Anthropic"}`;
+      const nextDesc = next.useModel ? `przez ${next.useModel} (${next.via || "klucz Anthropic"})` : `${model} przez ${next.via || "klucz Anthropic"}`;
       addLog(`⚠️ ${who} nie odpowiedział (${String(err).slice(0, 160)}) — ponawiam ${nextDesc}`, "error");
     }
     const last = routes[routes.length - 1];
@@ -6029,9 +6040,9 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   ...(provider === "groq" || isGeminiModel(geminiModel) || isGeminiModel(strongModel) || geminiKey
                     ? [[provider === "groq" ? "Groq API" : "Gemini API", geminiKey ? "✅ OK" : "❌ Brak", geminiKey ? "#22c55e" : "#f87171"]] : []),
                   ...(isClaudeModel(geminiModel) || isClaudeModel(strongModel) || claudeKey
-                    ? [["Claude API", claudeKey ? "✅ OK" : String(apiduckKey || "").trim() ? "⚠️ Brak — bez zapasu za ApiDuck" : "❌ Brak", claudeKey ? "#22c55e" : String(apiduckKey || "").trim() ? "#f59e0b" : "#f87171"]] : []),
-                  ...(provider !== "groq" && (String(freemodelKey || "").trim() || (isGptModel(geminiModel) && !String(apiduckKey || "").trim())) ? [["Freemodel", String(freemodelKey || "").trim() ? "✅ klucz wpisany" : "❌ Brak", String(freemodelKey || "").trim() ? "#22c55e" : "#f87171"]] : []),
-                  ...(provider !== "groq" && String(apiduckKey || "").trim() ? [["ApiDuck", "✅ klucz wpisany", "#22c55e"]] : []),
+                    ? [["Claude API", claudeKey ? "✅ OK" : "❌ Brak", claudeKey ? "#22c55e" : "#f87171"]] : []),
+                  ...(provider !== "groq" && (String(freemodelKey || "").trim() || isGptModel(geminiModel)) ? [["Freemodel", String(freemodelKey || "").trim() ? "✅ klucz wpisany" : "❌ Brak", String(freemodelKey || "").trim() ? "#22c55e" : "#f87171"]] : []),
+                  ...(provider !== "groq" && String(apiduckKey || "").trim() ? [["ApiDuck", "✅ klucz wpisany (analiza: DeepSeek)", "#22c55e"]] : []),
                   ["Discord",       discordWebhook ? "✅ OK" : "❌ Brak", discordWebhook ? "#22c55e" : "#f87171"],
                   ["AI (miesiąc)", `${(aiSpend.usd * USD_PLN_RATE).toFixed(0)} / ${aiBudgetPln} zł`, aiSpend.usd * USD_PLN_RATE >= aiBudgetPln ? "#f87171" : "#94a3b8"],
                   ["Aktywne modele",`${selectedBikes.length}/${BIKE_MODELS.length}`, "#f59e0b"],
@@ -6399,7 +6410,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   <input type="password" placeholder="sk-ant-..."
                     value={claudeKey} onChange={e => setClaudeKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
-                    console.anthropic.com → API Keys (płatność z góry: Billing → doładowanie). Potrzebny, gdy wybierzesz model Claude — ostatni w kolejce (zapas za Freemodel i ApiDuck); bez niego wystarczy ApiDuck, ale wtedy nie ma zapasu.
+                    console.anthropic.com → API Keys (płatność z góry: Billing → doładowanie). Potrzebny, gdy wybierzesz model Claude albo GPT — ostatni w kolejce (zapas za Freemodel i ApiDuck). Haiku jako model analizy wymaga tego klucza.
                   </div>
                 </div>
               )}
@@ -6407,12 +6418,12 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
               {provider !== "groq" && (
                 <div style={{ marginBottom: 14 }}>
                   <label style={{ fontSize: 11, color: "#475569", display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-                    Klucz Freemodel (claude-n-codex.com){isGptModel(geminiModel) && !String(apiduckKey || "").trim() ? " *" : " (opcjonalne)"}
+                    Klucz Freemodel (claude-n-codex.com){isGptModel(geminiModel) ? " *" : " (opcjonalne)"}
                   </label>
                   <input type="password" placeholder="sk-myapi_..."
                     value={freemodelKey} onChange={e => setFreemodelKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
-                    Pierwszy w kolejce: Freemodel → ApiDuck → klucz Anthropic. Gdy wpisany — modele Claude oprócz Haiku (np. Sonnet do weryfikacji okazji) idą najpierw przez Freemodel (Haiku Freemodel odrzuca). Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie dalej w kolejce. Model analizy GPT-6.1 Terra: Freemodel → ApiDuck → zapas Haiku przez klucz Anthropic.
+                    Pierwszy w kolejce: Freemodel → ApiDuck → klucz Anthropic. Gdy wpisany — model analizy GPT-6.1 Terra i weryfikacja Sonnetem idą najpierw przez Freemodel (Haiku Freemodel odrzuca). Gdy Freemodel nie odpowie albo skończy się saldo, zapytanie automatycznie idzie dalej w kolejce. GPT-6.1 Terra działa tylko przez Freemodel (zapas: DeepSeek przez ApiDuck, potem Haiku przez klucz Anthropic).
                   </div>
                 </div>
               )}
@@ -6425,7 +6436,7 @@ Wycenę sprzedaży zrób SAMODZIELNIE — nie przepisuj jej z wcześniejszej ana
                   <input type="password" placeholder="klucz z panelu ApiDuck"
                     value={apiduckKey} onChange={e => setApiduckKey(e.target.value)} />
                   <div style={{ fontSize: 11, color: "#334155", marginTop: 5 }}>
-                    Drugi w kolejce: po Freemodel, przed kluczem Anthropic — dla wszystkich modeli Claude (także Haiku) i GPT-6.1 Terra. Gdy ApiDuck nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic. Saldo i log zapytań: apiduck.servepics.com.
+                    Drugi w kolejce: po Freemodel, przed kluczem Anthropic. Analiza ogłoszeń (GPT-6.1 Terra albo Haiku) idzie przez ApiDuck jako DeepSeek V4.1 Flash (tańszy, czyta zdjęcia); weryfikacja okazji — jako Sonnet. Gdy ApiDuck nie odpowie albo skończy się saldo, zapytanie automatycznie idzie przez klucz Anthropic. Saldo i log zapytań: apiduck.servepics.com.
                   </div>
                 </div>
               )}

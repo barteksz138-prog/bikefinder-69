@@ -221,11 +221,16 @@ const callClaude = async ({ model, apiKey, contents, generationConfig, relay = "
 // z powrotem na format Gemini (candidates, finishReason, usageMetadata) — jak przy Claude.
 // Zdjęcia idą jako data URL (base64) w kolejności z attachImages: za stałą częścią promptu, przed ogłoszeniem.
 // v6.24: ApiDuck ma ten sam format OpenAI (apiduck.servepics.com/v1, klucz jako Bearer) — wspólna funkcja dla obu pośredników.
+// Przez ApiDuck idą GPT i DeepSeek (DeepSeek V4.1 Flash zastępuje w ApiDuck model analizy — decyzja właściciela 25.11.2026).
 const OPENAI_RELAYS = {
-  "freemodel-gpt": { url: "https://claude-n-codex.com:8443/v1/chat/completions", label: "Freemodel" },
-  "apiduck-gpt":   { url: "https://apiduck.servepics.com/v1/chat/completions",    label: "ApiDuck" },
+  "freemodel-gpt":   { url: "https://claude-n-codex.com:8443/v1/chat/completions", label: "Freemodel", models: /^gpt-[a-z0-9.\-]+$/i },
+  "apiduck-openai":  { url: "https://apiduck.servepics.com/v1/chat/completions",    label: "ApiDuck",   models: /^(gpt|deepseek)-[a-z0-9.\-]+$/i },
 };
 const GPT_EFFORTS = ["low", "medium", "high"];
+// DeepSeek (dokumentacja API, 11.2026): reasoning_effort przyjmuje tylko "low" / "high" / "max" (domyślnie high),
+// limit odpowiedzi to max_tokens (nie max_completion_tokens). "medium" z planu analizy → "high" (domyślny poziom DeepSeek).
+const isDeepseekModel = (m) => /^deepseek-/i.test(m || "");
+const DEEPSEEK_EFFORT = { low: "low", medium: "high", high: "high" };
 const toOpenAiContent = (parts) => (Array.isArray(parts) ? parts : []).map(p => {
   if (p?.inlineData?.data) return { type: "image_url", image_url: { url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}` } };
   return { type: "text", text: String(p?.text ?? "") };
@@ -239,14 +244,16 @@ const callOpenAiRelay = async ({ relay, model, apiKey, contents, generationConfi
   })).filter(m => m.content.length > 0);
   const effort = GPT_EFFORTS.includes(generationConfig?.reasoningEffort) ? generationConfig.reasoningEffort : claudeEffortFrom(generationConfig);
   const minTokens = effort === "high" ? 32000 : effort === "medium" ? 16000 : 8000; // rozumowanie liczy się do limitu
+  const maxTokens = Math.min(64000, Math.max(minTokens, Number(generationConfig?.maxOutputTokens) || 0));
+  const deepseek = isDeepseekModel(model);
   const resp = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
       messages,
-      reasoning_effort: effort,
-      max_completion_tokens: Math.min(64000, Math.max(minTokens, Number(generationConfig?.maxOutputTokens) || 0)),
+      reasoning_effort: deepseek ? DEEPSEEK_EFFORT[effort] || "high" : effort,
+      ...(deepseek ? { max_tokens: maxTokens } : { max_completion_tokens: maxTokens }),
       ...(generationConfig?.responseMimeType === "application/json" ? { response_format: { type: "json_object" } } : {}),
     }),
   });
@@ -275,7 +282,8 @@ const callOpenAiRelay = async ({ relay, model, apiKey, contents, generationConfi
       // prompt_tokens obejmuje już odczyt i zapis do cache (rozliczenie Freemodel: wejście = prompt − cache)
       usageMetadata: {
         promptTokenCount: u.prompt_tokens || 0,
-        cachedContentTokenCount: d.cached_tokens || 0,
+        // DeepSeek podaje odczyt z cache jako prompt_cache_hit_tokens (gdyby ApiDuck przekazał to bez zmian)
+        cachedContentTokenCount: d.cached_tokens || u.prompt_cache_hit_tokens || 0,
         cacheWriteTokenCount: d.cache_write_tokens || 0,
         candidatesTokenCount: u.completion_tokens || 0, // obejmuje tokeny rozumowania
         thoughtsTokenCount: 0,
@@ -410,8 +418,8 @@ export default async function handler(req, res) {
       return res.status(resp.status).json(data);
 
     } else if (Object.prototype.hasOwnProperty.call(OPENAI_RELAYS, provider)) {
-      // freemodel-gpt (v6.21) albo apiduck-gpt (v6.24) — modele GPT w formacie OpenAI
-      if (!/^gpt-[a-z0-9.\-]+$/i.test(model)) return res.status(400).json({ error: { message: "Niepoprawny model GPT" } });
+      // freemodel-gpt (v6.21): GPT; apiduck-openai (v6.24): GPT i DeepSeek — format OpenAI
+      if (!OPENAI_RELAYS[provider].models.test(model)) return res.status(400).json({ error: { message: `Niepoprawny model dla ${OPENAI_RELAYS[provider].label}` } });
       const wantsImages = Array.isArray(imageUrls) && imageUrls.length > 0;
       const { contents, attached } = wantsImages ? await attachImages(messages, imageUrls, CLAUDE_MAX_IMAGE_BASE64) : { contents: messages, attached: 0 };
       const { status, body: out } = await callOpenAiRelay({ relay: provider, model, apiKey, contents, generationConfig });
